@@ -96,6 +96,10 @@ struct VaultState: Codable {
     var messages: [ChatMessage] = []
     var outbox: [PendingDelivery] = []
     var processed: [String] = []
+    var publicCode: String?
+    var accessKey: String?
+    var panicCodeHash: String?
+    var credentialsAcknowledged: Bool?
 }
 
 struct Invite: Codable {
