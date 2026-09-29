@@ -1,0 +1,42 @@
+services:
+  relay:
+    build: ./server
+    restart: unless-stopped
+    environment:
+      VO1D_DB: /data/relay.sqlite3
+    volumes:
+      - relay-data:/data
+    expose:
+      - '8080'
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/health", timeout=3)']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      VO1D_DOMAIN: ${VO1D_DOMAIN:?Set VO1D_DOMAIN in .env}
+    volumes:
+      - ./server/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      relay:
+        condition: service_healthy
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:

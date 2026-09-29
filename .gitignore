@@ -1,0 +1,12 @@
+.DS_Store
+build/
+release/
+*.xcresult
+*.log
+xcuserdata/
+*.xcuserstate
+__pycache__/
+.venv/
+data/
+.env
+*.sqlite3*
