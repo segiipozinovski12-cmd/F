@@ -2,6 +2,7 @@ import Foundation
 
 @MainActor
 final class APIClient {
+    private struct Failure: Decodable { var error: String }
     var base: URL
     private var token: String?
     private let session: URLSession
@@ -43,7 +44,6 @@ final class APIClient {
             return try await request(path, method: method, body: body, retry: false)
         }
         guard (200..<300).contains(status) else {
-            struct Failure: Decodable { var error: String }
             let error = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка сервера \(status)"
             throw MessengerError.invalid(error)
         }
