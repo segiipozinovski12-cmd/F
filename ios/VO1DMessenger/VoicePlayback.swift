@@ -43,7 +43,6 @@ private enum AudioWaveform {
     }
 }
 
-@MainActor
 final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var playing = false
     @Published var progress: Double = 0
@@ -106,7 +105,7 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            DispatchQueue.main.async { self?.refresh() }
         }
     }
 

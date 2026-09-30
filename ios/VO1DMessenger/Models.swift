@@ -37,7 +37,6 @@ struct Attachment: Codable, Hashable {
     var data: Data
     var viewSeconds: Int? = nil
     var voiceEffect: String? = nil
-    var notificationsEnabled: Bool? = nil
 }
 
 struct ChatMessage: Codable, Identifiable, Hashable {
@@ -105,6 +104,7 @@ struct VaultState: Codable {
     var panicCodeHash: String?
     var credentialsAcknowledged: Bool?
     var voiceEffect: String? = nil
+    var notificationsEnabled: Bool? = nil
 }
 
 struct Invite: Codable {
