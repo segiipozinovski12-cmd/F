@@ -16,7 +16,7 @@ struct PrivacyCenterView: View {
                 Toggle("Звонки на заблокированном iPhone",isOn:store.preferenceBinding(\.backgroundCalls))
                 Text("Работает после первого разблокирования после перезагрузки. Для авторизации звонков сохраняется ключ подписи; ключи расшифровки переписки и истории остаются доступны только при разблокированном устройстве.").font(.caption).foregroundStyle(.secondary)
                 Toggle("Звонки только от проверенных",isOn:store.preferenceBinding(\.verifiedOnlyCalls))
-                Text("Время последней активности не публикуется. Изменение поиска нужно сохранить на сервере.")
+                Text("Время последней активности не публикуется. Поиск и разрешения звонков нужно сохранить на сервере.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Уведомления") {
@@ -245,7 +245,10 @@ struct ContactPrivacyView: View {
                 scanning=false
                 guard let own=store.ownCard, let contact else { return }
                 if value==SafeContent.fingerprint(own,contact.card) {
-                    if let i=store.state.contacts.firstIndex(where: { $0.id==contactID }) { store.state.contacts[i].verified=true; store.persist() }
+                    if let i=store.state.contacts.firstIndex(where: { $0.id==contactID }) {
+                        store.state.contacts[i].verified=true; store.persist()
+                        Task { try? await store.trustOnServer(contactID,trusted:store.extended.trustedIDs.contains(contactID)) }
+                    }
                     check="Ключи совпадают"
                 } else { check="QR не совпал. Личность не подтверждена." }
             }.ignoresSafeArea()

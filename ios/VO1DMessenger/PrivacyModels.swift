@@ -1,7 +1,7 @@
 import Foundation
 
 struct PrivacyPreferences: Codable {
-    var backgroundCalls = true
+    var backgroundCalls = false
     var requireRequests = true
     var allowGroupInvites = false
     var discoverable = true

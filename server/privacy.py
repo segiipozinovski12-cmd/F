@@ -64,6 +64,13 @@ def handle(relay, db, user, env, body, error):
         db.execute('INSERT INTO privacy VALUES (?,?,?,?,?) ON CONFLICT(identity) DO UPDATE SET discoverable=excluded.discoverable,inactivity=excluded.inactivity,trusted_calls=excluded.trusted_calls,last_active=excluded.last_active',
                    (user, discoverable, days, now, calls))
         return {'ok': True}
+    if method == 'POST' and path == '/v1/trust/sync':
+        peers = body.get('ids')
+        if not isinstance(peers,list) or len(peers)>1000 or any(not isinstance(peer,str) or not re.fullmatch('[a-f0-9]{64}',peer) for peer in peers):
+            raise error(400,'Invalid consent list')
+        db.execute('DELETE FROM trusted WHERE owner=?',(user,))
+        db.executemany('INSERT OR IGNORE INTO trusted VALUES (?,?)',[(user,peer) for peer in peers])
+        return {'ok':True}
     if method == 'POST' and path == '/v1/trust':
         peer, value = body.get('id'), body.get('trusted')
         if not isinstance(peer,str) or not re.fullmatch('[a-f0-9]{64}',peer) or type(value) is not bool:

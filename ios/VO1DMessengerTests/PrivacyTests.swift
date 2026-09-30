@@ -56,6 +56,7 @@ final class PrivacyTests: XCTestCase {
         XCTAssertTrue(decoded.requireRequests)
         XCTAssertFalse(decoded.typingSignals)
         XCTAssertFalse(decoded.notificationPreview)
+        XCTAssertFalse(decoded.backgroundCalls)
         let extended=try Wire.decoder.decode(ExtendedState.self,from:Data("{}".utf8))
         XCTAssertEqual(extended.pendingEvents.count,0)
     }

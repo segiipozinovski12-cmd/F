@@ -60,6 +60,17 @@ class PrivacyTests(unittest.TestCase):
         self.assertEqual(self.request('/v1/privacy','POST',{'discoverable':1,'trustedCalls':True,'inactivityDays':30},self.a)[0],400)
         self.assertEqual(self.request('/v1/privacy','POST',{'discoverable':True,'trustedCalls':True,'inactivityDays':31},self.a)[0],400)
 
+    def test_trust_sync_replaces_owner_list_atomically(self):
+        self.request('/v1/trust','POST',{'id':self.bob_card['id'],'trusted':True},self.a)
+        self.request('/v1/trust','POST',{'id':self.alice_card['id'],'trusted':True},self.b)
+        self.assertEqual(self.request('/v1/trust/sync','POST',{'ids':['invalid']},self.a)[0],400)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM trusted WHERE owner=?',(self.alice_card['id'],)).fetchone()[0],1)
+        self.assertEqual(self.request('/v1/trust/sync','POST',{'ids':[]},self.a)[0],200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM trusted WHERE owner=?',(self.alice_card['id'],)).fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM trusted WHERE owner=?',(self.bob_card['id'],)).fetchone()[0],1)
+
     def test_revoke_other_sessions_preserves_current(self):
         old=self.a
         self.a=self.login(self.alice,self.alice_card)

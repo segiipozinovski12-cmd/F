@@ -25,14 +25,19 @@ extension ChatStore {
         struct Body: Encodable { var discoverable: Bool; var inactivityDays: Int; var trustedCalls: Bool }
         let _: APIClient.OK = try await api.request("v1/privacy",method:"POST",
             body: Wire.encoder.encode(Body(discoverable:preferences.discoverable,
-                inactivityDays:preferences.inactivityDays,trustedCalls:preferences.requireRequests)))
-        for id in extended.trustedIDs { try await trustOnServer(id, trusted: true) }
+                inactivityDays:preferences.inactivityDays,trustedCalls:preferences.requireRequests || preferences.verifiedOnlyCalls)))
+        let allowed=state.contacts.filter { contact in
+            !contact.blocked && extended.trustedIDs.contains(contact.id) && (!preferences.verifiedOnlyCalls || contact.verified)
+        }.map(\.id)
+        let _: APIClient.OK = try await api.request("v1/trust/sync",method:"POST",body:Wire.encoder.encode(["ids":allowed]))
     }
 
     func trustOnServer(_ id: String, trusted: Bool) async throws {
         struct Body: Encodable { var id: String; var trusted: Bool }
+        let contact=state.contacts.first { $0.id==id }
+        let permitted=trusted && contact?.blocked != true && (!preferences.verifiedOnlyCalls || contact?.verified==true)
         let _: APIClient.OK = try await api?.request("v1/trust",method:"POST",
-            body:Wire.encoder.encode(Body(id:id,trusted:trusted))) ?? APIClient.OK(ok:false)
+            body:Wire.encoder.encode(Body(id:id,trusted:permitted))) ?? APIClient.OK(ok:false)
     }
 
     func rotatePublicCode() async throws {

@@ -355,6 +355,7 @@ struct ContactDetailView: View {
                                     if let index = store.state.contacts.firstIndex(where: { $0.id == contactID }) {
                                         store.state.contacts[index].verified = value
                                         store.persist()
+                                        Task { try? await store.trustOnServer(contactID,trusted:store.extended.trustedIDs.contains(contactID)) }
                                     }
                                 }
                             ))
@@ -394,4 +395,3 @@ struct ContactDetailView: View {
         .navigationDestination(item: $room) { ChatView(roomID: $0.id) }
     }
 }
-
