@@ -43,7 +43,14 @@ extension APIClient {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = binary ? 120 : 30
         request.setValue(binary ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type")
-        if let capability { try WorkProof.validateToken(capability); request.setValue("BlobCapability \(capability)", forHTTPHeaderField: "Authorization") }
+        if let capability {
+            try WorkProof.validateToken(capability)
+            request.setValue("BlobCapability \(capability)", forHTTPHeaderField: "Authorization")
+        } else if let token {
+            // Older VO1D relays required an authenticated session even for capability discovery.
+            // Sending the session token is harmless on current relays and keeps onboarding compatible.
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         let scope = "blob:" + String(path.split(separator:"/").last ?? "public")
         let (data,response) = try await capabilitySession(scope:scope).data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MessengerError.invalid("Нет ответа сервера") }
