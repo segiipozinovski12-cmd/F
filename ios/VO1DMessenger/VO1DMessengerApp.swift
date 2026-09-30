@@ -31,13 +31,13 @@ struct VO1DMessengerApp: App {
                     PushCoordinator.shared.openRoom = { id in store.notificationRoomID=id }
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase != .active {
+                    if phase == .background {
                         leftAt=Date()
                         store.revealedHiddenRooms=false
                         if store.state.appLock && store.preferences.autoLockSeconds==0 { store.locked=true }
-                        store.persist()
+                        if !store.busy { store.persist() }
                         MediaFiles.clear()
-                    } else if store.state.appLock, let leftAt,
+                    } else if phase == .active, store.state.appLock, let leftAt,
                         Date().timeIntervalSince(leftAt)>=Double(store.preferences.autoLockSeconds) {
                         store.locked=true
                     }
@@ -85,7 +85,7 @@ struct RootView: View {
                     .zIndex(20)
             }
 
-            if scenePhase != .active || (captured && store.preferences.protectRecording) {
+            if scenePhase == .background || (captured && store.preferences.protectRecording) {
                 Color.black.ignoresSafeArea()
                     .overlay {
                         VStack(spacing: 18) {
@@ -117,7 +117,7 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.32), value: splash)
         .task {
-            try? await Task.sleep(for: .milliseconds(1350))
+            try? await Task.sleep(for: .milliseconds(650))
             splash = false
         }
         .alert("VO1D", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
@@ -136,7 +136,9 @@ struct RootView: View {
             }
 
             while !Task.isCancelled {
-                await store.sync()
+                if store.state.onboarded && store.sessionUnlocked && !store.busy {
+                    await store.sync()
+                }
                 try? await Task.sleep(for: .seconds(store.preferences.lowData ? 8 : 2))
             }
         }
