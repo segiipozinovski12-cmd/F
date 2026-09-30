@@ -13,7 +13,10 @@ from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-ID = re.compile(r'^[a-f0-9]{64}
+ID = re.compile(r'^[a-f0-9]{64}$')
+CODE = re.compile(r'^[2-9A-HJ-NP-Z]{4}$')
+CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+UUID = re.compile(r'^[A-Za-z0-9-]{16,64}$')
 MAX_BODY = 9 * 1024 * 1024
 MAX_ENVELOPE = 7 * 1024 * 1024
 RETENTION = 7 * 86400
