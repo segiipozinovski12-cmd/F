@@ -3,13 +3,11 @@
 
 from pathlib import Path
 import hashlib
-import os
 import platform
 import re
 import shutil
 import subprocess
 import tarfile
-import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +28,7 @@ CACHE_ARCHIVE = CACHE_DIR / ARCHIVE_NAME
 CACHE_CHECKSUM = CACHE_DIR / f"{ARCHIVE_NAME}.sha256"
 
 
-def run(*args: str, cwd: Path | None = None) -> str:
+def run(*args: str, cwd=None) -> str:
     result = subprocess.run(
         list(args),
         cwd=str(cwd) if cwd else None,
