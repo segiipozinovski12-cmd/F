@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 @MainActor
 final class APIClient {
@@ -23,6 +24,8 @@ final class APIClient {
     let privacy: PrivacyPreferences
     private let identity: LocalIdentity
     private let authenticationCard: ContactCard?
+    private var capabilitySessions: [String:URLSession] = [:]
+    private let capabilityNamespace = UUID().uuidString
     private let callToken: String?
 
     init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil) throws {
@@ -33,6 +36,26 @@ final class APIClient {
         self.callToken = callToken
         let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
+    }
+
+    func capabilitySession(scope: String) throws -> URLSession {
+        if let session = capabilitySessions[scope] { return session }
+        var isolated = privacy
+        if isolated.embeddedTor || isolated.proxyUsesTor {
+            isolated.streamIsolation = Crypto.hex(SHA256.hash(data:Data("VO1D-STREAM-2\n\(privacy.streamIsolation)\n\(capabilityNamespace)\n\(scope)".utf8)))
+        }
+        let configuration = try TransportConfiguration.make(isolated)
+        let session = URLSession(configuration:configuration,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
+        if capabilitySessions.count >= 64, let key = capabilitySessions.keys.first {
+            capabilitySessions.removeValue(forKey:key)?.finishTasksAndInvalidate()
+        }
+        capabilitySessions[scope] = session
+        return session
+    }
+    func invalidate() {
+        session.invalidateAndCancel()
+        for client in capabilitySessions.values { client.invalidateAndCancel() }
+        capabilitySessions = [:]
     }
 
     nonisolated static func validateURL(_ string: String, privacy: PrivacyPreferences? = nil) throws -> URL {

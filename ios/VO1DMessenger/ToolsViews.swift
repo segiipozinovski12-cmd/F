@@ -9,6 +9,7 @@ struct ToolsCenterView: View {
         List {
             Section("Личности и восстановление") {
                 NavigationLink("Независимые личности") { ProfilesView() }
+                NavigationLink("Мои устройства") { DeviceLinksView() }
                 NavigationLink("Архивы истории") { HistoryArchivesView() }
             }
             Section("Приватность") {

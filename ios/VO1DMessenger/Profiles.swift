@@ -69,7 +69,7 @@ extension ChatStore {
         try save()
         var registry = profileRegistry; registry.activeID = id; try registry.save()
         generation += 1
-        CallManager.shared.disconnect(); api?.session.invalidateAndCancel(); api = nil
+        CallManager.shared.disconnect(); api?.invalidate(); api = nil
         BackgroundCalls.clear(); MediaFiles.clear(); ResumableDownload.clear(); NotificationCoordinator.shared.clearAll()
         profileRegistry = registry; identity = nextIdentity; ownCard = try nextIdentity.card; vault = nextVault; state = nextState
         deliveryIssues = [:]; typing = [:]; activeRoomID = nil; notificationRoomID = nil

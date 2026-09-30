@@ -6,12 +6,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.lock .
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && useradd --uid 10001 --create-home --shell /usr/sbin/nologin relay \
     && mkdir -p /data \
     && chown relay:relay /data

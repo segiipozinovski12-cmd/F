@@ -33,7 +33,7 @@ extension ChatStore {
         invitation.signature = try identity.signingPrivate.signature(for:invitation.signed).base64EncodedString()
         var event = ChatEvent(kind:"groupInvite",room:room,senderName:state.nickname)
         event.groupInvitation = invitation
-        let pending = PendingDelivery(envelope:try sealEvent(event,from:identity,to:contact.card),messageID:nil)
+        let pending = PendingDelivery(authorizationID:invitation.id,envelope:try sealEvent(event,from:identity,to:contact.card),messageID:nil)
         var local = extended; local.issuedGroupInvites[invitation.id] = invitation; state.extended = local
         state.outbox.append(pending); try save()
     }
@@ -52,8 +52,7 @@ extension ChatStore {
     func revokeGroupInvitation(_ id: String) throws {
         var local = extended; local.issuedGroupInvites[id] = nil; state.extended = local
         state.outbox.removeAll { pending in
-            guard let data = pending.envelope.deferredEvent, let event = try? Wire.decoder.decode(ChatEvent.self,from:data) else { return false }
-            return event.groupInvitation?.id == id
+            pending.authorizationID == id
         }
         try save()
     }

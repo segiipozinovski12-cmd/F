@@ -237,7 +237,7 @@ extension ChatStore {
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
         generation += 1
         let expected = generation
-        CallManager.shared.disconnect(); api?.session.invalidateAndCancel(); api = nil
+        CallManager.shared.disconnect(); api?.invalidate(); api = nil
         try await prepareNetworkRoute()
         guard expected == generation else { throw CancellationError() }
         let client = try APIClient(server:state.server.isEmpty ? AppConfig.productionRelay : state.server,identity:identity,privacy:preferences)

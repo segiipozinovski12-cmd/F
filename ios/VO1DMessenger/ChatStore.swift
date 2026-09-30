@@ -1415,6 +1415,7 @@ final class ChatStore: ObservableObject {
     }
     func applyAccepted(_ event: ChatEvent, sender: ContactCard) throws { try apply(event,sender:sender) }
     private func apply(_ event: ChatEvent, sender: ContactCard) throws {
+        if try handleDeviceControl(event,sender:sender) { return }
         if try handleGroupControl(event,sender:sender) { return }
         let incoming = event.room
         try validateScopedRoom(incoming)

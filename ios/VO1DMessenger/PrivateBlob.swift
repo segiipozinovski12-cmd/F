@@ -40,7 +40,8 @@ extension APIClient {
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = binary ? 120 : 30
         request.setValue(binary ? "application/octet-stream" : "application/json", forHTTPHeaderField: "Content-Type")
         if let capability { try WorkProof.validateToken(capability); request.setValue("BlobCapability \(capability)", forHTTPHeaderField: "Authorization") }
-        let (data,response) = try await session.data(for: request)
+        let scope = "blob:" + String(path.split(separator:"/").last ?? "public")
+        let (data,response) = try await capabilitySession(scope:scope).data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MessengerError.invalid("Нет ответа сервера") }
         guard (200..<300).contains(http.statusCode) else {
             throw HTTPFailure(status: http.statusCode, detail: (try? Wire.decoder.decode(BlobFailure.self, from: data).error) ?? "Ошибка приватного файла")
@@ -74,7 +75,7 @@ extension APIClient {
         try WorkProof.validateToken(id); try WorkProof.validateToken(token)
         var request = URLRequest(url: base.appendingPathComponent("v2/blobs/" + id))
         request.setValue("BlobCapability \(token)", forHTTPHeaderField: "Authorization")
-        return try await ResumableDownload().download(request, id: id, configuration: session.configuration)
+        return try await ResumableDownload().download(request, id: id, configuration: try capabilitySession(scope:"blob:"+id).configuration)
     }
     func deletePrivateBlob(_ id: String, token: String) async throws {
         try WorkProof.validateToken(id)

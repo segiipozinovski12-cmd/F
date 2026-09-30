@@ -112,6 +112,8 @@ struct ChatMessage: Codable, Identifiable, Hashable {
 
 /// All event content, including group membership and attachments, lives inside AEAD.
 struct ChatEvent: Codable {
+    var deviceCertificate: DeviceCertificate? = nil
+    var historyArchive: HistoryArchive? = nil
     var groupInvitation: GroupInvitation? = nil
     var replyMailbox: MailboxAddress? = nil
     var id: String = UUID().uuidString
@@ -143,6 +145,7 @@ struct Envelope: Codable, Identifiable {
 }
 
 struct PendingDelivery: Codable, Identifiable {
+    var authorizationID: String? = nil
     var notBefore: Date? = nil
     var envelope: Envelope
     var messageID: String?

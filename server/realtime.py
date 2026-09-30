@@ -313,6 +313,7 @@ class RealtimeGateway:
                 raise APIError(415, "JSON required")
 
             raw = await request.read()
+            if len(raw) > MAX_BODY: raise APIError(413,"Request too large")
             body = json.loads(raw) if raw else {}
             if not isinstance(body, dict):
                 raise APIError(400, "JSON object required")
@@ -328,7 +329,7 @@ class RealtimeGateway:
                 self._cleanup_blobs(include_orphans=True)
         except APIError as exc:
             result, status = {"error": exc.message}, exc.status
-        except (ValueError, TypeError, KeyError, UnicodeError, json.JSONDecodeError):
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
             result, status = {"error": "Invalid request"}, 400
         except Exception:
             result, status = {"error": "Relay unavailable"}, 500
@@ -424,7 +425,7 @@ class RealtimeGateway:
 
                 try:
                     packet = json.loads(message.data)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, RecursionError):
                     await self._send_error(ws, "invalid_json")
                     continue
 
@@ -436,7 +437,7 @@ class RealtimeGateway:
                 target = packet.get("to")
                 call_id = packet.get("callID")
 
-                if kind not in {"invite", "answer", "audio", "end"}:
+                if not isinstance(kind,str) or kind not in {"invite", "answer", "audio", "end", "resume", "resumed"}:
                     await self._send_error(ws, "invalid_type")
                     continue
                 if not isinstance(target, str) or not ID.fullmatch(target) or target == user:
@@ -519,8 +520,25 @@ class RealtimeGateway:
                     await self._forward(peer, {"type": "answer", "from": user, "callID": call_id,"key":key,"keySignature":signature,**extra})
                     continue
 
+                if kind in ("resume", "resumed"):
+                    payload, sequence = packet.get("payload"), packet.get("sequence")
+                    if not route["accepted"] or not isinstance(sequence,str) or not sequence.isdigit() or len(sequence)>20:
+                        await self._send_error(ws,"invalid_resume")
+                        continue
+                    try:
+                        if not isinstance(payload,str) or not 28 <= len(base64.b64decode(payload,validate=True)) <= 256:
+                            raise ValueError()
+                    except (ValueError,TypeError):
+                        await self._send_error(ws,"invalid_resume")
+                        continue
+                    route.get("paused",set()).discard(user)
+                    if not route.get("paused"):
+                        route.pop("resumeDeadline",None)
+                    await self._forward(peer,{"type":kind,"from":user,"callID":call_id,"payload":payload,"sequence":sequence})
+                    continue
+
                 if kind == "audio":
-                    if not route["accepted"]:
+                    if not route["accepted"] or route.get("paused"):
                         continue
                     sequence=packet.get("sequence","")
                     if not isinstance(sequence,str) or not sequence.isdigit() or len(sequence)>20:
@@ -552,23 +570,26 @@ class RealtimeGateway:
                         self.calls.pop(call_id, None)
                     continue
         finally:
+            ended, paused = [], []
             async with self.lock:
+                # A replaced socket must not close the replacement's call.
                 if self.clients.get(user) is ws:
-                    self.clients.pop(user, None)
-                ended = [
-                    (call_id, self._peer_for(route, user))
-                    for call_id, route in self.calls.items()
-                    if user in (route["a"], route["b"])
-                ]
-                for call_id, _ in ended:
-                    self.calls.pop(call_id, None)
-
-            for call_id, peer in ended:
-                if peer:
-                    await self._forward(
-                        peer,
-                        {"type": "end", "from": user, "callID": call_id, "reason": "disconnect"},
-                    )
+                    self.clients.pop(user,None)
+                    for call_id,route in list(self.calls.items()):
+                        if user not in (route["a"],route["b"]):
+                            continue
+                        peer = self._peer_for(route,user)
+                        if route["accepted"]:
+                            route.setdefault("paused",set()).add(user)
+                            route.setdefault("resumeDeadline",time.monotonic()+20)
+                            paused.append((call_id,peer))
+                        else:
+                            ended.append((call_id,peer))
+                            self.calls.pop(call_id,None)
+            for kind,items in (("paused",paused),("end",ended)):
+                for call_id,peer in items:
+                    if peer:
+                        await self._forward(peer,{"type":kind,"from":user,"callID":call_id,"reason":"disconnect"})
 
         return ws
 
@@ -593,7 +614,7 @@ def create_app():
                     gateway.relay.clean(db)
                 gateway._cleanup_blobs(include_orphans=True)
                 for call_id,route in list(gateway.calls.items()):
-                    if not route["accepted"] and time.monotonic()-route.get("created",0)>60:
+                    if (not route["accepted"] and time.monotonic()-route.get("created",0)>60) or (route.get("resumeDeadline",float("inf")) < time.monotonic()):
                         gateway.calls.pop(call_id,None)
                         for user in (route["a"],route["b"]):
                             await gateway._forward(user,{"type":"end","from":gateway._peer_for(route,user),"callID":call_id,"reason":"timeout"})

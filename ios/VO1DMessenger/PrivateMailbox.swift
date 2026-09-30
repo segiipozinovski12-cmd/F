@@ -90,12 +90,14 @@ enum PrivateMailboxCrypto {
 }
 
 extension APIClient {
-    private func capability<T: Decodable>(_ path: String, token: String?, method: String = "GET", body: Data? = nil) async throws -> T {
+    private func capability<T: Decodable>(_ path: String, token: String?, method: String = "GET", body: Data? = nil, scope explicitScope: String? = nil) async throws -> T {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method; request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Capability \(token)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await session.data(for: request)
+        let components = path.split(separator:"/")
+        let scope = explicitScope ?? (components.count >= 3 ? String(components[2]) : path)
+        let (data, response) = try await capabilitySession(scope:"mailbox:"+scope).data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MessengerError.invalid("Нет ответа приватного relay") }
         guard (200..<300).contains(http.statusCode) else { throw HTTPFailure(status: http.statusCode, detail: "Приватный relay: \(http.statusCode)") }
         return try Wire.decoder.decode(T.self, from: data)
@@ -103,7 +105,7 @@ extension APIClient {
     func registerMailbox(_ mailbox: LocalMailbox) async throws {
         struct Create: Encodable { var id: String; var readToken: String; var writeToken: String; var expiresAt: Int; var proof: String }
         let body = Create(id: mailbox.id, readToken: mailbox.readToken, writeToken: mailbox.address.writeToken, expiresAt: mailbox.address.expiresAt, proof: mailbox.proof)
-        let _: OK = try await capability("v2/mailboxes", token: nil, method: "POST", body: Wire.encoder.encode(body))
+        let _: OK = try await capability("v2/mailboxes", token: nil, method: "POST", body: Wire.encoder.encode(body), scope:mailbox.id)
     }
     func sendOpaque(_ envelope: OpaqueEnvelope) async throws {
         guard let token = envelope.writeToken else { throw MessengerError.invalid("Нет права записи в приватный ящик") }

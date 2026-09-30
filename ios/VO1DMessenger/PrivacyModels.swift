@@ -110,6 +110,8 @@ struct LocalReminder: Codable, Identifiable, Hashable {
 }
 
 struct ExtendedState: Codable {
+    var revokedDevices: [String:Int] = [:]
+    var deviceLinks: [DeviceLink] = []
     var issuedGroupInvites: [String: GroupInvitation] = [:]
     var pendingGroupInvites: [GroupInvitation] = []
     var acceptedGroupInvites: [String: GroupInvitation] = [:]
@@ -144,6 +146,7 @@ struct ExtendedState: Codable {
     var roomNotes: [String: String] = [:]
     init() {}
     enum CodingKeys: String, CodingKey {
+        case revokedDevices, deviceLinks
         case issuedGroupInvites, pendingGroupInvites, acceptedGroupInvites
         case signal
         case archives, privateBlobDeletes
@@ -155,6 +158,8 @@ struct ExtendedState: Codable {
         self.init()
         let container=try decoder.container(keyedBy:CodingKeys.self)
         lastOpenedAt=try container.decodeIfPresent(Date.self,forKey:.lastOpenedAt)
+        revokedDevices=try container.decodeIfPresent([String:Int].self,forKey:.revokedDevices) ?? [:]
+        deviceLinks=try container.decodeIfPresent([DeviceLink].self,forKey:.deviceLinks) ?? []
         issuedGroupInvites=try container.decodeIfPresent([String: GroupInvitation].self,forKey:.issuedGroupInvites) ?? [:]
         pendingGroupInvites=try container.decodeIfPresent([GroupInvitation].self,forKey:.pendingGroupInvites) ?? []
         acceptedGroupInvites=try container.decodeIfPresent([String: GroupInvitation].self,forKey:.acceptedGroupInvites) ?? [:]

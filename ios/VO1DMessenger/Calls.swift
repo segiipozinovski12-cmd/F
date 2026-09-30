@@ -8,6 +8,7 @@ enum VoiceCallPhase: String {
     case ringing
     case connecting
     case active
+    case reconnecting
 }
 
 struct VoiceCallSession: Identifiable, Equatable {
@@ -427,9 +428,8 @@ final class CallManager: ObservableObject {
                 self.socket = nil
                 self.socketReady = false
                 self.transport = "OFFLINE"
-                if self.session != nil {
-                    self.failCurrent(reason: .failed)
-                }
+                if let current = self.session, current.startedAt != nil, self.callKey != nil { self.pauseCurrent() }
+                else if self.session != nil { self.failCurrent(reason: .failed) }
 
                 try? await Task.sleep(for: .seconds(3))
                 if self.api != nil && self.socket == nil {
@@ -458,6 +458,7 @@ final class CallManager: ObservableObject {
         if type == "ready" {
             socketReady = true
             transport = "WSS"
+            if session?.phase == .reconnecting { await sendResume(type:"resume") }
             if let current=session, current.incoming, callKey==nil {
                 await preparePushedMedia(current)
             }
@@ -466,7 +467,7 @@ final class CallManager: ObservableObject {
 
         if type == "error" {
             let code = packet["code"] as? String ?? "call_error"
-            if ["peer_offline", "peer_busy", "peer_unavailable", "unknown_peer"].contains(code) {
+            if ["peer_offline", "peer_busy", "peer_unavailable", "unknown_peer", "unknown_call", "call_mismatch", "invalid_resume"].contains(code) {
                 failCurrent(reason: code == "peer_offline" ? .unanswered : .failed)
             }
             return
@@ -496,6 +497,17 @@ final class CallManager: ObservableObject {
             provider.reportOutgoingCall(with: current.id, connectedAt: Date())
             activateMediaIfReady()
 
+        case "paused":
+            pauseCurrent()
+        case "resume", "resumed":
+            guard current.startedAt != nil, let key = callKey, let secrets = callSecrets,
+                  let encoded = packet["payload"] as? String, let payload = Data(base64Encoded:encoded),
+                  let sequence = packet["sequence"] as? String,
+                  let clear = try secrets.open(payload,sequence:sequence,key:key,callID:callID),
+                  clear == Data("VO1D-CALL-RESUME-2".utf8) else { return }
+            var updated = current; updated.phase = .active; session = updated
+            transport = "WSS"; activateMediaIfReady()
+            if type == "resume" { await sendResume(type:"resumed") }
         case "audio":
             guard current.phase == .active,
                   let payload = packet["payload"] as? String,
@@ -513,6 +525,27 @@ final class CallManager: ObservableObject {
         default:
             break
         }
+    }
+
+    private func pauseCurrent() {
+        guard var current = session, current.startedAt != nil else { return }
+        let firstPause = current.phase != .reconnecting
+        current.phase = .reconnecting; session = current; audio.stop(); transport = "RECONNECTING"
+        if firstPause {
+            let callID = current.callID
+            Task { [weak self] in
+                try? await Task.sleep(for:.seconds(20))
+                guard let self, self.session?.callID == callID, self.session?.phase == .reconnecting else { return }
+                self.failCurrent(reason:.failed)
+            }
+        }
+    }
+    private func sendResume(type: String) async {
+        guard let current = session, let key = callKey, let secrets = callSecrets, socketReady else { return }
+        do {
+            let frame = try secrets.seal(Data("VO1D-CALL-RESUME-2".utf8),key:key,callID:current.callID)
+            try await send(["type":type,"to":current.peerID,"callID":current.callID,"payload":frame.0.base64EncodedString(),"sequence":frame.1])
+        } catch { transport = "RECONNECTING" }
     }
 
     private func receiveInvite(from peerID: String,callID: String,packet: [String:Any]) async {
@@ -813,6 +846,7 @@ struct CallScreen: View {
         switch session.phase {
         case .ringing: return "ВХОДЯЩИЙ VO1D CALL"
         case .connecting: return "СОЕДИНЕНИЕ…"
+        case .reconnecting: return "ВОССТАНАВЛИВАЕМ СВЯЗЬ…"
         case .active: return "ЗАЩИЩЁННЫЙ АУДИОКАНАЛ"
         }
     }
