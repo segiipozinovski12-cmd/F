@@ -6,9 +6,18 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BackupPayload: Codable {
-    var version = 1
-    var identity: LocalIdentity
+    var version = 2
+    var identity: LocalIdentity?
     var state: VaultState
+    var mode: BackupMode? = nil
+    var ownerCard: ContactCard? = nil
+}
+enum BackupMode: String, Codable, CaseIterable, Identifiable {
+    case identity, history, full
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .identity: return "Только личность"; case .history: return "Только история"; case .full: return "Личность и история" }
+    }
 }
 
 struct BackupEnvelope: Codable {
@@ -41,7 +50,7 @@ enum SecureBackup {
     static func export(_ payload: BackupPayload, password: String) throws -> Data {
         let salt=try Crypto.random(16)
         let key=try key(password:password,salt:salt,rounds:600_000)
-        let clear=try Wire.encoder.encode(payload)
+        let clear=try Wire.encoder.encode(sanitized(payload))
         guard clear.count <= 100*1024*1024 else { throw MessengerError.invalid("Копия больше 100 МБ. Очисти ненужные вложения.") }
         let box=try AES.GCM.seal(clear,using:key,authenticating:Data("VO1D-BACKUP-1".utf8))
         guard let combined=box.combined else { throw MessengerError.invalid("Ошибка резервной копии") }
@@ -56,9 +65,47 @@ enum SecureBackup {
         let clear=try AES.GCM.open(AES.GCM.SealedBox(combined:envelope.ciphertext),using:key,
             authenticating:Data("VO1D-BACKUP-1".utf8))
         let payload=try Wire.decoder.decode(BackupPayload.self,from:clear)
-        guard payload.version==1, payload.identity.storage.count==32 else { throw MessengerError.invalid("Повреждённая копия") }
-        try Crypto.validate(payload.identity.card)
+        guard [1,2].contains(payload.version) else { throw MessengerError.invalid("Повреждённая копия") }
+        if let identity = payload.identity {
+            guard identity.storage.count == 32 else { throw MessengerError.invalid("Повреждённые ключи копии") }
+            try Crypto.validate(identity.card)
+        } else if payload.mode != .history { throw MessengerError.invalid("В копии личности нет ключей") }
         for contact in payload.state.contacts where contact.id != ChatStore.builtinBotID { try Crypto.validate(contact.card) }
+        return try sanitized(payload)
+    }
+    static func sanitized(_ input: BackupPayload) throws -> BackupPayload {
+        var payload = input
+        payload.ownerCard = try input.ownerCard ?? input.identity?.card
+        let mode = input.mode ?? .full
+        payload.mode = mode
+        var local = payload.state.extended ?? ExtendedState()
+        if var signal = local.signal {
+            signal.sessions = [:]; signal.prekeys = [:]; signal.prekeyExpirations = [:]
+            signal.signedKeys = [:]; signal.kyberKeys = [:]; signal.senderKeys = [:]
+            signal.pendingPublication = nil; signal.publishedAt = nil
+            let random = try Crypto.random(4)
+            signal.nextKey = ((UInt32(random[0]) << 24 | UInt32(random[1]) << 16 | UInt32(random[2]) << 8 | UInt32(random[3])) & 0x7fffffff) + 1
+            local.signal = mode == .history ? nil : signal
+        }
+        local.ownMailboxes = []; local.privateInvite = nil; local.privateInviteLink = nil
+        local.invitationBundles = [:]; local.pendingEvents = []; local.reminders = []
+        payload.state.outbox = []; payload.state.processed = []
+        payload.state.extended = local
+        if mode == .history {
+            payload.identity = nil
+            payload.state.accessKey = nil; payload.state.panicCodeHash = nil
+            payload.state.publicCode = nil; payload.state.username = nil
+            local.peerMailboxes = [:]; local.trustedIDs = []; local.signal = nil; local.archives = []
+            payload.state.extended = local
+        } else if mode == .identity {
+            var state = VaultState()
+            state.nickname = input.state.nickname; state.server = input.state.server
+            var identityState = ExtendedState(); identityState.signal = local.signal; identityState.privacy = local.privacy
+            state.extended = identityState; payload.state = state
+        }
+        for i in payload.state.messages.indices where payload.state.messages[i].state == "queued" {
+            payload.state.messages[i].state = "failed"
+        }
         return payload
     }
 }
@@ -97,16 +144,18 @@ struct BackupCenterView: View {
     @State private var document = BackupDocument(data:Data())
     @State private var busy = false
     @State private var status = ""
+    @State private var mode = BackupMode.full
     var body: some View {
         Form {
             Section("Зашифрованная копия") {
+                Picker("Состав",selection:$mode) { ForEach(BackupMode.allCases) { mode in Text(mode.title).tag(mode) } }
                 SecureField("Пароль от 12 символов",text:$password)
-                Text("Копия содержит приватные ключи и историю. Пароль не отправляется на сервер. Потерянный пароль восстановить нельзя.")
+                Text("История сохраняется без ключей личности. Полная копия включает долгосрочные ключи, но исключает текущие сессии и одноразовые ключи сообщений. Пароль не отправляется на сервер.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Создать копию") {
                     guard let identity=store.identity else { return }
                     busy=true
-                    let payload=BackupPayload(identity:identity,state:store.state), secret=password
+                    let payload=BackupPayload(identity:identity,state:store.state,mode:mode), secret=password
                     Task {
                         do { document=BackupDocument(data:try await Task.detached { try SecureBackup.export(payload,password:secret) }.value); exporting=true }
                         catch { status=error.localizedDescription }
@@ -126,8 +175,8 @@ struct BackupCenterView: View {
         .fileImporter(isPresented:$importing,allowedContentTypes:[.data]) { result in
             do { pendingURL=try result.get(); confirmRestore=true } catch { status=error.localizedDescription }
         }
-        .confirmationDialog("Заменить локальный аккаунт копией?",isPresented:$confirmRestore,titleVisibility:.visible) {
-            Button("Восстановить и заменить",role:.destructive) {
+        .confirmationDialog("Импортировать копию? Копия личности заменит текущие ключи.",isPresented:$confirmRestore,titleVisibility:.visible) {
+            Button("Импортировать",role:.destructive) {
                 guard let url=pendingURL else { return }
                 busy=true
                 let secret=password
@@ -149,14 +198,21 @@ struct BackupCenterView: View {
 
 extension ChatStore {
     func restoreBackup(_ payload: BackupPayload) throws {
+        if payload.mode == .history {
+            var local = extended
+            local.archives.append(HistoryArchive(title:payload.state.nickname,rooms:payload.state.rooms,messages:payload.state.messages,contacts:payload.state.contacts,ownerCard:payload.ownerCard))
+            state.extended = local; try save(); return
+        }
+        guard let restoredIdentity = payload.identity else { throw MessengerError.invalid("Нет ключей для восстановления личности") }
         guard let oldIdentity=identity else { throw MessengerError.invalid("Нет текущих ключей") }
         let oldState=state
         generation += 1
         CallManager.shared.disconnect()
+        BackgroundCalls.clear(); MediaFiles.clear(); api?.session.invalidateAndCancel()
         do {
-            try Keychain.replace(payload.identity, profileID: profileID)
-            try vault?.write(payload.state,key:payload.identity.storage)
-            identity=payload.identity; ownCard=try payload.identity.card; state=payload.state
+            try Keychain.replace(restoredIdentity, profileID: profileID)
+            try vault?.write(payload.state,key:restoredIdentity.storage)
+            identity=restoredIdentity; ownCard=try restoredIdentity.card; state=payload.state
             api=nil; locked=state.appLock; sessionUnlocked=false; revealedHiddenRooms=false
             deliveryIssues=[:]
         } catch {

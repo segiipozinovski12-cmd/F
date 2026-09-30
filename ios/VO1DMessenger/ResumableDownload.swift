@@ -19,6 +19,7 @@ final class ResumableDownload: NSObject, URLSessionDataDelegate, @unchecked Send
     static func clear() { try? FileManager.default.removeItem(at:directory) }
 
     func download(_ source: URLRequest,id: String,configuration: URLSessionConfiguration) async throws -> Data {
+        guard id.range(of:"^[A-Za-z0-9_-]{40,64}$",options:.regularExpression) != nil else { throw MessengerError.invalid("Неверный ID загрузки") }
         try Task.checkCancellation()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in

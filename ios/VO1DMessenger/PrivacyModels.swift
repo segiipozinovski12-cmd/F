@@ -97,6 +97,7 @@ struct LocalReminder: Codable, Identifiable, Hashable {
 }
 
 struct ExtendedState: Codable {
+    var archives: [HistoryArchive] = []
     var signal: SignalSnapshot? = nil
     var ownMailboxes: [LocalMailbox] = []
     var peerMailboxes: [String: MailboxAddress] = [:]
@@ -127,6 +128,7 @@ struct ExtendedState: Codable {
     init() {}
     enum CodingKeys: String, CodingKey {
         case signal
+        case archives
         case ownMailboxes, peerMailboxes, invitationBundles, privateInvite
         case privateInviteLink
         case lastOpenedAt, privatePollVotes, privatePollSelections, privacy, folders, bookmarks, notes, aliases, favorites, hiddenRooms, trustedIDs, pendingEvents, declinedRooms, reminders, snippets, roomRetention, roomFontSize, receiptExceptions, protectedMessages, ocrText, roomNotes
@@ -136,6 +138,7 @@ struct ExtendedState: Codable {
         let container=try decoder.container(keyedBy:CodingKeys.self)
         lastOpenedAt=try container.decodeIfPresent(Date.self,forKey:.lastOpenedAt)
         signal=try container.decodeIfPresent(SignalSnapshot.self,forKey:.signal)
+        archives=try container.decodeIfPresent([HistoryArchive].self,forKey:.archives) ?? []
         ownMailboxes=try container.decodeIfPresent([LocalMailbox].self,forKey:.ownMailboxes) ?? []
         peerMailboxes=try container.decodeIfPresent([String: MailboxAddress].self,forKey:.peerMailboxes) ?? [:]
         invitationBundles=try container.decodeIfPresent([String: SignalBundle].self,forKey:.invitationBundles) ?? [:]

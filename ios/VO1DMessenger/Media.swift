@@ -74,7 +74,7 @@ enum VoiceProcessor {
         engine.connect(pitch, to: engine.mainMixerNode, format: format)
 
         try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
-        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+        let output = try MediaFiles.transientURL()
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: 24000,
@@ -140,7 +140,7 @@ final class VoiceRecorder: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
         try session.setActive(true)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+        let url = try MediaFiles.transientURL()
         let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 24000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000])
         guard recorder.record(forDuration: 180) else { throw MessengerError.invalid("Не удалось начать запись") }
         try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
@@ -196,6 +196,11 @@ final class VoiceRecorder: ObservableObject {
 
 enum MediaFiles {
     static var directory: URL { FileManager.default.temporaryDirectory.appendingPathComponent("VO1DPreview", isDirectory: true) }
+    static var transientDirectory: URL { FileManager.default.temporaryDirectory.appendingPathComponent("VO1DTransient", isDirectory: true) }
+    static func transientURL() throws -> URL {
+        try FileManager.default.createDirectory(at:transientDirectory,withIntermediateDirectories:true,attributes:[.protectionKey:FileProtectionType.complete])
+        return transientDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+    }
     static func export(_ attachment: Attachment) throws -> URL {
         try export(data: attachment.data, name: attachment.name)
     }
@@ -207,7 +212,14 @@ enum MediaFiles {
         try data.write(to: url, options: [.atomic, .completeFileProtection])
         return url
     }
-    static func clear() { try? FileManager.default.removeItem(at: directory) }
+    static func clear() {
+        try? FileManager.default.removeItem(at:directory)
+        try? FileManager.default.removeItem(at:transientDirectory)
+        // Remove known legacy playback files left behind by a crash before v2.
+        for file in (try? FileManager.default.contentsOfDirectory(at:FileManager.default.temporaryDirectory,includingPropertiesForKeys:nil)) ?? [] where file.lastPathComponent.hasPrefix("vo1d-voice-") {
+            try? FileManager.default.removeItem(at:file)
+        }
+    }
 }
 
 struct QRCodeView: View {

@@ -67,7 +67,7 @@ final class PrivacyTests: XCTestCase {
         let encoded=try SecureBackup.export(BackupPayload(identity:identity,state:state),password:"correct horse battery")
         XCTAssertFalse(String(data:encoded,encoding:.utf8)!.contains("Private"))
         let restored=try SecureBackup.open(encoded,password:"correct horse battery")
-        XCTAssertEqual(try restored.identity.card.id,try identity.card.id)
+        XCTAssertEqual(try restored.identity?.card.id,try identity.card.id)
         XCTAssertEqual(restored.state.nickname,"Private")
         XCTAssertThrowsError(try SecureBackup.open(encoded,password:"another secret phrase"))
         var envelope=try Wire.decoder.decode(BackupEnvelope.self,from:encoded)
@@ -92,5 +92,33 @@ extension PrivacyTests {
         XCTAssertEqual(try b.open(encrypted.0, sequence: encrypted.1, key: bk, callID: id), Data("delegated audio".utf8))
         authority.expiresAt = 0
         XCTAssertThrowsError(try authority.validate(for: owner.card))
+    }
+}
+
+extension PrivacyTests {
+    func testBackupModesExcludeRatchetAndTransportSecrets() throws {
+        let identity = try LocalIdentity.create()
+        var snapshot = try SignalSnapshot.create()
+        snapshot.sessions["peer:1"] = Data("OLD CHAIN KEY".utf8)
+        snapshot.prekeys["1"] = Data("ONE USE PRIVATE KEY".utf8)
+        snapshot.kyberKeys["2"] = Data("PQ PRIVATE KEY".utf8)
+        var state = VaultState(); var local = ExtendedState(); local.signal = snapshot; state.extended = local
+        let full = try SecureBackup.sanitized(BackupPayload(identity:identity,state:state,mode:.full))
+        XCTAssertNotNil(full.identity)
+        XCTAssertEqual(full.state.extended?.signal?.sessions.count,0)
+        XCTAssertEqual(full.state.extended?.signal?.prekeys.count,0)
+        XCTAssertEqual(full.state.extended?.signal?.kyberKeys.count,0)
+        let history = try SecureBackup.sanitized(BackupPayload(identity:identity,state:state,mode:.history))
+        XCTAssertNil(history.identity)
+        XCTAssertNil(history.state.extended?.signal)
+        let serialized = String(data:try Wire.encoder.encode(history),encoding:.utf8)!
+        XCTAssertFalse(serialized.contains(identity.signing.base64EncodedString()))
+        XCTAssertFalse(serialized.contains(identity.agreement.base64EncodedString()))
+        XCTAssertFalse(serialized.contains(identity.storage.base64EncodedString()))
+        let onlyIdentity = try SecureBackup.sanitized(BackupPayload(identity:identity,state:state,mode:.identity))
+        XCTAssertTrue(onlyIdentity.state.messages.isEmpty)
+        XCTAssertTrue(onlyIdentity.state.contacts.isEmpty)
+        XCTAssertFalse(onlyIdentity.state.onboarded)
+        XCTAssertNotNil(onlyIdentity.state.extended?.signal?.identity)
     }
 }

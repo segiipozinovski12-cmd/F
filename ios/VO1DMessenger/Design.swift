@@ -42,6 +42,7 @@ struct BrandMark: View {
     var size: CGFloat = 58
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = false
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
 
     var body: some View {
         ZStack {
@@ -84,8 +85,12 @@ struct BrandMark: View {
         .frame(width: size, height: size)
         .shadow(color: .white.opacity(0.1), radius: size * 0.18)
         .onAppear {
-            guard !reduceMotion else { return }
+            guard !reduceMotion, !lowPower else { return }
             withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) { phase = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+            if lowPower { phase = false }
         }
         .accessibilityLabel("VO1D")
     }
@@ -374,4 +379,3 @@ struct WelcomeView: View {
         .foregroundStyle(.white.opacity(0.80))
     }
 }
-

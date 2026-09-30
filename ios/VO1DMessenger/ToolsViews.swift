@@ -7,6 +7,10 @@ struct ToolsCenterView: View {
     @State private var report = ""
     var body: some View {
         List {
+            Section("Личности и восстановление") {
+                NavigationLink("Независимые личности") { ProfilesView() }
+                NavigationLink("Архивы истории") { HistoryArchivesView() }
+            }
             Section("Приватность") {
                 NavigationLink("Настройки приватности") { PrivacyCenterView() }
                 NavigationLink("Проверка приватности") { PrivacyDashboardView() }
