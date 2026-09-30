@@ -177,6 +177,7 @@ final class CallManager: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private var api: APIClient?
     private var identity: LocalIdentity?
+    private var pendingConfiguration: (APIClient, LocalIdentity, ContactCard?)?
     private var canonicalCard: ContactCard?
     private var peerCard: ContactCard?
     private var callKey: SymmetricKey?
@@ -208,15 +209,22 @@ final class CallManager: ObservableObject {
         nameResolver: @escaping (String) -> String,
         recordSink: @escaping (CallRecord) -> Void
     ) {
+        self.nameResolver = nameResolver
+        self.recordSink = recordSink
+        if session != nil, socket != nil {
+            // An accepted background call retains the delegated identity used
+            // for its handshake until it ends, even after foreground unlock.
+            pendingConfiguration = (api, identity, ownerCard)
+            return
+        }
         self.api = api
         self.identity = identity
         self.canonicalCard = ownerCard ?? (try? identity.card)
-        self.nameResolver = nameResolver
-        self.recordSink = recordSink
-        if session==nil || socket==nil { connectSocket() }
+        connectSocket()
     }
 
     func disconnect() {
+        pendingConfiguration = nil
         if let current = session {
             provider.reportCall(with: current.id, endedAt: Date(), reason: .failed)
             finishCurrent(status: current.phase == .active ? "interrupted" : (current.incoming ? "missed" : "cancelled"))
@@ -684,6 +692,11 @@ final class CallManager: ObservableObject {
         muted = false
         speaker = true
         audioSessionActive = false
+        if let pending = pendingConfiguration {
+            pendingConfiguration = nil
+            api = pending.0; identity = pending.1; canonicalCard = pending.2 ?? (try? pending.1.card)
+            connectSocket()
+        }
     }
 }
 

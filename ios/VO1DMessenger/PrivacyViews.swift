@@ -60,6 +60,11 @@ struct PrivacyCenterView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Сеть") {
+                NavigationLink("Tor, маршрут и профили защиты") { NetworkRouteView() }
+                Picker("Задержка исходящей очереди", selection:store.preferenceBinding(\.batchDelaySeconds)) {
+                    Text("Без задержки").tag(0); Text("10–15 секунд").tag(10); Text("30–45 секунд").tag(30); Text("60–90 секунд").tag(60)
+                }
+                Text("Случайная задержка сохраняется вместе с очередью. До 24 готовых сообщений отправляются за проход; это не устраняет корреляцию трафика.").font(.caption).foregroundStyle(.secondary)
                 Toggle("SOCKS5 / внешний Tor",isOn:store.preferenceBinding(\.proxyEnabled))
                 TextField("Host, например 127.0.0.1",text:store.preferenceBinding(\.proxyHost))
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -119,15 +124,16 @@ struct PrivacyDashboardView: View {
                 row("Face ID / код",store.state.appLock)
                 row("Превью уведомлений скрыты",!store.preferences.notificationPreview)
                 row("Набор текста скрыт",!store.preferences.typingSignals)
-                row("Прокси настроен",store.preferences.proxyEnabled)
+                row("Защищённый маршрут выбран",store.preferences.proxyEnabled || store.preferences.embeddedTor)
+                Text("Маршрут: \(store.configuredRoute)")
                 Text("Соединение: \(store.connection)")
             }
             Section("Границы") {
-                Text("Relay видит ID отправителя и получателя, время и размер. При прямом подключении видит IP; с прокси видит адрес выхода.")
-                Text("Протокол v1 не реализует Double Ratchet и не проходил внешний аудит.")
+                Text("Приватные адреса скрывают ID участников от очереди. Обычная доставка и поиск по коду раскрывают ID. Сервер видит время, размер и сетевой адрес подключения.")
+                Text("Новые сообщения используют PQXDH и Double Ratchet из libsignal. Интеграция VO1D и внешняя оболочка пока не проходили независимый аудит.")
                 Text("Скриншоты и сохранённые копии собеседника удалить невозможно.")
                 Text("Код из 9 символов открывает это приложение и не восстанавливает криптографическую личность.")
-                Text("Облачные push обрабатывает Apple. Tor встроенным не является.")
+                Text("Tor встроен и включается в настройках маршрута. Apple push и сайты во внешнем браузере используют собственные соединения.")
             }
         }.navigationTitle("Проверка приватности")
     }

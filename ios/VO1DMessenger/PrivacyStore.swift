@@ -265,6 +265,7 @@ extension ChatStore {
         var event=input
         if !event.room.isGroup, let alias=extended.aliases[target.id], !alias.isEmpty { event.senderName=alias }
         if preferences.padding { event.padding=try Crypto.random(128).base64EncodedString() }
+        try validateScopedRoom(event.room)
         event = try Crypto.sanitized(event, from: identity, to: target)
         return Envelope(id: UUID().uuidString, sender: try identity.card.id, recipient: target.id,
             ephemeralKey: "", salt: "", expiresAt: Int(Date().timeIntervalSince1970) + 7 * 86400,
@@ -341,7 +342,7 @@ extension ChatStore {
         var updated=old
         updated.privateRoster=enabled
         updated.onlyAdminsCanPost=true
-        try publishRoomUpdate(oldRoom:old,newRoom:updated)
+        updated = try publishRoomUpdate(oldRoom:old,newRoom:updated)
         state.rooms[index]=updated
         try save()
     }

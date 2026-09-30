@@ -2,9 +2,18 @@ import Foundation
 import Security
 import SwiftUI
 
+enum ProfileScope: String, Codable, CaseIterable, Identifiable {
+    case general, contact, group
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .general: return "Обычная личность"; case .contact: return "Только один контакт"; case .group: return "Только одна группа" }
+    }
+}
 struct LocalProfile: Codable, Identifiable, Hashable {
     var id: String
     var label: String
+    var scope: ProfileScope? = nil
+    var boundID: String? = nil
 }
 struct ProfileRegistry: Codable {
     var activeID = "default"
@@ -34,15 +43,21 @@ struct ProfileRegistry: Codable {
     }
 }
 extension ChatStore {
-    func createProfile(label: String) async throws {
+    func createProfile(label: String, scope: ProfileScope = .general) async throws {
         guard profileRegistry.profiles.count < 12 else { throw MessengerError.invalid("Доступно до 12 независимых личностей") }
         let cleaned = label.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !cleaned.isEmpty, cleaned.count <= 40 else { throw MessengerError.invalid("Укажи локальное имя до 40 символов") }
         let id = UUID().uuidString
         let newIdentity = try Keychain.load(profileID:id), newVault = try Vault(profileID:id)
-        try newVault.write(VaultState(),key:newIdentity.storage)
+        var initial = VaultState()
+        initial.server = state.server
+        var settings = preferences
+        settings.streamIsolation = ""; settings.backgroundCalls = false
+        if scope != .general { settings.discoverable = false; settings.requirePrivateDelivery = true }
+        var local = ExtendedState(); local.privacy = settings; initial.extended = local
+        try newVault.write(initial,key:newIdentity.storage)
         var registry = profileRegistry
-        registry.profiles.append(LocalProfile(id:id,label:cleaned)); try registry.save(); profileRegistry = registry
+        registry.profiles.append(LocalProfile(id:id,label:cleaned,scope:scope)); try registry.save(); profileRegistry = registry
         try await switchProfile(id)
     }
     func switchProfile(_ id: String) async throws {
@@ -78,6 +93,7 @@ extension ChatStore {
 struct ProfilesView: View {
     @EnvironmentObject var store: ChatStore
     @State private var label = ""
+    @State private var scope = ProfileScope.general
     @State private var busy = false
     @State private var deleting: LocalProfile?
     var body: some View {
@@ -87,6 +103,7 @@ struct ProfilesView: View {
                     HStack {
                         VStack(alignment:.leading,spacing:4) {
                             Text(profile.label)
+                            Text((profile.scope ?? .general).title).font(.caption).foregroundStyle(.secondary)
                             if profile.id == store.profileID { Text("Сейчас активна").font(.caption).foregroundStyle(.secondary) }
                         }
                         Spacer()
@@ -101,10 +118,12 @@ struct ProfilesView: View {
             }
             Section("Новая личность") {
                 TextField("Локальное имя",text:$label)
+                Picker("Назначение", selection:$scope) { ForEach(ProfileScope.allCases) { Text($0.title).tag($0) } }
+                Text("Для одного контакта или группы создаются отдельные ключи и ID. Личность привязывается к первому принятому контакту или группе. Передай её новое приватное приглашение; старый публичный ID сюда не переносится.").font(.caption).foregroundStyle(.secondary)
                 Button("Создать отдельные ключи") {
                     busy = true
                     Task {
-                        do { try await store.createProfile(label:label); label = "" } catch { store.error = error.localizedDescription }
+                        do { try await store.createProfile(label:label,scope:scope); label = "" } catch { store.error = error.localizedDescription }
                         busy = false
                     }
                 }.disabled(busy || label.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
@@ -122,5 +141,32 @@ struct ProfilesView: View {
     private func switchTo(_ id: String) {
         busy = true
         Task { do { try await store.switchProfile(id) } catch { store.error = error.localizedDescription }; busy = false }
+    }
+}
+
+extension ChatStore {
+    var activeProfile: LocalProfile? { profileRegistry.profiles.first { $0.id == profileID } }
+    func validateScopedContact(_ peerID: String) throws {
+        if activeProfile?.scope == .contact, let bound = activeProfile?.boundID, bound != peerID {
+            throw MessengerError.invalid("У этой личности один контакт. Создай другую личность для нового собеседника.")
+        }
+    }
+    func validateScopedRoom(_ room: Room) throws {
+        switch activeProfile?.scope ?? .general {
+        case .general: return
+        case .contact:
+            guard !room.isGroup, let peer = room.members.first(where: { $0.id != myID }) else { throw MessengerError.invalid("Личность для одного контакта не участвует в группах") }
+            try validateScopedContact(peer.id)
+        case .group:
+            guard room.isGroup, activeProfile?.boundID == nil || activeProfile?.boundID == room.id else { throw MessengerError.invalid("Эта личность используется только в своей группе") }
+        }
+    }
+    func bindScopedID(_ id: String, scope: ProfileScope) throws {
+        guard let index = profileRegistry.profiles.firstIndex(where: { $0.id == profileID }), profileRegistry.profiles[index].scope == scope else { return }
+        if let bound = profileRegistry.profiles[index].boundID {
+            guard bound == id else { throw MessengerError.invalid("Личность уже привязана к другому чату") }; return
+        }
+        var registry = profileRegistry; registry.profiles[index].boundID = id
+        try registry.save(); profileRegistry = registry
     }
 }

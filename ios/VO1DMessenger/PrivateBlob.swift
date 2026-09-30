@@ -24,6 +24,8 @@ enum WorkProof {
     }
 }
 
+private struct BlobFailure: Decodable { var error: String }
+
 extension APIClient {
     private struct Capabilities: Decodable { var protocolVersion: Int; var workBits: Int
         enum CodingKeys: String, CodingKey { case protocolVersion = "protocol", workBits }
@@ -41,8 +43,7 @@ extension APIClient {
         let (data,response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MessengerError.invalid("Нет ответа сервера") }
         guard (200..<300).contains(http.statusCode) else {
-            struct Failure: Decodable { var error: String }
-            throw HTTPFailure(status: http.statusCode, detail: (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка приватного файла")
+            throw HTTPFailure(status: http.statusCode, detail: (try? Wire.decoder.decode(BlobFailure.self, from: data).error) ?? "Ошибка приватного файла")
         }
         return try Wire.decoder.decode(T.self, from: data)
     }

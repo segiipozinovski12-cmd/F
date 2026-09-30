@@ -122,3 +122,9 @@ final class NetworkState: ObservableObject {
         monitor.start(queue: DispatchQueue(label: "io.vo1d.network"))
     }
 }
+
+/// Capability and identity requests never forward their bodies or credentials
+/// to a redirect target, even when the original server asks for one.
+final class NoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+}

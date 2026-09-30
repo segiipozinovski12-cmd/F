@@ -91,7 +91,7 @@ final class ChatStore: ObservableObject {
         do { try save() } catch { self.error = error.localizedDescription }
     }
     func onboardProduction(name: String) async {
-        await configure(name: name, server: AppConfig.productionRelay)
+        await configure(name: name, server: state.server.isEmpty ? AppConfig.productionRelay : state.server)
     }
 
     func connectProductionRelay() async {
@@ -464,11 +464,13 @@ final class ChatStore: ObservableObject {
             }
         }
         try Crypto.validate(card)
+        try validateScopedContact(card.id)
         guard card.id != myID else { throw MessengerError.invalid("Это твой собственный ID") }
         if let existing = state.contacts.first(where: { $0.id == card.id }) {
             guard existing.card == card else { throw MessengerError.invalid("Ключ контакта изменился") }
             return existing
         }
+        try bindScopedID(card.id,scope:.contact)
         let contact = Contact(card: card, name: name)
         state.contacts.append(contact)
         changeExtended { if !$0.trustedIDs.contains(card.id) { $0.trustedIDs.append(card.id) } }
@@ -576,9 +578,10 @@ final class ChatStore: ObservableObject {
             creator: myID,
             isGroup: true,
             createdAt: Date(),
-            admins: [myID]
+            admins: [myID], membershipEpoch: 1
         )
 
+        try validateScopedRoom(room)
         let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
         let targets = cleanContacts.map(\.card)
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
@@ -586,6 +589,7 @@ final class ChatStore: ObservableObject {
             PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
+        try bindScopedID(room.id,scope:.group)
         state.rooms.append(room)
         state.outbox.append(contentsOf: pending)
         try save()
@@ -618,9 +622,10 @@ final class ChatStore: ObservableObject {
             admins: [myID],
             onlyAdminsCanPost: true,
             isChannel: true,
-            topics: []
+            topics: [], membershipEpoch: 1
         )
 
+        try validateScopedRoom(room)
         let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
         let targets = cleanContacts.map(\.card)
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
@@ -628,6 +633,7 @@ final class ChatStore: ObservableObject {
             PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
+        try bindScopedID(room.id,scope:.group)
         state.rooms.append(room)
         state.outbox.append(contentsOf: pending)
         try save()
@@ -673,7 +679,7 @@ final class ChatStore: ObservableObject {
 
         var newRoom = oldRoom
         newRoom.topics = topics
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[index] = newRoom
         try save()
     }
@@ -687,7 +693,7 @@ final class ChatStore: ObservableObject {
 
         var newRoom = oldRoom
         newRoom.topics = (oldRoom.topics ?? []).filter { $0 != name }
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[index] = newRoom
         try save()
     }
@@ -706,7 +712,10 @@ final class ChatStore: ObservableObject {
         room.isGroup && groupAdminIDs(room).contains(myID)
     }
 
-    func publishRoomUpdate(oldRoom: Room, newRoom: Room) throws {
+    func publishRoomUpdate(oldRoom: Room, newRoom input: Room) throws -> Room {
+        var newRoom = input
+        guard (oldRoom.membershipEpoch ?? 0) < 1_000_000_000 else { throw MessengerError.invalid("Версия группы исчерпана") }
+        newRoom.membershipEpoch = (oldRoom.membershipEpoch ?? 0) + 1
         guard oldRoom.isGroup,
               newRoom.isGroup,
               oldRoom.creator == myID,
@@ -729,7 +738,15 @@ final class ChatStore: ObservableObject {
             )
         }
 
+        let allowed = Set(newRoom.members.map(\.id))
+        if Set(oldRoom.members.map(\.id)) != allowed {
+            let oldMessages = Set(state.messages.filter { $0.roomID == oldRoom.id }.map(\.id))
+            let cancelled = Set(state.outbox.filter { $0.messageID.map(oldMessages.contains) == true }.compactMap(\.messageID))
+            state.outbox.removeAll { $0.messageID.map(oldMessages.contains) == true }
+            for index in state.messages.indices where cancelled.contains(state.messages[index].id) { state.messages[index].state = "failed" }
+        }
         state.outbox.append(contentsOf: pending)
+        return newRoom
     }
 
     func updateGroupMembers(_ roomID: String, contacts: [Contact]) throws {
@@ -761,7 +778,7 @@ final class ChatStore: ObservableObject {
         admins.insert(myID)
         newRoom.admins = Array(admins).sorted()
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -786,7 +803,7 @@ final class ChatStore: ObservableObject {
         admins.insert(myID)
         newRoom.admins = Array(admins).sorted()
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -802,7 +819,7 @@ final class ChatStore: ObservableObject {
         var newRoom = oldRoom
         newRoom.onlyAdminsCanPost = enabled
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -819,7 +836,7 @@ final class ChatStore: ObservableObject {
         var newRoom = oldRoom
         newRoom.title = clean
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -1328,7 +1345,16 @@ final class ChatStore: ObservableObject {
             try await maintainSignalPrekeys(api: api, identity: identity, generation: currentGeneration)
             try await collectPrivateInbox(api: api, identity: identity, generation: currentGeneration)
             // Outbox is persisted before any network request. Retries reuse the exact signed envelope.
-            for pending in Array(state.outbox.prefix(24)) {
+            if preferences.batchDelaySeconds > 0 {
+                let moment = Date(), delay = Double(preferences.batchDelaySeconds)
+                var assigned = false
+                for index in state.outbox.indices where state.outbox[index].notBefore == nil {
+                    state.outbox[index].notBefore = moment.addingTimeInterval(delay + Double.random(in: 0...max(1,delay/2)))
+                    assigned = true
+                }
+                if assigned { try save() }
+            }
+            for pending in Array(state.outbox.filter { ($0.notBefore ?? .distantPast) <= Date() }.prefix(24)) {
                 if let issue=deliveryIssues[pending.id], issue.nextAttempt > Date() { continue }
                 do {
                     let envelope = try await prepareSignalDelivery(pending, api: api, identity: identity, generation: currentGeneration)
@@ -1389,9 +1415,12 @@ final class ChatStore: ObservableObject {
     }
     func applyAccepted(_ event: ChatEvent, sender: ContactCard) throws { try apply(event,sender:sender) }
     private func apply(_ event: ChatEvent, sender: ContactCard) throws {
+        if try handleGroupControl(event,sender:sender) { return }
         let incoming = event.room
+        try validateScopedRoom(incoming)
         if extended.declinedRooms.contains(incoming.id) { return }
         let minimumMembers = incoming.isGroup ? 1 : 2
+        guard (0...1_000_000_000).contains(incoming.membershipEpoch ?? 0) else { throw MessengerError.invalid("Неверная версия группы") }
 
         guard !incoming.id.isEmpty,
               incoming.id.count <= 160,
@@ -1423,6 +1452,7 @@ final class ChatStore: ObservableObject {
 
         if let roomIndex = state.rooms.firstIndex(where: { $0.id == incoming.id }) {
             let current = state.rooms[roomIndex]
+            try GroupEpoch.validate(current: current, incoming: incoming, update: event.kind == "roomUpdate")
 
             if event.kind == "roomUpdate" {
                 guard current.isGroup,
@@ -1488,7 +1518,9 @@ final class ChatStore: ObservableObject {
             }
 
             let known = extended.trustedIDs.contains(sender.id)
-            let needsConsent = incoming.isGroup ? !preferences.allowGroupInvites : (preferences.requireRequests && !known)
+            let approval = extended.acceptedGroupInvites[incoming.id]
+            let invited = (approval?.expiresAt ?? 0) > Int(Date().timeIntervalSince1970) && approval?.creator == sender && incoming.creator == sender.id
+            let needsConsent = incoming.isGroup ? (!preferences.allowGroupInvites && !invited) : (preferences.requireRequests && !known)
             if needsConsent && !acceptedPendingIDs.contains(incoming.id) {
                 changeExtended {
                     let bytes=$0.pendingEvents.reduce(0) { $0 + ($1.event.message?.attachment?.data.count ?? 0) }
@@ -1498,6 +1530,7 @@ final class ChatStore: ObservableObject {
                 }
                 return
             }
+            try bindScopedID(incoming.isGroup ? incoming.id : sender.id,scope:incoming.isGroup ? .group : .contact)
             var room = incoming
             room.pinned = false
             room.archived = false

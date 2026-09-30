@@ -36,6 +36,7 @@ struct Room: Codable, Identifiable, Hashable {
     var topics: [String]? = nil
     var mutedUntil: Date? = nil
     var privateRoster: Bool? = nil
+    var membershipEpoch: Int? = nil
 }
 
 struct Attachment: Codable, Hashable {
@@ -111,6 +112,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
 
 /// All event content, including group membership and attachments, lives inside AEAD.
 struct ChatEvent: Codable {
+    var groupInvitation: GroupInvitation? = nil
     var replyMailbox: MailboxAddress? = nil
     var id: String = UUID().uuidString
     var kind: String
@@ -141,6 +143,7 @@ struct Envelope: Codable, Identifiable {
 }
 
 struct PendingDelivery: Codable, Identifiable {
+    var notBefore: Date? = nil
     var envelope: Envelope
     var messageID: String?
     var id: String { envelope.id + envelope.recipient }

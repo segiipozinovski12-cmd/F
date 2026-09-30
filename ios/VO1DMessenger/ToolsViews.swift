@@ -14,6 +14,8 @@ struct ToolsCenterView: View {
             Section("Приватность") {
                 NavigationLink("Настройки приватности") { PrivacyCenterView() }
                 NavigationLink("Проверка приватности") { PrivacyDashboardView() }
+                NavigationLink("Диагностика и восстановление") { PrivacyDiagnosticsView() }
+                NavigationLink("Приглашения в группы") { GroupInvitationsView() }
                 NavigationLink("Одноразовые приглашения") { InvitationCenterView() }
                 NavigationLink("Запросы · \(store.requestRooms.count)") { MessageRequestsView() }
                 NavigationLink("Скрытые чаты") { HiddenRoomsView() }

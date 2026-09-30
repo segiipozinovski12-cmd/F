@@ -9,6 +9,8 @@ struct VO1DMessengerApp: App {
     @State private var leftAt: Date?
 
     init() {
+        UITableView.appearance().backgroundColor = .black
+        UICollectionView.appearance().backgroundColor = .black
         MediaFiles.clear()
         NotificationCoordinator.shared.install()
     }

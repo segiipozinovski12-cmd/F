@@ -87,6 +87,7 @@ enum SecureBackup {
             signal.nextKey = ((UInt32(random[0]) << 24 | UInt32(random[1]) << 16 | UInt32(random[2]) << 8 | UInt32(random[3])) & 0x7fffffff) + 1
             local.signal = mode == .history ? nil : signal
         }
+        local.issuedGroupInvites = [:]; local.pendingGroupInvites = []; local.acceptedGroupInvites = [:]
         local.privateBlobDeletes = [:]; local.ownMailboxes = []; local.privateInvite = nil; local.privateInviteLink = nil
         local.invitationBundles = [:]; local.pendingEvents = []; local.reminders = []
         local.privacy.streamIsolation = ""

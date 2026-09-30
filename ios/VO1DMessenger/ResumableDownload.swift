@@ -53,6 +53,8 @@ final class ResumableDownload: NSObject, URLSessionDataDelegate, @unchecked Send
         }
     }
 
+    func urlSession(_ session: URLSession,task: URLSessionTask,willPerformHTTPRedirection response: HTTPURLResponse,newRequest request: URLRequest,completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+
     func urlSession(_ session: URLSession,dataTask: URLSessionDataTask,didReceive response: URLResponse,
                     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
         do {

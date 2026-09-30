@@ -32,7 +32,7 @@ final class APIClient {
         self.authenticationCard = authenticationCard
         self.callToken = callToken
         let config = try TransportConfiguration.make(privacy)
-        session = URLSession(configuration: config)
+        session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
     }
 
     nonisolated static func validateURL(_ string: String, privacy: PrivacyPreferences? = nil) throws -> URL {

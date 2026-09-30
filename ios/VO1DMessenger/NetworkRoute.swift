@@ -17,7 +17,7 @@ extension ChatStore {
         if preferences.proxyEnabled { return preferences.proxyUsesTor ? "Tor через внешний SOCKS5 · не проверен" : "SOCKS5 · \(preferences.proxyHost)" }
         return "Прямое соединение"
     }
-    func usePrivacyProfile(_ profile: PrivacyProfile) async throws {
+    func selectPrivacyProfile(_ profile: PrivacyProfile) throws {
         var local = extended
         switch profile {
         case .everyday:
@@ -34,6 +34,9 @@ extension ChatStore {
             state.notificationsEnabled = false
         }
         state.extended = local; try save()
+    }
+    func usePrivacyProfile(_ profile: PrivacyProfile) async throws {
+        try selectPrivacyProfile(profile)
         try await reconfigureTransport(); try await applyPrivacy()
     }
 }

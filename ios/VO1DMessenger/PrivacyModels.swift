@@ -1,6 +1,7 @@
 import Foundation
 
 struct PrivacyPreferences: Codable {
+    var batchDelaySeconds = 0
     var backgroundCalls = false
     var requireRequests = true
     var allowGroupInvites = false
@@ -42,6 +43,7 @@ struct PrivacyPreferences: Codable {
     var anonymizeFilenames = true
     init() {}
     enum CodingKeys: String, CodingKey {
+        case batchDelaySeconds
         case requirePrivateDelivery
         case embeddedTor, torBridges, proxyUsesTor, streamIsolation
         case backgroundCalls, requireRequests, allowGroupInvites, discoverable, typingSignals, deliveryReceipts, notificationPreview, cleanLinks, confirmLinks, clipboardSeconds, inactivityDays, localRetentionDays, defaultDisappearing, proxyHost, proxyPort, proxyEnabled, padding, quietHours, quietStart, quietEnd, compactRows, sortOrder, fontSize, lowData, maxUploadMB, hideMedia, forwardWithoutName, verifiedOnlyCalls, autoLockSeconds, keepEditHistory, protectRecording, linkPreviews, wifiOnlyUploads, anonymizeFilenames
@@ -49,6 +51,8 @@ struct PrivacyPreferences: Codable {
     init(from decoder: Decoder) throws {
         self.init()
         let container=try decoder.container(keyedBy:CodingKeys.self)
+        batchDelaySeconds=try container.decodeIfPresent(Int.self,forKey:.batchDelaySeconds) ?? 0
+        batchDelaySeconds = max(0,min(60,batchDelaySeconds))
         backgroundCalls=try container.decodeIfPresent(Bool.self,forKey:.backgroundCalls) ?? backgroundCalls
         requireRequests=try container.decodeIfPresent(Bool.self,forKey:.requireRequests) ?? requireRequests
         allowGroupInvites=try container.decodeIfPresent(Bool.self,forKey:.allowGroupInvites) ?? allowGroupInvites
@@ -106,6 +110,9 @@ struct LocalReminder: Codable, Identifiable, Hashable {
 }
 
 struct ExtendedState: Codable {
+    var issuedGroupInvites: [String: GroupInvitation] = [:]
+    var pendingGroupInvites: [GroupInvitation] = []
+    var acceptedGroupInvites: [String: GroupInvitation] = [:]
     var privateBlobDeletes: [String: OwnedPrivateBlob] = [:]
     var archives: [HistoryArchive] = []
     var signal: SignalSnapshot? = nil
@@ -137,6 +144,7 @@ struct ExtendedState: Codable {
     var roomNotes: [String: String] = [:]
     init() {}
     enum CodingKeys: String, CodingKey {
+        case issuedGroupInvites, pendingGroupInvites, acceptedGroupInvites
         case signal
         case archives, privateBlobDeletes
         case ownMailboxes, peerMailboxes, invitationBundles, privateInvite
@@ -147,6 +155,9 @@ struct ExtendedState: Codable {
         self.init()
         let container=try decoder.container(keyedBy:CodingKeys.self)
         lastOpenedAt=try container.decodeIfPresent(Date.self,forKey:.lastOpenedAt)
+        issuedGroupInvites=try container.decodeIfPresent([String: GroupInvitation].self,forKey:.issuedGroupInvites) ?? [:]
+        pendingGroupInvites=try container.decodeIfPresent([GroupInvitation].self,forKey:.pendingGroupInvites) ?? []
+        acceptedGroupInvites=try container.decodeIfPresent([String: GroupInvitation].self,forKey:.acceptedGroupInvites) ?? [:]
         signal=try container.decodeIfPresent(SignalSnapshot.self,forKey:.signal)
         privateBlobDeletes=try container.decodeIfPresent([String: OwnedPrivateBlob].self,forKey:.privateBlobDeletes) ?? [:]
         archives=try container.decodeIfPresent([HistoryArchive].self,forKey:.archives) ?? []

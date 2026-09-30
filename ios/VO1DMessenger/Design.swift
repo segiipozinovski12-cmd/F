@@ -246,6 +246,8 @@ struct SplashView: View {
 struct WelcomeView: View {
     @EnvironmentObject var store: ChatStore
     @State private var name = ""
+    @State private var privacyProfile = PrivacyProfile.privateDelivery
+    @State private var relay = ""
     @State private var appeared = false
 
     var body: some View {
@@ -292,12 +294,18 @@ struct WelcomeView: View {
                             .tracking(-1.9)
                             .minimumScaleFactor(0.82)
 
-                        Text("Никакого телефона и почты. Только ник, VO1D ID и локальные криптографические ключи. Всё остальное VO1D настраивает сам.")
+                        Text("Без телефона и почты. Ключи создаются на устройстве. Выбери маршрут и режим доставки перед подключением.")
                             .font(.subheadline)
                             .foregroundStyle(Theme.secondary)
                             .lineSpacing(5)
                     }
 
+                    VStack(alignment:.leading,spacing:12) {
+                        Picker("Режим защиты", selection:$privacyProfile) { ForEach(PrivacyProfile.allCases) { Text($0.title).tag($0) } }.tint(.white)
+                        Text(privacyProfile.detail).font(.caption).foregroundStyle(Theme.secondary)
+                        TextField("HTTPS или v3 onion relay",text:$relay).textInputAutocapitalization(.never).autocorrectionDisabled().voidField()
+                        Text("Без push сообщения приходят при открытии приложения. Tor увеличивает время подключения и расход батареи. Резервная копия создаётся отдельно после входа.").font(.caption).foregroundStyle(Theme.secondary)
+                    }.panel()
                     VStack(spacing: 12) {
                         TextField("Твой ник", text: $name)
                             .textContentType(.nickname)
@@ -306,12 +314,12 @@ struct WelcomeView: View {
                             .onSubmit {
                                 let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
                                 guard !clean.isEmpty, !store.busy else { return }
-                                Task { await store.onboardProduction(name: clean) }
+                                join(name:clean)
                             }
 
                         Button {
                             let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                            Task { await store.onboardProduction(name: clean) }
+                            join(name:clean)
                         } label: {
                             HStack(spacing: 10) {
                                 Text(store.busy ? "ПОДКЛЮЧАЕМ VO1D…" : "ВОЙТИ В VO1D")
@@ -378,4 +386,14 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity)
         .foregroundStyle(.white.opacity(0.80))
     }
+    private func join(name: String) {
+        Task {
+            do {
+                try store.selectPrivacyProfile(privacyProfile)
+                let selected = relay.trimmingCharacters(in:.whitespacesAndNewlines)
+                await store.configure(name:name,server:selected.isEmpty ? AppConfig.productionRelay : selected)
+            } catch { store.error = error.localizedDescription }
+        }
+    }
+
 }
