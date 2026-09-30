@@ -22,7 +22,7 @@ CALL_MAX_AUDIO = 96 * 1024
 CALL_MAX_TEXT = 140 * 1024
 BLOB_MAX_BYTES = 50 * 1024 * 1024 + 64
 BLOB_OWNER_QUOTA = 500 * 1024 * 1024
-BLOB_RETENTION = 30 * 86400
+BLOB_RETENTION = max(60,min(7*86400,int(os.environ.get("VO1D_BLOB_RETENTION",str(7*86400)))))
 BLOB_ID = re.compile(r"^[A-Za-z0-9_-]{40,64}$")
 
 
@@ -76,7 +76,7 @@ class RealtimeGateway:
         if include_orphans:
             try:
                 for item in self.blob_dir.iterdir():
-                    if item.is_file() and item.name not in live:
+                    if item.is_file() and item.name not in live and (".tmp-" not in item.name or time.time()-item.stat().st_mtime>3600):
                         item.unlink(missing_ok=True)
             except OSError:
                 pass
@@ -302,7 +302,7 @@ class RealtimeGateway:
         await ws.send_json({"type": "ready"})
         for call_id, route in list(self.calls.items()):
             if route["b"] == user and not route["accepted"]:
-                await ws.send_json({"type":"invite","from":route["a"],"callID":call_id})
+                await ws.send_json({"type":"invite","from":route["a"],"callID":call_id,"key":route["key"],"keySignature":route["keySignature"]})
 
         try:
             async for message in ws:
@@ -338,7 +338,20 @@ class RealtimeGateway:
                     await self._send_error(ws, "invalid_call")
                     continue
 
+                if kind in ("invite","answer"):
+                    key,signature=packet.get("key"),packet.get("keySignature")
+                    try:
+                        if not isinstance(key,str) or not isinstance(signature,str) or len(base64.b64decode(key,validate=True))!=32 or len(base64.b64decode(signature,validate=True))!=64:
+                            raise ValueError()
+                    except (ValueError,TypeError):
+                        await self._send_error(ws,"invalid_call_key")
+                        continue
                 if kind == "invite":
+                    try:
+                        self.relay.rate("call-invite:"+user,12)
+                    except APIError:
+                        await self._send_error(ws,"call_rate_limit")
+                        continue
                     with self.relay.db() as db:
                         known = db.execute("SELECT 1 FROM identities WHERE id=?", (target,)).fetchone()
                         blocked = db.execute(
@@ -361,7 +374,7 @@ class RealtimeGateway:
                         if peer_ws is None or peer_ws.closed:
                             peer_ws = None
                         if not busy and not blocked:
-                            self.calls[call_id] = {"a": user, "b": target, "accepted": False,"created":time.monotonic()}
+                            self.calls[call_id] = {"a": user, "b": target, "accepted": False,"created":time.monotonic(),"key":key,"keySignature":signature}
                     if blocked:
                         await self._send_error(ws, "peer_unavailable")
                         continue
@@ -375,7 +388,7 @@ class RealtimeGateway:
                                 self.calls.pop(call_id,None)
                             await self._send_error(ws,"peer_offline")
                         continue
-                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id})
+                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature})
                     continue
 
                 async with self.lock:
@@ -395,11 +408,14 @@ class RealtimeGateway:
                     async with self.lock:
                         if call_id in self.calls:
                             self.calls[call_id]["accepted"] = True
-                    await self._forward(peer, {"type": "answer", "from": user, "callID": call_id})
+                    await self._forward(peer, {"type": "answer", "from": user, "callID": call_id,"key":key,"keySignature":signature})
                     continue
 
                 if kind == "audio":
                     if not route["accepted"]:
+                        continue
+                    sequence=packet.get("sequence","")
+                    if not isinstance(sequence,str) or not sequence.isdigit() or len(sequence)>20:
                         continue
                     payload = packet.get("payload")
                     if not isinstance(payload, str):
@@ -417,6 +433,7 @@ class RealtimeGateway:
                             "from": user,
                             "callID": call_id,
                             "payload": payload,
+                            "sequence":sequence,
                         },
                     )
                     continue

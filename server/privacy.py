@@ -127,6 +127,9 @@ def handle(relay, db, user, env, body, error):
         current=hashlib.sha256(env.get('HTTP_AUTHORIZATION','')[7:].encode()).hexdigest()
         db.execute('DELETE FROM sessions WHERE identity=? AND digest<>?',(user,current))
         return {'ok':True}
+    if method == 'DELETE' and path == '/v1/push':
+        db.execute('DELETE FROM push_tokens WHERE identity=?',(user,))
+        return {'ok':True}
     if method == 'POST' and path == '/v1/push':
         token,kind,environment=body.get('token',''),body.get('kind'),body.get('environment')
         if not isinstance(token,str) or not PUSH_TOKEN.fullmatch(token) or kind not in ('alert','voip') or environment not in ('sandbox','production'):

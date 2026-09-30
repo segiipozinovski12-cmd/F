@@ -51,6 +51,11 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         completionHandler()
     }
 
+    func clearAll() {
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        clearDelivered()
+    }
+
     func clearDelivered() {
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }

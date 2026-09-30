@@ -55,8 +55,9 @@ enum Crypto {
     }
     static func seal(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
         var event = input
+        let own = try identity.card
         event.room = input.room.wireCopy
-        if event.room.privateRoster==true && event.room.isChannel==true && event.room.creator == (try identity.card.id) && recipient.id != event.room.creator {
+        if event.room.privateRoster==true && event.room.isChannel==true && event.room.creator == own.id && recipient.id != event.room.creator {
             event.room.members = event.room.members.filter { $0.id==event.room.creator || $0.id==recipient.id }
         }
         if var message = event.message {
@@ -65,7 +66,6 @@ enum Crypto {
             event.message = message
         }
         try validate(recipient)
-        let own = try identity.card
         let ephemeral = Curve25519.KeyAgreement.PrivateKey()
         let salt = try random(32)
         var envelope = Envelope(id: UUID().uuidString, sender: own.id, recipient: recipient.id,

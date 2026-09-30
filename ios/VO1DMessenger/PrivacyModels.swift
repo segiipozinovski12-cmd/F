@@ -1,6 +1,7 @@
 import Foundation
 
 struct PrivacyPreferences: Codable {
+    var backgroundCalls = true
     var requireRequests = true
     var allowGroupInvites = false
     var discoverable = true
@@ -36,11 +37,12 @@ struct PrivacyPreferences: Codable {
     var anonymizeFilenames = true
     init() {}
     enum CodingKeys: String, CodingKey {
-        case requireRequests, allowGroupInvites, discoverable, typingSignals, deliveryReceipts, notificationPreview, cleanLinks, confirmLinks, clipboardSeconds, inactivityDays, localRetentionDays, defaultDisappearing, proxyHost, proxyPort, proxyEnabled, padding, quietHours, quietStart, quietEnd, compactRows, sortOrder, fontSize, lowData, maxUploadMB, hideMedia, forwardWithoutName, verifiedOnlyCalls, autoLockSeconds, keepEditHistory, protectRecording, linkPreviews, wifiOnlyUploads, anonymizeFilenames
+        case backgroundCalls, requireRequests, allowGroupInvites, discoverable, typingSignals, deliveryReceipts, notificationPreview, cleanLinks, confirmLinks, clipboardSeconds, inactivityDays, localRetentionDays, defaultDisappearing, proxyHost, proxyPort, proxyEnabled, padding, quietHours, quietStart, quietEnd, compactRows, sortOrder, fontSize, lowData, maxUploadMB, hideMedia, forwardWithoutName, verifiedOnlyCalls, autoLockSeconds, keepEditHistory, protectRecording, linkPreviews, wifiOnlyUploads, anonymizeFilenames
     }
     init(from decoder: Decoder) throws {
         self.init()
         let container=try decoder.container(keyedBy:CodingKeys.self)
+        backgroundCalls=try container.decodeIfPresent(Bool.self,forKey:.backgroundCalls) ?? backgroundCalls
         requireRequests=try container.decodeIfPresent(Bool.self,forKey:.requireRequests) ?? requireRequests
         allowGroupInvites=try container.decodeIfPresent(Bool.self,forKey:.allowGroupInvites) ?? allowGroupInvites
         discoverable=try container.decodeIfPresent(Bool.self,forKey:.discoverable) ?? discoverable

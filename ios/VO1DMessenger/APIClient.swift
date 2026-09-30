@@ -18,11 +18,15 @@ final class APIClient {
     var base: URL
     private var token: String?
     let session: URLSession
+    let privacy: PrivacyPreferences
     private let identity: LocalIdentity
+    private let authenticationCard: ContactCard?
 
-    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences()) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil) throws {
         base = try Self.validateURL(server)
+        self.privacy = privacy
         self.identity = identity
+        self.authenticationCard = authenticationCard
         let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config)
     }
@@ -66,7 +70,9 @@ final class APIClient {
 
     func authenticate() async throws {
         token = nil
-        let card = try identity.card
+        let card: ContactCard
+        if let authenticationCard { card = authenticationCard }
+        else { card = try identity.card }
         let _: OK = try await request("v1/register", method: "POST", body: Wire.encoder.encode(card), retry: false)
         struct Challenge: Decodable { var nonce: String }
         let challenge: Challenge = try await request("v1/challenge", method: "POST", body: Wire.encoder.encode(["id": card.id]), retry: false)

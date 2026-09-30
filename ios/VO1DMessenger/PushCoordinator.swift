@@ -29,7 +29,8 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
     func register(api: APIClient, enabled: Bool) async throws {
         self.api = api
         self.enabled = enabled
-        if enabled { UIApplication.shared.registerForRemoteNotifications(); start() }
+        if enabled { UIApplication.shared.registerForRemoteNotifications(); if api.privacy.backgroundCalls { start() } }
+        else { let _: APIClient.OK = try await api.request("v1/push",method:"DELETE") }
         #if DEBUG
         let environment = "sandbox"
         #else
@@ -39,7 +40,7 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
         for (token,kind) in [(alertToken,"alert"),(voipToken,"voip")] {
             if let token {
                 let _: APIClient.OK = try await api.request("v1/push",method:"POST",
-                    body:Wire.encoder.encode(Body(token:token,kind:kind,environment:environment,enabled:enabled)))
+                    body:Wire.encoder.encode(Body(token:token,kind:kind,environment:environment,enabled:enabled && (kind != "voip" || api.privacy.backgroundCalls))))
             }
         }
     }
@@ -70,7 +71,7 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
         let callID=payload.dictionaryPayload["callID"] as? String ?? UUID().uuidString
         let peer=payload.dictionaryPayload["from"] as? String ?? ""
         CallManager.shared.reportPushedCall(peerID:peer,callID:callID,completion:completion)
-        Task { await wake?() }
+        Task { await BackgroundCalls.resume(peerID:peer); await wake?() }
     }
 }
 

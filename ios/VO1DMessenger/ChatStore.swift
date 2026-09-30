@@ -82,6 +82,7 @@ final class ChatStore: ObservableObject {
     func save() throws {
         guard let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
         try vault.write(state, key: identity.storage)
+        BackgroundCalls.save(self)
     }
     func persist() {
         do { try save() } catch { self.error = error.localizedDescription }
@@ -1648,6 +1649,9 @@ final class ChatStore: ObservableObject {
     func resetLocalIdentity() throws {
         CallManager.shared.disconnect()
         try vault?.delete()
+        BackgroundCalls.clear()
+        ResumableDownload.clear()
+        NotificationCoordinator.shared.clearAll()
         try Keychain.delete()
         let fresh = try Keychain.load()
         identity = fresh
