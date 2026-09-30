@@ -71,6 +71,9 @@ final class ChatStore: ObservableObject {
             state.server = AppConfig.productionRelay
             state.publicCode = publicCode
             try save()
+            CallManager.shared.configure(api: client, identity: identity) { [weak self] id in
+                self?.name(id) ?? "VO1D"
+            }
             connection = "Подключён"
         } catch {
             connection = "Нет связи"
@@ -95,6 +98,9 @@ final class ChatStore: ObservableObject {
             if firstLaunch { state.credentialsAcknowledged = false }
             sessionUnlocked = true
             try save()
+            CallManager.shared.configure(api: client, identity: identity) { [weak self] id in
+                self?.name(id) ?? "VO1D"
+            }
             connection = "Подключён"
         } catch { self.error = error.localizedDescription }
     }
@@ -212,6 +218,17 @@ final class ChatStore: ObservableObject {
         state.contacts.append(contact); try save()
         return contact
     }
+    func startCall(_ roomID: String) {
+        guard connection == "Подключён",
+              let room = state.rooms.first(where: { $0.id == roomID }),
+              !room.isGroup,
+              let peer = room.members.first(where: { $0.id != myID }) else {
+            error = "Звонок доступен только в подключённом личном чате"
+            return
+        }
+        CallManager.shared.startCall(peer: peer, name: room.title)
+    }
+
     func direct(_ contact: Contact) throws -> Room {
         guard !contact.blocked, let ownCard else { throw MessengerError.invalid("Контакт заблокирован") }
         let ids = [myID, contact.id].sorted().joined(separator: ":")
@@ -439,6 +456,7 @@ final class ChatStore: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     private func resetLocalIdentity() throws {
+        CallManager.shared.disconnect()
         try vault?.delete()
         try Keychain.delete()
         let fresh = try Keychain.load()

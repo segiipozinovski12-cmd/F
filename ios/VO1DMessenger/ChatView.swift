@@ -72,6 +72,16 @@ struct ChatView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    if room?.isGroup == false && !selectionMode {
+                        Button {
+                            store.startCall(roomID)
+                        } label: {
+                            Image(systemName: "phone.fill")
+                        }
+                        .disabled(store.connection != "Подключён")
+                        .accessibilityLabel("Позвонить")
+                    }
+
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
                             selectionMode.toggle()
@@ -431,6 +441,15 @@ struct RoomInfoView: View {
                 if let room {
                     Section {
                         HStack { Spacer(); VStack(spacing: 14) { Avatar(name: room.title, group: room.isGroup, size: 80); Text(room.title).font(.title2.bold()); Text(room.isGroup ? "\(room.members.count) участника · закрытая группа" : "Личный чат").font(.caption).foregroundStyle(Theme.secondary) }; Spacer() }.padding(.vertical, 16)
+                    }
+                    if !room.isGroup {
+                        Section("Связь") {
+                            Button("Позвонить", systemImage: "phone.fill") {
+                                store.startCall(roomID)
+                                dismiss()
+                            }
+                            .disabled(store.connection != "Подключён")
+                        }
                     }
                     Section("Переписка") {
                         Toggle("Закрепить", isOn: Binding(get: { room.pinned }, set: { value in store.updateRoom(roomID) { $0.pinned = value } }))

@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct VO1DMessengerApp: App {
     @StateObject private var store = ChatStore()
+    @StateObject private var calls = CallManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -13,6 +14,7 @@ struct VO1DMessengerApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environmentObject(calls)
                 .preferredColorScheme(.dark)
                 .tint(.white)
                 .onChange(of: scenePhase) { _, phase in
@@ -28,6 +30,7 @@ struct VO1DMessengerApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var store: ChatStore
+    @EnvironmentObject private var calls: CallManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var splash = true
 
@@ -53,6 +56,13 @@ struct RootView: View {
                 }
             }
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
+
+            if let call = calls.session {
+                CallScreen(session: call)
+                    .environmentObject(calls)
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    .zIndex(20)
+            }
 
             if scenePhase != .active {
                 Color.black.ignoresSafeArea()

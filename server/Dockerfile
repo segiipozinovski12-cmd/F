@@ -16,7 +16,7 @@ RUN apt-get update \
     && mkdir -p /data \
     && chown relay:relay /data
 
-COPY app.py .
+COPY app.py realtime.py ./
 COPY railway-entrypoint.sh /usr/local/bin/railway-entrypoint
 RUN chmod 0755 /usr/local/bin/railway-entrypoint
 

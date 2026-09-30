@@ -111,6 +111,25 @@ final class APIClient {
         let _: OK = try await request("v1/block", method: "POST", body: Wire.encoder.encode(Block(id: id, blocked: blocked)))
     }
 
+    func callSocketRequest() throws -> URLRequest {
+        guard let token else { throw MessengerError.invalid("Сессия relay ещё не готова") }
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            throw MessengerError.invalid("Некорректный адрес relay")
+        }
+        components.scheme = base.scheme == "https" ? "wss" : "ws"
+        components.path = "/v1/call/socket"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else {
+            throw MessengerError.invalid("Не удалось создать адрес звонка")
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 20
+        return request
+    }
+
     func deleteAccount() async throws {
         let _: OK = try await request("v1/account", method: "DELETE")
     }
