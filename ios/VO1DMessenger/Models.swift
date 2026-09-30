@@ -32,6 +32,9 @@ struct Room: Codable, Identifiable, Hashable {
     var admins: [String]? = nil
     var onlyAdminsCanPost: Bool? = nil
     var pinnedMessageIDs: [String]? = nil
+    var isChannel: Bool? = nil
+    var topics: [String]? = nil
+    var mutedUntil: Date? = nil
 }
 
 struct Attachment: Codable, Hashable {
@@ -40,6 +43,18 @@ struct Attachment: Codable, Hashable {
     var data: Data
     var viewSeconds: Int? = nil
     var voiceEffect: String? = nil
+}
+
+struct PollOption: Codable, Hashable, Identifiable {
+    var id: String
+    var text: String
+    var voterIDs: [String]
+}
+
+struct PollData: Codable, Hashable {
+    var question: String
+    var options: [PollOption]
+    var closed: Bool = false
 }
 
 struct ChatMessage: Codable, Identifiable, Hashable {
@@ -59,6 +74,10 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var openedAt: Date? = nil
     var forwardedFrom: String? = nil
     var scheduledAt: Date? = nil
+    var silent: Bool? = nil
+    var editHistory: [String]? = nil
+    var poll: PollData? = nil
+    var topic: String? = nil
 }
 
 /// All event content, including group membership and attachments, lives inside AEAD.

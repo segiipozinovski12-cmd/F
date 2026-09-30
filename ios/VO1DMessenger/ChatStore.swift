@@ -619,9 +619,38 @@ final class ChatStore: ObservableObject {
         attachment: Attachment? = nil,
         replyTo: String? = nil,
         forwardedFrom: String? = nil,
-        scheduledAt: Date? = nil
+        scheduledAt: Date? = nil,
+        silent: Bool = false,
+        poll: PollData? = nil,
+        topic: String? = nil
     ) throws {
-        guard let room = state.rooms.first(where: { $0.id == roomID }), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachment != nil else { return }
+        guard let room = state.rooms.first(where: { $0.id == roomID }),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachment != nil || poll != nil else { return }
+
+        if let scheduledAt, scheduledAt > Date().addingTimeInterval(1) {
+            let scheduled = ChatMessage(
+                id: UUID().uuidString,
+                roomID: roomID,
+                sender: myID,
+                text: text,
+                createdAt: Date(),
+                expiresAt: nil,
+                replyTo: replyTo,
+                attachment: attachment,
+                state: "scheduled",
+                forwardedFrom: forwardedFrom,
+                scheduledAt: scheduledAt,
+                silent: silent,
+                poll: poll,
+                topic: topic
+            )
+            state.messages.append(scheduled)
+            if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
+                state.rooms[index].draft = ""
+            }
+            try save()
+            return
+        }
 
         if isSavedRoom(roomID) {
             let message = ChatMessage(
@@ -635,7 +664,10 @@ final class ChatStore: ObservableObject {
                 attachment: attachment,
                 state: "read",
                 forwardedFrom: forwardedFrom,
-                scheduledAt: scheduledAt
+                scheduledAt: nil,
+                silent: silent,
+                poll: poll,
+                topic: topic
             )
             state.messages.append(message)
             if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
@@ -658,7 +690,10 @@ final class ChatStore: ObservableObject {
                 attachment: attachment,
                 state: "read",
                 forwardedFrom: forwardedFrom,
-                scheduledAt: scheduledAt
+                scheduledAt: nil,
+                silent: silent,
+                poll: poll,
+                topic: topic
             )
             let response = ChatMessage(
                 id: UUID().uuidString,
@@ -698,7 +733,10 @@ final class ChatStore: ObservableObject {
             replyTo: replyTo,
             attachment: attachment,
             forwardedFrom: forwardedFrom,
-            scheduledAt: scheduledAt
+            scheduledAt: nil,
+            silent: silent,
+            poll: poll,
+            topic: topic
         )
         try enqueue(ChatEvent(kind: "message", room: room, message: message, senderName: state.nickname), room: room, messageID: message.id)
         state.messages.append(message)
@@ -712,7 +750,16 @@ final class ChatStore: ObservableObject {
         }
 
         if isLocalUtilityRoom(message.roomID) {
-            if kind == "edit" { state.messages[index].text = String((value ?? "").prefix(16000)); state.messages[index].edited = true }
+            if kind == "edit" {
+            var history = state.messages[index].editHistory ?? []
+            if !state.messages[index].text.isEmpty {
+                history.append(state.messages[index].text)
+                if history.count > 20 { history.removeFirst(history.count - 20) }
+            }
+            state.messages[index].editHistory = history
+            state.messages[index].text = String((value ?? "").prefix(16000))
+            state.messages[index].edited = true
+        }
             if kind == "delete" { state.messages.remove(at: index) }
             if kind == "reaction" { state.messages[index].reactions[myID] = value }
             try save()
@@ -767,6 +814,80 @@ final class ChatStore: ObservableObject {
         try save()
     }
 
+    func createPoll(roomID: String, question: String, options: [String], scheduledAt: Date? = nil) throws {
+        let cleanQuestion = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+        let cleanOptions = options
+            .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100)) }
+            .filter { !$0.isEmpty }
+
+        guard !cleanQuestion.isEmpty else {
+            throw MessengerError.invalid("Введи вопрос опроса")
+        }
+        guard cleanOptions.count >= 2 && cleanOptions.count <= 10 else {
+            throw MessengerError.invalid("Нужно от 2 до 10 вариантов")
+        }
+
+        let poll = PollData(
+            question: cleanQuestion,
+            options: cleanOptions.map {
+                PollOption(id: UUID().uuidString, text: $0, voterIDs: [])
+            }
+        )
+
+        try send(
+            roomID: roomID,
+            text: cleanQuestion,
+            attachment: nil,
+            replyTo: nil,
+            forwardedFrom: nil,
+            scheduledAt: scheduledAt,
+            silent: false,
+            poll: poll
+        )
+    }
+
+    func votePoll(messageID: String, optionID: String) throws {
+        guard let index = state.messages.firstIndex(where: { $0.id == messageID }),
+              var poll = state.messages[index].poll,
+              !poll.closed,
+              poll.options.contains(where: { $0.id == optionID }) else { return }
+
+        for optionIndex in poll.options.indices {
+            poll.options[optionIndex].voterIDs.removeAll { $0 == myID }
+            if poll.options[optionIndex].id == optionID {
+                poll.options[optionIndex].voterIDs.append(myID)
+            }
+        }
+        state.messages[index].poll = poll
+
+        if !isLocalUtilityRoom(state.messages[index].roomID),
+           let room = state.rooms.first(where: { $0.id == state.messages[index].roomID }) {
+            try enqueue(
+                ChatEvent(kind: "pollVote", room: room, target: messageID, value: optionID, senderName: state.nickname),
+                room: room
+            )
+        }
+        try save()
+    }
+
+    func closePoll(messageID: String) throws {
+        guard let index = state.messages.firstIndex(where: { $0.id == messageID }),
+              state.messages[index].sender == myID,
+              var poll = state.messages[index].poll else { return }
+
+        poll.closed = true
+        state.messages[index].poll = poll
+
+        if !isLocalUtilityRoom(state.messages[index].roomID),
+           let room = state.rooms.first(where: { $0.id == state.messages[index].roomID }) {
+            try enqueue(
+                ChatEvent(kind: "pollClose", room: room, target: messageID, value: "1", senderName: state.nickname),
+                room: room
+            )
+        }
+        try save()
+    }
+
     func markRead(_ roomID: String) {
         guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
         state.rooms[roomIndex].unread = 0
@@ -793,11 +914,44 @@ final class ChatStore: ObservableObject {
             do { try await api.send(Crypto.seal(event, from: identity, to: target)) } catch { /* Ephemeral signal is intentionally not retried. */ }
         }
     }
+    private func processScheduledMessages() {
+        let now = Date()
+        let due = state.messages.filter {
+            $0.state == "scheduled" &&
+            ($0.scheduledAt ?? .distantFuture) <= now
+        }
+
+        for scheduled in due {
+            state.messages.removeAll { $0.id == scheduled.id }
+            do {
+                try send(
+                    roomID: scheduled.roomID,
+                    text: scheduled.text,
+                    attachment: scheduled.attachment,
+                    replyTo: scheduled.replyTo,
+                    forwardedFrom: scheduled.forwardedFrom,
+                    scheduledAt: nil,
+                    silent: scheduled.silent == true,
+                    poll: scheduled.poll,
+                    topic: scheduled.topic
+                )
+            } catch {
+                var retry = scheduled
+                retry.scheduledAt = now.addingTimeInterval(30)
+                state.messages.append(retry)
+                self.error = error.localizedDescription
+            }
+        }
+
+        if !due.isEmpty { persist() }
+    }
+
     func sync() async {
         guard !syncing, !locked, state.onboarded, let api, let identity else { return }
         syncing = true; let currentGeneration = generation
         defer { syncing = false }
         do {
+            processScheduledMessages()
             expire()
             // Outbox is persisted before any network request. Retries reuse the exact signed envelope.
             for pending in Array(state.outbox.prefix(24)) {
@@ -982,6 +1136,7 @@ final class ChatStore: ObservableObject {
                 if let index = state.rooms.firstIndex(where: { $0.id == incoming.id }) { state.rooms[index].unread += 1 }
 
                 if state.notificationsEnabled == true &&
+                   message.silent != true &&
                    activeRoomID != incoming.id &&
                    !(state.rooms.first(where: { $0.id == incoming.id })?.muted ?? false) {
                     let title = state.rooms.first(where: { $0.id == incoming.id })?.title ?? String(event.senderName.prefix(40))
@@ -1005,11 +1160,36 @@ final class ChatStore: ObservableObject {
         } else if let target = event.target, let index = state.messages.firstIndex(where: { $0.id == target && $0.roomID == incoming.id }) {
             switch event.kind {
             case "edit" where state.messages[index].sender == sender.id:
-                state.messages[index].text = String((event.value ?? "").prefix(16000)); state.messages[index].edited = true
+                var history = state.messages[index].editHistory ?? []
+                if !state.messages[index].text.isEmpty {
+                    history.append(state.messages[index].text)
+                    if history.count > 20 { history.removeFirst(history.count - 20) }
+                }
+                state.messages[index].editHistory = history
+                state.messages[index].text = String((event.value ?? "").prefix(16000))
+                state.messages[index].edited = true
             case "delete" where state.messages[index].sender == sender.id:
                 state.messages.remove(at: index)
             case "reaction":
                 if let value = event.value, ["❤️", "👍", "🔥", "😂", "👀", ""].contains(value) { state.messages[index].reactions[sender.id] = value.isEmpty ? nil : value }
+            case "pollVote":
+                if var poll = state.messages[index].poll,
+                   let optionID = event.value,
+                   poll.options.contains(where: { $0.id == optionID }),
+                   !poll.closed {
+                    for optionIndex in poll.options.indices {
+                        poll.options[optionIndex].voterIDs.removeAll { $0 == sender.id }
+                        if poll.options[optionIndex].id == optionID {
+                            poll.options[optionIndex].voterIDs.append(sender.id)
+                        }
+                    }
+                    state.messages[index].poll = poll
+                }
+            case "pollClose" where state.messages[index].sender == sender.id:
+                if var poll = state.messages[index].poll {
+                    poll.closed = true
+                    state.messages[index].poll = poll
+                }
             case "pin":
                 if let roomIndex = state.rooms.firstIndex(where: { $0.id == incoming.id }) {
                     var ids = state.rooms[roomIndex].pinnedMessageIDs ?? []

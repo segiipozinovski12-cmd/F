@@ -20,6 +20,8 @@ struct ChatView: View {
     @State private var selectionMode = false
     @State private var selectedIDs: Set<String> = []
     @State private var showDeleteSelection = false
+    @State private var pollBuilder = false
+    @State private var historyMessage: ChatMessage?
     @State private var forwarding: ChatMessage?
     @StateObject private var audio = VoiceRecorder()
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
@@ -168,6 +170,12 @@ struct ChatView: View {
             .sheet(item: $forwarding) { message in
                 ForwardPickerView(message: message, sourceRoomID: roomID)
             }
+            .sheet(isPresented: $pollBuilder) {
+                PollComposerView(roomID: roomID)
+            }
+            .sheet(item: $historyMessage) { message in
+                EditHistoryView(message: message)
+            }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
                 do {
                     let url = try result.get(); let granted = url.startAccessingSecurityScopedResource()
@@ -302,6 +310,7 @@ struct ChatView: View {
                         }
                         Button("Фото с таймером", systemImage: "timer") { photoOptions = true }
                         Button("Файл", systemImage: "doc") { importing = true }
+                        Button("Опрос", systemImage: "chart.bar.xaxis") { pollBuilder = true }
                         Menu("Голос: \(store.selectedVoiceEffect().title)") {
                             ForEach(VoiceEffect.allCases) { effect in
                                 Button {
@@ -324,7 +333,44 @@ struct ChatView: View {
                             Image(systemName: "mic").font(.title3).frame(width: 42, height: 42).background(Theme.panel, in: Circle())
                         }.accessibilityLabel("Записать голосовое сообщение")
                     } else {
-                        Button { send() } label: { Image(systemName: "arrow.up").font(.headline).foregroundStyle(.black).frame(width: 42, height: 42).background(.white, in: Circle()) }.accessibilityLabel("Отправить")
+                        HStack(spacing: 6) {
+                            Menu {
+                                Button("Отправить без звука", systemImage: "bell.slash") {
+                                    send(silent: true)
+                                }
+                                Divider()
+                                Button("Через 1 минуту", systemImage: "clock") {
+                                    send(scheduledAt: Date().addingTimeInterval(60))
+                                }
+                                Button("Через 10 минут", systemImage: "clock") {
+                                    send(scheduledAt: Date().addingTimeInterval(600))
+                                }
+                                Button("Через 1 час", systemImage: "clock") {
+                                    send(scheduledAt: Date().addingTimeInterval(3600))
+                                }
+                                Button("Завтра в 09:00", systemImage: "calendar.badge.clock") {
+                                    send(scheduledAt: tomorrowNine())
+                                }
+                            } label: {
+                                Image(systemName: "clock.badge")
+                                    .font(.subheadline)
+                                    .frame(width: 30, height: 42)
+                                    .foregroundStyle(Theme.secondary)
+                            }
+                            .accessibilityLabel("Параметры отправки")
+
+                            Button {
+                                send()
+                                Haptics.light()
+                            } label: {
+                                Image(systemName: "arrow.up")
+                                    .font(.headline)
+                                    .foregroundStyle(.black)
+                                    .frame(width: 42, height: 42)
+                                    .background(.white, in: Circle())
+                            }
+                            .accessibilityLabel("Отправить")
+                        }
                     }
                 }.padding(.horizontal, 14).padding(.vertical, 10)
             }
@@ -426,13 +472,25 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                if !message.text.isEmpty { Text(message.text).font(.system(size: 16)).textSelection(.enabled) }
+                if let poll = message.poll {
+                    PollMessageView(message: message, poll: poll, mine: mine)
+                } else if !message.text.isEmpty {
+                    Text(message.text)
+                        .font(.system(size: 16))
+                        .textSelection(.enabled)
+                }
                 HStack(spacing: 5) {
                     if message.edited { Text("изменено") }
+                    if message.silent == true { Image(systemName: "bell.slash.fill") }
                     if message.expiresAt != nil { Image(systemName: "timer") }
-                    Text(message.createdAt, style: .time)
+                    if message.state == "scheduled", let scheduledAt = message.scheduledAt {
+                        Image(systemName: "calendar.badge.clock")
+                        Text(scheduledAt, style: .time)
+                    } else {
+                        Text(message.createdAt, style: .time)
+                    }
                     if mine {
-                        Image(systemName: message.state == "queued" ? "clock" : (message.state == "read" ? "checkmark.circle.fill" : message.state == "delivered" ? "checkmark.circle" : "checkmark"))
+                        Image(systemName: message.state == "scheduled" ? "calendar.badge.clock" : (message.state == "queued" ? "clock" : (message.state == "read" ? "checkmark.circle.fill" : message.state == "delivered" ? "checkmark.circle" : "checkmark")))
                             .accessibilityLabel(message.state)
                     }
                 }.font(.system(size: 10)).opacity(0.55).frame(maxWidth: .infinity, alignment: .trailing)
@@ -467,6 +525,25 @@ struct ChatView: View {
                         selectedIDs.insert(message.id)
                     }
                 }
+                .simultaneousGesture(
+                    TapGesture(count: 2)
+                        .onEnded {
+                            guard !selectionMode else { return }
+                            perform { try store.action("reaction", message: message, value: "❤️") }
+                            Haptics.light()
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 25)
+                        .onEnded { value in
+                            guard !selectionMode,
+                                  value.translation.width > 65,
+                                  abs(value.translation.height) < 55 else { return }
+                            reply = message
+                            editing = nil
+                            Haptics.light()
+                        }
+                )
                 .contextMenu {
                     Button("Выбрать", systemImage: "checkmark.circle") {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
@@ -483,6 +560,16 @@ struct ChatView: View {
                         systemImage: "pin"
                     ) {
                         perform { try store.togglePinnedMessage(message) }
+                    }
+                    if !(message.editHistory ?? []).isEmpty {
+                        Button("История изменений", systemImage: "clock.arrow.circlepath") {
+                            historyMessage = message
+                        }
+                    }
+                    if mine, message.poll != nil, message.poll?.closed != true {
+                        Button("Закрыть опрос", systemImage: "lock.fill") {
+                            perform { try store.closePoll(messageID: message.id) }
+                        }
                     }
                     Button("Копировать", systemImage: "doc.on.doc") { UIPasteboard.general.setItems([["public.utf8-plain-text": message.text]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)]) }
                     Menu("Реакция") { ForEach(["❤️", "👍", "🔥", "😂", "👀"], id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
@@ -525,14 +612,259 @@ struct ChatView: View {
         }
     }
 
-    func send(_ attachment: Attachment? = nil) {
+    func send(
+        _ attachment: Attachment? = nil,
+        silent: Bool = false,
+        scheduledAt: Date? = nil
+    ) {
         perform {
-            if let editing { try store.action("edit", message: editing, value: text) }
-            else { try store.send(roomID: roomID, text: text, attachment: attachment, replyTo: reply?.id) }
-            text = ""; reply = nil; editing = nil
+            if let editing {
+                try store.action("edit", message: editing, value: text)
+            } else {
+                try store.send(
+                    roomID: roomID,
+                    text: text,
+                    attachment: attachment,
+                    replyTo: reply?.id,
+                    forwardedFrom: nil,
+                    scheduledAt: scheduledAt,
+                    silent: silent
+                )
+            }
+            text = ""
+            reply = nil
+            editing = nil
         }
     }
-    func perform(_ action: () throws -> Void) { do { try action() } catch { store.error = error.localizedDescription } }
+
+    func tomorrowNine() -> Date {
+        let calendar = Calendar.current
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date().addingTimeInterval(86400)
+        return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+    }
+
+    func perform(_ action: () throws -> Void) {
+        do {
+            try action()
+        } catch {
+            Haptics.warning()
+            store.error = error.localizedDescription
+        }
+    }
+}
+
+private struct PollMessageView: View {
+    let message: ChatMessage
+    let poll: PollData
+    let mine: Bool
+
+    @EnvironmentObject private var store: ChatStore
+
+    private var totalVotes: Int {
+        poll.options.reduce(0) { $0 + $1.voterIDs.count }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack {
+                Image(systemName: "chart.bar.fill")
+                Text("ОПРОС")
+                    .font(.caption2.bold().monospaced())
+                    .tracking(1.4)
+                Spacer()
+                if poll.closed {
+                    Text("ЗАКРЫТ")
+                        .font(.system(size: 8, weight: .black, design: .monospaced))
+                        .tracking(1)
+                }
+            }
+            .opacity(0.62)
+
+            Text(poll.question)
+                .font(.system(size: 16, weight: .bold))
+
+            ForEach(poll.options) { option in
+                let selected = option.voterIDs.contains(store.myID)
+                let ratio = totalVotes > 0 ? Double(option.voterIDs.count) / Double(totalVotes) : 0
+
+                Button {
+                    guard !poll.closed else { return }
+                    do {
+                        try store.votePoll(messageID: message.id, optionID: option.id)
+                        Haptics.light()
+                    } catch {
+                        store.error = error.localizedDescription
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            Text(option.text)
+                                .lineLimit(2)
+                            Spacer()
+                            Text("\(option.voterIDs.count)")
+                                .font(.caption.monospacedDigit())
+                        }
+
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill((mine ? Color.black : Color.white).opacity(0.10))
+                                Capsule()
+                                    .fill((mine ? Color.black : Color.white).opacity(0.45))
+                                    .frame(width: proxy.size.width * ratio)
+                            }
+                        }
+                        .frame(height: 3)
+                    }
+                    .padding(10)
+                    .background(
+                        (mine ? Color.black : Color.white).opacity(selected ? 0.10 : 0.045),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(poll.closed)
+            }
+
+            Text("\(totalVotes) голосов")
+                .font(.caption2)
+                .opacity(0.55)
+        }
+    }
+}
+
+private struct PollComposerView: View {
+    let roomID: String
+
+    @EnvironmentObject private var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var question = ""
+    @State private var options = ["", ""]
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                VoidBackground()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("Новый опрос")
+                            .font(.system(size: 32, weight: .black, design: .rounded))
+
+                        TextField("Вопрос", text: $question, axis: .vertical)
+                            .lineLimit(2...5)
+                            .voidField()
+
+                        VStack(spacing: 10) {
+                            ForEach(options.indices, id: \.self) { index in
+                                HStack {
+                                    TextField("Вариант \(index + 1)", text: Binding(
+                                        get: { options[index] },
+                                        set: { options[index] = String($0.prefix(100)) }
+                                    ))
+                                    .voidField()
+
+                                    if options.count > 2 {
+                                        Button {
+                                            options.remove(at: index)
+                                        } label: {
+                                            Image(systemName: "minus.circle.fill")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if options.count < 10 {
+                            Button("Добавить вариант", systemImage: "plus.circle") {
+                                options.append("")
+                            }
+                            .buttonStyle(GhostButton())
+                        }
+
+                        Button("СОЗДАТЬ ОПРОС") {
+                            do {
+                                try store.createPoll(
+                                    roomID: roomID,
+                                    question: question,
+                                    options: options
+                                )
+                                Haptics.success()
+                                dismiss()
+                            } catch {
+                                store.error = error.localizedDescription
+                            }
+                        }
+                        .buttonStyle(PrimaryButton())
+                        .disabled(
+                            question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            options.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count < 2
+                        )
+                    }
+                    .padding(24)
+                }
+            }
+            .navigationTitle("Опрос")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+private struct EditHistoryView: View {
+    let message: ChatMessage
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                VoidBackground()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        let history = message.editHistory ?? []
+                        ForEach(Array(history.enumerated()), id: \.offset) { index, value in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("ВЕРСИЯ \(index + 1)")
+                                    .font(.caption2.monospaced())
+                                    .tracking(1.5)
+                                    .foregroundStyle(Theme.secondary)
+                                Text(value)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .panel()
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("ТЕКУЩАЯ")
+                                .font(.caption2.monospaced())
+                                .tracking(1.5)
+                                .foregroundStyle(Theme.secondary)
+                            Text(message.text)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .panel()
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle("История изменений")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Готово") { dismiss() }
+                }
+            }
+        }
+    }
 }
 
 private struct ForwardPickerView: View {
