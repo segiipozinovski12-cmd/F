@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import LocalAuthentication
+import CryptoKit
 
 @MainActor
 final class ChatStore: ObservableObject {
@@ -9,6 +10,7 @@ final class ChatStore: ObservableObject {
     @Published var connection = "Не подключён"
     @Published var busy = false
     @Published var locked = false
+    @Published var sessionUnlocked = false
     @Published var fatalError: String?
     @Published var typing: [String: Date] = [:]
     private(set) var identity: LocalIdentity?
@@ -26,9 +28,12 @@ final class ChatStore: ObservableObject {
             let vault = try Vault()
             self.identity = identity; self.vault = vault; ownCard = try identity.card
             state = try vault.read(key: identity.storage)
+            let credentialsChanged = try ensureCredentials()
             locked = state.appLock
+            sessionUnlocked = !state.onboarded
             if !state.server.isEmpty { api = try APIClient(server: state.server, identity: identity) }
             expire()
+            if credentialsChanged { try save() }
         } catch { fatalError = error.localizedDescription }
     }
     func save() throws {
@@ -42,14 +47,108 @@ final class ChatStore: ObservableObject {
         guard let identity else { return }
         busy = true; defer { busy = false }
         do {
+            let firstLaunch = !state.onboarded
             let client = try APIClient(server: server, identity: identity)
             try await client.authenticate()
-            api = client; state.server = client.base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let publicCode = try await client.ensurePublicCode()
+            api = client
+            state.server = client.base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
             if state.nickname.isEmpty { state.nickname = "Ghost" }
+            _ = try ensureCredentials()
+            state.publicCode = publicCode
             state.onboarded = true
-            try save(); connection = "Подключён"
+            if firstLaunch { state.credentialsAcknowledged = false }
+            sessionUnlocked = true
+            try save()
+            connection = "Подключён"
         } catch { self.error = error.localizedDescription }
+    }
+
+    @discardableResult
+    private func ensureCredentials() throws -> Bool {
+        var changed = false
+        if state.publicCode == nil {
+            state.publicCode = try randomToken(length: 4)
+            changed = true
+        }
+        if state.accessKey == nil {
+            state.accessKey = try randomToken(length: 9)
+            changed = true
+        }
+        if state.credentialsAcknowledged == nil {
+            state.credentialsAcknowledged = state.onboarded ? false : nil
+            changed = changed || state.onboarded
+        }
+        return changed
+    }
+
+    private func randomToken(length: Int) throws -> String {
+        let alphabet = Array("23456789ABCDEFGHJKLMNPQRSTUVWXYZ")
+        let bytes = try Crypto.random(length)
+        return bytes.map { String(alphabet[Int($0) & 31]) }.joined()
+    }
+
+    func finishLocalOnboarding(name: String) {
+        do {
+            state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+            if state.nickname.isEmpty { state.nickname = "Ghost" }
+            _ = try ensureCredentials()
+            state.onboarded = true
+            state.credentialsAcknowledged = false
+            sessionUnlocked = true
+            try save()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func acknowledgeCredentials() {
+        state.credentialsAcknowledged = true
+        sessionUnlocked = true
+        persist()
+    }
+
+    func unlockWithAccessKey(_ value: String) -> Bool {
+        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard candidate == state.accessKey else {
+            error = "Неверный ключ доступа"
+            return false
+        }
+        sessionUnlocked = true
+        return true
+    }
+
+    func setEmergencyCode(_ value: String) -> Bool {
+        let code = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard code.count == 4, code.allSatisfy({ $0.isNumber }) else {
+            error = "Код экстренного сброса должен состоять из 4 цифр"
+            return false
+        }
+        state.panicCodeHash = emergencyDigest(code)
+        persist()
+        return true
+    }
+
+    private func emergencyDigest(_ code: String) -> String {
+        Crypto.hex(SHA256.hash(data: Data("VO1D-EMERGENCY-1\n\(code)".utf8)))
+    }
+
+    func emergencyReset(code: String) async -> Bool {
+        guard let expected = state.panicCodeHash,
+              emergencyDigest(code.trimmingCharacters(in: .whitespacesAndNewlines)) == expected else {
+            error = "Неверный код экстренного сброса"
+            return false
+        }
+        busy = true
+        defer { busy = false }
+        generation += 1
+        if let api { try? await api.deleteAccount() }
+        do {
+            try resetLocalIdentity()
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
     }
     func invite() throws -> String {
         guard let ownCard else { throw MessengerError.invalid("Нет ключей") }
@@ -72,8 +171,14 @@ final class ChatStore: ObservableObject {
             }
             card = invite.card; name = String(invite.name.prefix(40))
         } else {
-            guard let api else { throw MessengerError.invalid("Подключись к серверу") }
-            card = try await api.card(input.lowercased()); name = "Ghost \(card.shortID.prefix(6))"
+            guard let api else { throw MessengerError.invalid("Подключись к relay-серверу") }
+            let normalized = input.uppercased()
+            if normalized.count == 4 {
+                card = try await api.card(publicCode: normalized)
+            } else {
+                card = try await api.card(input.lowercased())
+            }
+            name = "Ghost \(card.shortID.prefix(6))"
         }
         try Crypto.validate(card)
         guard card.id != myID else { throw MessengerError.invalid("Это твой собственный ID") }
@@ -293,17 +398,27 @@ final class ChatStore: ObservableObject {
             if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Открыть приватные чаты VO1D") { locked = false }
         } catch { self.error = error.localizedDescription }
     }
+    private func resetLocalIdentity() throws {
+        try vault?.delete()
+        try Keychain.delete()
+        let fresh = try Keychain.load()
+        identity = fresh
+        ownCard = try fresh.card
+        api = nil
+        state = VaultState()
+        locked = false
+        sessionUnlocked = false
+        connection = "Не подключён"
+        try save()
+    }
+
     func deleteAccount() async {
-        guard let api else { return }
-        busy = true; defer { busy = false }
+        busy = true
+        defer { busy = false }
         do {
             generation += 1
-            try await api.deleteAccount()
-            try vault?.delete(); try Keychain.delete()
-            let fresh = try Keychain.load()
-            identity = fresh; ownCard = try fresh.card
-            self.api = nil; state = VaultState(); locked = false; connection = "Не подключён"
-            try save()
+            if let api { try await api.deleteAccount() }
+            try resetLocalIdentity()
         } catch { self.error = error.localizedDescription }
     }
     func name(_ id: String) -> String { id == myID ? "Ты" : state.contacts.first(where: { $0.id == id })?.name ?? "Ghost" }

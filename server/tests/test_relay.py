@@ -149,6 +149,22 @@ class RelayTests(unittest.TestCase):
         status, card = self.request('/v1/identity/'+self.bob_card['id'], token=self.a)
         self.assertEqual(status, 200); self.assertEqual(card, self.bob_card)
 
+    def test_compact_code_is_stable_and_resolves_identity(self):
+        status, first = self.request('/v1/code', 'POST', {}, self.a)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(first['code']), 4)
+        status, second = self.request('/v1/code', 'POST', {}, self.a)
+        self.assertEqual(status, 200)
+        self.assertEqual(first['code'], second['code'])
+        status, card = self.request('/v1/code/' + first['code'], token=self.b)
+        self.assertEqual(status, 200)
+        self.assertEqual(card, self.alice_card)
+
+    def test_compact_code_removed_with_account(self):
+        _, code = self.request('/v1/code', 'POST', {}, self.a)
+        self.assertEqual(self.request('/v1/account', 'DELETE', token=self.a)[0], 200)
+        self.assertEqual(self.request('/v1/code/' + code['code'], token=self.b)[0], 404)
+
     def test_rate_limit(self):
         for _ in range(4):
             self.relay.rate('isolated', 4)

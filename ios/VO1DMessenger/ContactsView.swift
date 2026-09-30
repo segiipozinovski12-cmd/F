@@ -1,126 +1,339 @@
 import SwiftUI
 
 struct ContactsView: View {
-    @EnvironmentObject var store: ChatStore
-    @State var adding = false
-    @State var search = ""
-    @State var room: Room?
+    @EnvironmentObject private var store: ChatStore
+    @State private var adding = false
+    @State private var search = ""
+    @State private var room: Room?
+
+    private var contacts: [Contact] {
+        store.state.contacts.filter {
+            search.isEmpty ||
+            $0.name.localizedCaseInsensitiveContains(search) ||
+            $0.card.shortID.localizedCaseInsensitiveContains(search)
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    NavigationLink { MyIdentityView() } label: { Label("Мой QR-код и ID", systemImage: "qrcode") }
-                    Button("Добавить контакт", systemImage: "person.badge.plus") { adding = true }
-                }
-                Section("Люди · \(store.state.contacts.count)") {
-                    ForEach(store.state.contacts.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { contact in
-                        NavigationLink { ContactDetailView(contactID: contact.id) } label: {
-                            HStack(spacing: 13) {
-                                Avatar(name: contact.name)
+            ZStack {
+                VoidBackground()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("VO1D / PEOPLE").font(.caption2.monospaced()).tracking(2.5).foregroundStyle(Theme.secondary)
+                                Text("Люди").font(.system(size: 34, weight: .black, design: .rounded)).tracking(-1)
+                            }
+                            Spacer()
+                            Button { adding = true } label: {
+                                Image(systemName: "plus")
+                                    .font(.title3.bold())
+                                    .frame(width: 48, height: 48)
+                                    .background(.white, in: Circle())
+                                    .foregroundStyle(.black)
+                            }
+                        }
+
+                        HStack(spacing: 11) {
+                            Image(systemName: "magnifyingglass").foregroundStyle(Theme.secondary)
+                            TextField("Ник или отпечаток", text: $search)
+                                .textInputAutocapitalization(.never)
+                        }
+                        .voidField()
+
+                        NavigationLink {
+                            MyIdentityView()
+                        } label: {
+                            HStack(spacing: 14) {
+                                BrandMark(size: 48)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    HStack { Text(contact.name); if contact.verified { Image(systemName: "checkmark.seal.fill").font(.caption).foregroundStyle(Theme.accent) } }
-                                    Text(contact.blocked ? "Заблокирован" : contact.card.shortID).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
+                                    Text("ТВОЙ VO1D ID").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
+                                    Text(store.state.publicCode ?? "----")
+                                        .font(.system(size: 21, weight: .black, design: .monospaced))
+                                        .tracking(4)
                                 }
-                            }.padding(.vertical, 5)
+                                Spacer()
+                                Image(systemName: "qrcode")
+                            }
+                            .panel()
+                        }
+                        .buttonStyle(.plain)
+
+                        if contacts.isEmpty {
+                            VStack(spacing: 17) {
+                                BrandMark(size: 76)
+                                Text(search.isEmpty ? "Никого лишнего." : "Ничего не найдено.")
+                                    .font(.title3.bold())
+                                Text(search.isEmpty ? "Добавь человека по его 4-символьному VO1D ID или QR-приглашению." : "Попробуй другой ник или отпечаток.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .lineSpacing(4)
+                                if search.isEmpty {
+                                    Button("ДОБАВИТЬ ЧЕЛОВЕКА") { adding = true }
+                                        .buttonStyle(PrimaryButton())
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 30)
+                            .panel()
+                        } else {
+                            VStack(spacing: 10) {
+                                ForEach(contacts) { contact in
+                                    NavigationLink {
+                                        ContactDetailView(contactID: contact.id)
+                                    } label: {
+                                        HStack(spacing: 14) {
+                                            Avatar(name: contact.name)
+                                            VStack(alignment: .leading, spacing: 5) {
+                                                HStack(spacing: 6) {
+                                                    Text(contact.name).font(.headline)
+                                                    if contact.verified { Image(systemName: "checkmark.seal.fill").font(.caption) }
+                                                }
+                                                Text(contact.blocked ? "ЗАБЛОКИРОВАН" : contact.card.shortID)
+                                                    .font(.caption2.monospaced())
+                                                    .tracking(1)
+                                                    .foregroundStyle(Theme.secondary)
+                                            }
+                                            Spacer()
+                                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.secondary)
+                                        }
+                                        .panel()
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         }
                     }
+                    .padding(22)
                 }
-                if store.state.contacts.isEmpty { Text("Контакты добавляются только по приглашению или ID. Доступ к телефонной книге не нужен.").font(.subheadline).foregroundStyle(Theme.secondary).listRowBackground(Color.clear) }
-            }.scrollContentBackground(.hidden).background(Theme.background).navigationTitle("Контакты")
-                .searchable(text: $search, prompt: "Имя контакта").sheet(isPresented: $adding) { AddContactView() }
+            }
+            .navigationBarHidden(true)
+            .sheet(isPresented: $adding) { AddContactView() }
+            .navigationDestination(item: $room) { ChatView(roomID: $0.id) }
         }
     }
 }
 
 struct AddContactView: View {
-    @EnvironmentObject var store: ChatStore
-    @Environment(\.dismiss) var dismiss
-    @State var value = ""
-    @State var scanning = false
-    @State var busy = false
-    @State var failure: String?
+    @EnvironmentObject private var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var value = ""
+    @State private var scanning = false
+    @State private var busy = false
+    @State private var failure: String?
+
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 24) {
-                Text("Без номеров.\nПросто приглашение.").font(.system(size: 30, weight: .semibold)).padding(.top, 14)
-                Text("Вставь ссылку vo1d:// или полный ID собеседника. Сверь отпечаток по другому каналу, прежде чем доверять контакту.").font(.subheadline).foregroundStyle(Theme.secondary)
-                TextField("Приглашение или ID", text: $value, axis: .vertical).lineLimit(3...6).textInputAutocapitalization(.never).voidField()
-                Button("Сканировать QR", systemImage: "qrcode.viewfinder") { scanning = true }.frame(maxWidth: .infinity).padding().background(Theme.panel, in: RoundedRectangle(cornerRadius: 18))
-                if let failure { Text(failure).font(.caption).foregroundStyle(.orange) }
-                Button(busy ? "Добавляем…" : "Добавить контакт") {
-                    busy = true
-                    Task {
-                        do { _ = try await store.addContact(value); dismiss() }
-                        catch { failure = error.localizedDescription }
-                        busy = false
+            ZStack {
+                VoidBackground()
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack {
+                        Wordmark(compact: true)
+                        Spacer()
+                        Button("Закрыть") { dismiss() }.foregroundStyle(Theme.secondary)
                     }
-                }.buttonStyle(PrimaryButton()).disabled(value.isEmpty || busy)
-                Spacer()
-            }.padding(24).background(Theme.background).navigationTitle("Новый контакт").navigationBarTitleDisplayMode(.inline)
-                .toolbar { Button("Закрыть") { dismiss() } }
-                .sheet(isPresented: $scanning) { QRScanner { value = $0; scanning = false }.ignoresSafeArea().overlay(alignment: .topTrailing) { Button("Закрыть") { scanning = false }.padding().background(.black.opacity(0.5), in: Capsule()).padding() } }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Найди своего.")
+                            .font(.system(size: 34, weight: .black, design: .rounded))
+                        Text("Введи 4-символьный VO1D ID. Также поддерживаются QR-приглашения и полный технический ID.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.secondary)
+                            .lineSpacing(4)
+                    }
+
+                    TextField("Например 7KQ2", text: $value)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .tracking(value.count <= 4 ? 4 : 0)
+                        .voidField()
+                        .onChange(of: value) { _, input in
+                            if !input.hasPrefix("vo1d://") && input.count <= 8 {
+                                value = input.uppercased().filter { $0.isLetter || $0.isNumber }
+                            }
+                        }
+
+                    Button("СКАНИРОВАТЬ QR", systemImage: "qrcode.viewfinder") { scanning = true }
+                        .buttonStyle(GhostButton())
+
+                    if let failure {
+                        Text(failure)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.68))
+                            .padding(.horizontal, 3)
+                    }
+
+                    Button(busy ? "ИЩЕМ…" : "ДОБАВИТЬ") {
+                        busy = true
+                        Task {
+                            do {
+                                _ = try await store.addContact(value)
+                                dismiss()
+                            } catch {
+                                failure = error.localizedDescription
+                            }
+                            busy = false
+                        }
+                    }
+                    .buttonStyle(PrimaryButton())
+                    .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+
+                    Spacer()
+                }
+                .padding(24)
+            }
+            .sheet(isPresented: $scanning) {
+                QRScanner {
+                    value = $0
+                    scanning = false
+                }
+                .ignoresSafeArea()
+                .overlay(alignment: .topTrailing) {
+                    Button("Закрыть") { scanning = false }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.black.opacity(0.72), in: Capsule())
+                        .padding()
+                }
+            }
         }
+        .preferredColorScheme(.dark)
     }
 }
 
 struct MyIdentityView: View {
-    @EnvironmentObject var store: ChatStore
+    @EnvironmentObject private var store: ChatStore
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 25) {
-                Avatar(name: store.state.nickname, size: 78)
-                Text(store.state.nickname).font(.title.bold())
-                if let invite = try? store.invite() {
-                    QRCodeView(text: invite).frame(maxWidth: 290)
-                    ShareLink(item: invite) { Label("Поделиться приглашением", systemImage: "square.and.arrow.up") }.buttonStyle(PrimaryButton())
+        ZStack {
+            VoidBackground()
+            ScrollView {
+                VStack(spacing: 22) {
+                    BrandMark(size: 96)
+                    Text(store.state.nickname).font(.title.bold())
+
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("VO1D ID").font(.caption2.monospaced()).tracking(2.2).foregroundStyle(Theme.secondary)
+                        Text(store.state.publicCode ?? "----")
+                            .font(.system(size: 32, weight: .black, design: .monospaced))
+                            .tracking(6)
+                            .textSelection(.enabled)
+                        Text("Эти 4 символа можно отправить другу для поиска на том же relay.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .panel()
+
+                    if let invite = try? store.invite() {
+                        QRCodeView(text: invite)
+                            .frame(maxWidth: 285)
+                        ShareLink(item: invite) {
+                            Label("ПОДЕЛИТЬСЯ QR-ПРИГЛАШЕНИЕМ", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(PrimaryButton())
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("ТЕХНИЧЕСКИЙ ОТПЕЧАТОК").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
+                        Text(store.myID).font(.caption2.monospaced()).textSelection(.enabled)
+                        Text("Он связан с публичным ключом. Приватный ключ в QR и приглашение не включается.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .panel()
                 }
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("ТВОЙ ID").font(.caption2.monospaced()).tracking(3).foregroundStyle(Theme.secondary)
-                    Text(store.myID).font(.caption.monospaced()).textSelection(.enabled)
-                    Text("Приглашение содержит публичные ключи и адрес сервера. Приватные ключи никогда не включаются.").font(.caption).foregroundStyle(Theme.secondary)
-                }.panel()
-            }.padding(26)
-        }.background(Theme.background).navigationTitle("Моя личность").navigationBarTitleDisplayMode(.inline)
+                .padding(24)
+            }
+        }
+        .navigationTitle("Личность")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 struct ContactDetailView: View {
     var contactID: String
-    @EnvironmentObject var store: ChatStore
-    @State var room: Room?
-    @State var alias = ""
-    var contact: Contact? { store.state.contacts.first { $0.id == contactID } }
+    @EnvironmentObject private var store: ChatStore
+    @State private var room: Room?
+    @State private var alias = ""
+
+    private var contact: Contact? { store.state.contacts.first { $0.id == contactID } }
+
     var body: some View {
-        Form {
-            if let contact {
-                Section {
-                    HStack { Spacer(); VStack(spacing: 12) { Avatar(name: contact.name, size: 80); Text(contact.name).font(.title2.bold()) }; Spacer() }.padding(.vertical, 20)
-                    Button("Написать сообщение", systemImage: "bubble.left") {
-                        do { room = try store.direct(contact) } catch { store.error = error.localizedDescription }
-                    }.disabled(contact.blocked)
-                }
-                Section("Локальное имя") {
-                    TextField("Имя", text: $alias)
-                    Button("Сохранить имя") {
-                        if let index = store.state.contacts.firstIndex(where: { $0.id == contactID }), !alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            store.state.contacts[index].name = String(alias.prefix(40))
-                            for index in store.state.rooms.indices where !store.state.rooms[index].isGroup && store.state.rooms[index].members.contains(where: { $0.id == contactID }) { store.state.rooms[index].title = String(alias.prefix(40)) }
-                            store.persist()
+        ZStack {
+            VoidBackground()
+            ScrollView {
+                if let contact {
+                    VStack(spacing: 18) {
+                        VStack(spacing: 12) {
+                            Avatar(name: contact.name, size: 82)
+                            Text(contact.name).font(.title2.bold())
+                            Text(contact.card.shortID).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+
+                        Button("НАПИСАТЬ СООБЩЕНИЕ", systemImage: "bubble.left.fill") {
+                            do { room = try store.direct(contact) }
+                            catch { store.error = error.localizedDescription }
+                        }
+                        .buttonStyle(PrimaryButton())
+                        .disabled(contact.blocked)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("ЛОКАЛЬНОЕ ИМЯ").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
+                            TextField("Имя", text: $alias).voidField()
+                            Button("СОХРАНИТЬ") {
+                                guard let index = store.state.contacts.firstIndex(where: { $0.id == contactID }),
+                                      !alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                                let clean = String(alias.prefix(40))
+                                store.state.contacts[index].name = clean
+                                for roomIndex in store.state.rooms.indices
+                                where !store.state.rooms[roomIndex].isGroup &&
+                                      store.state.rooms[roomIndex].members.contains(where: { $0.id == contactID }) {
+                                    store.state.rooms[roomIndex].title = clean
+                                }
+                                store.persist()
+                            }
+                            .buttonStyle(GhostButton())
+                        }
+                        .panel()
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("ПРОВЕРКА").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
+                            Text(contact.id).font(.caption2.monospaced()).textSelection(.enabled)
+                            Toggle("Отпечаток сверен", isOn: Binding(
+                                get: { contact.verified },
+                                set: { value in
+                                    if let index = store.state.contacts.firstIndex(where: { $0.id == contactID }) {
+                                        store.state.contacts[index].verified = value
+                                        store.persist()
+                                    }
+                                }
+                            ))
+                            .tint(.white)
+                            Text("Сверяй полный отпечаток по уже доверенному каналу. Ник и короткий ID сами по себе не доказывают личность.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.secondary)
+                        }
+                        .panel()
+
+                        Button(contact.blocked ? "РАЗБЛОКИРОВАТЬ" : "ЗАБЛОКИРОВАТЬ") {
+                            Task { await store.toggleBlock(contact) }
+                        }
+                        .buttonStyle(GhostButton())
                     }
-                }
-                Section("Проверка контакта") {
-                    Text(contact.id).font(.caption.monospaced()).textSelection(.enabled)
-                    Toggle("Отпечаток сверен лично", isOn: Binding(get: { contact.verified }, set: { value in
-                        if let index = store.state.contacts.firstIndex(where: { $0.id == contactID }) { store.state.contacts[index].verified = value; store.persist() }
-                    }))
-                    Text("Сравните полный ID при встрече или через уже доверенный канал. Имя само по себе не подтверждает личность.").font(.caption).foregroundStyle(Theme.secondary)
-                }
-                Section {
-                    Button(contact.blocked ? "Разблокировать" : "Заблокировать", role: .destructive) { Task { await store.toggleBlock(contact) } }
+                    .padding(24)
                 }
             }
-        }.navigationTitle("Контакт").navigationBarTitleDisplayMode(.inline)
-            .onAppear { alias = contact?.name ?? "" }.navigationDestination(item: $room) { ChatView(roomID: $0.id) }
+        }
+        .navigationTitle("Контакт")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { alias = contact?.name ?? "" }
+        .navigationDestination(item: $room) { ChatView(roomID: $0.id) }
     }
 }
