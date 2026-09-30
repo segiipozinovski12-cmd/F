@@ -48,6 +48,7 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     @Published var progress: Double = 0
     @Published var current: TimeInterval = 0
     @Published var duration: TimeInterval = 0
+    @Published var speed: Float = 1
     let waveform: [CGFloat]
 
     private var player: AVAudioPlayer?
@@ -64,6 +65,7 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         if let player = try? AVAudioPlayer(contentsOf: url) {
             self.player = player
             player.delegate = self
+            player.enableRate = true
             player.prepareToPlay()
             duration = player.duration
         }
@@ -90,9 +92,23 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
             try session.setActive(true)
         } catch {}
 
+        player.enableRate = true
+        player.rate = speed
         player.play()
         playing = true
         startTimer()
+    }
+
+    func cycleSpeed() {
+        if speed < 1.25 {
+            speed = 1.5
+        } else if speed < 1.75 {
+            speed = 2
+        } else {
+            speed = 1
+        }
+        player?.enableRate = true
+        if player?.isPlaying == true { player?.rate = speed }
     }
 
     func seek(to value: Double) {
@@ -180,6 +196,17 @@ struct VoiceMessagePlayer: View {
                 HStack(spacing: 8) {
                     Text(time(player.playing ? player.current : player.duration))
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    Button {
+                        player.cycleSpeed()
+                    } label: {
+                        Text(player.speed == 1 ? "1×" : (player.speed == 1.5 ? "1.5×" : "2×"))
+                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(tint.opacity(0.10), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
                     if let raw = attachment.voiceEffect,
                        let effect = VoiceEffect(rawValue: raw),
                        effect != .natural {

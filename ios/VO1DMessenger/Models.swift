@@ -29,6 +29,9 @@ struct Room: Codable, Identifiable, Hashable {
     var unread = 0
     var draft = ""
     var disappearingSeconds = 0
+    var admins: [String]? = nil
+    var onlyAdminsCanPost: Bool? = nil
+    var pinnedMessageIDs: [String]? = nil
 }
 
 struct Attachment: Codable, Hashable {
@@ -54,6 +57,8 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var readBy: [String] = []
     var deliveredTo: [String] = []
     var openedAt: Date? = nil
+    var forwardedFrom: String? = nil
+    var scheduledAt: Date? = nil
 }
 
 /// All event content, including group membership and attachments, lives inside AEAD.
@@ -105,6 +110,9 @@ struct VaultState: Codable {
     var credentialsAcknowledged: Bool?
     var voiceEffect: String? = nil
     var notificationsEnabled: Bool? = nil
+    var username: String? = nil
+    var bio: String? = nil
+    var profileAvatar: Data? = nil
 }
 
 struct Invite: Codable {

@@ -1,8 +1,16 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var name = ""
+    @State private var username = ""
+    @State private var bio = ""
+    @State private var usernameStatus = ""
+    @State private var usernameAvailable: Bool?
+    @State private var avatarItem: PhotosPickerItem?
+    @State private var usernameCheckTask: Task<Void, Never>?
     @State private var setupCode = ""
     @State private var resetCode = ""
     @State private var showDelete = false
@@ -49,6 +57,22 @@ struct SettingsView: View {
             .navigationBarHidden(true)
             .onAppear {
                 name = store.state.nickname
+                username = store.state.username ?? ""
+                bio = store.state.bio ?? ""
+                if !username.isEmpty {
+                    usernameAvailable = true
+                    usernameStatus = "Текущий @\(username)"
+                }
+            }
+            .onDisappear {
+                usernameCheckTask?.cancel()
+            }
+            .onChange(of: avatarItem) { _, item in
+                guard let item else { return }
+                Task {
+                    await loadAvatar(item)
+                    avatarItem = nil
+                }
             }
             .confirmationDialog("Удалить аккаунт?", isPresented: $showDelete, titleVisibility: .visible) {
                 Button("Удалить аккаунт и локальные ключи", role: .destructive) {
@@ -63,24 +87,152 @@ struct SettingsView: View {
     private var profileCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
-                Avatar(name: store.state.nickname, size: 62)
+                Avatar(
+                    name: store.state.nickname,
+                    size: 70,
+                    imageData: store.state.profileAvatar
+                )
+
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(store.state.nickname).font(.title3.bold())
-                    Text("Ник не привязан к телефону или почте").font(.caption).foregroundStyle(Theme.secondary)
+                    Text(store.state.nickname)
+                        .font(.title3.bold())
+                    Text(store.state.username.map { "@\($0)" } ?? "Username не задан")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(Theme.secondary)
                 }
+
                 Spacer()
+
+                PhotosPicker(selection: $avatarItem, matching: .images) {
+                    Image(systemName: "camera.fill")
+                        .font(.subheadline.bold())
+                        .frame(width: 40, height: 40)
+                        .background(.white.opacity(0.08), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Изменить аватар")
             }
 
-            TextField("Ник", text: $name)
+            TextField("Отображаемое имя", text: $name)
+                .textContentType(.nickname)
                 .voidField()
 
-            Button("СОХРАНИТЬ НИК") {
-                let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !cleaned.isEmpty else { return }
-                store.state.nickname = String(cleaned.prefix(40))
-                store.persist()
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 4) {
+                    Text("@")
+                        .font(.headline.monospaced())
+                        .foregroundStyle(Theme.secondary)
+                    TextField("username", text: $username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                }
+                .voidField()
+                .onChange(of: username) { _, value in
+                    let clean = String(
+                        value
+                            .lowercased()
+                            .filter { $0.isLetter || $0.isNumber || $0 == "_" }
+                            .prefix(20)
+                    )
+
+                    if clean != value {
+                        username = clean
+                        return
+                    }
+
+                    usernameCheckTask?.cancel()
+                    usernameAvailable = nil
+
+                    if clean.isEmpty {
+                        usernameStatus = "4–20 символов: a-z, 0-9, _"
+                        return
+                    }
+
+                    if clean.count < 4 {
+                        usernameStatus = "Минимум 4 символа"
+                        return
+                    }
+
+                    usernameStatus = "Проверяем…"
+                    usernameCheckTask = Task {
+                        try? await Task.sleep(for: .milliseconds(450))
+                        if Task.isCancelled { return }
+                        if let check = await store.checkUsername(clean) {
+                            if Task.isCancelled { return }
+                            await MainActor.run {
+                                usernameAvailable = check.valid && check.available
+                                usernameStatus = !check.valid
+                                    ? "Недопустимый username"
+                                    : (check.available ? "Свободен" : "Уже занят")
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: usernameAvailable == true ? "checkmark.circle.fill" : usernameAvailable == false ? "xmark.circle.fill" : "circle.dashed")
+                    Text(usernameStatus.isEmpty ? "4–20 символов: a-z, 0-9, _" : usernameStatus)
+                }
+                .font(.caption2)
+                .foregroundStyle(usernameAvailable == false ? .white.opacity(0.58) : Theme.secondary)
             }
-            .buttonStyle(GhostButton())
+
+            TextField("О себе", text: $bio, axis: .vertical)
+                .lineLimit(2...4)
+                .voidField()
+                .onChange(of: bio) { _, value in
+                    if value.count > 160 { bio = String(value.prefix(160)) }
+                }
+
+            HStack {
+                Text("\(bio.count)/160")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(Theme.secondary)
+                Spacer()
+
+                if store.state.profileAvatar != nil {
+                    Button("Убрать фото") {
+                        store.state.profileAvatar = nil
+                        store.persist()
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.secondary)
+                }
+            }
+
+            Button {
+                let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !cleanedName.isEmpty else { return }
+
+                Task {
+                    if !username.isEmpty {
+                        guard username.count >= 4 else {
+                            store.error = "Username должен содержать минимум 4 символа"
+                            return
+                        }
+                        guard await store.claimUsername(username) else { return }
+                    }
+
+                    store.state.nickname = String(cleanedName.prefix(40))
+                    store.state.bio = String(bio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+                    store.persist()
+                    usernameAvailable = true
+                    usernameStatus = store.state.username.map { "Текущий @\($0)" } ?? ""
+                }
+            } label: {
+                HStack {
+                    Text("СОХРАНИТЬ ПРОФИЛЬ")
+                    Spacer()
+                    Image(systemName: "checkmark")
+                }
+            }
+            .buttonStyle(PrimaryButton())
+            .disabled(
+                name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                (!username.isEmpty && username.count < 4) ||
+                (usernameAvailable == false && username != store.state.username)
+            )
         }
         .panel()
     }
@@ -180,7 +332,7 @@ struct SettingsView: View {
 
     private var relayCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("PRODUCTION RELAY", icon: "point.3.connected.trianglepath.dotted")
+            sectionTitle("СОЕДИНЕНИЕ", icon: "point.3.connected.trianglepath.dotted")
 
             HStack(spacing: 12) {
                 ZStack {
@@ -193,22 +345,23 @@ struct SettingsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(AppConfig.productionRelayHost)
-                        .font(.subheadline.bold())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                    Text(store.connection == "Подключён" ? "VO1D ONLINE" : "VO1D CONNECTION")
+                        .font(.subheadline.bold().monospaced())
                     Text(store.connection.uppercased())
                         .font(.caption2.monospaced())
                         .tracking(1.4)
                         .foregroundStyle(Theme.secondary)
                 }
+
                 Spacer()
             }
 
             HStack {
-                Text("Очередь").foregroundStyle(Theme.secondary)
+                Text("Очередь отправки")
+                    .foregroundStyle(Theme.secondary)
                 Spacer()
-                Text("\(store.state.outbox.count)").font(.caption.monospaced())
+                Text("\(store.state.outbox.count)")
+                    .font(.caption.monospaced())
             }
 
             Button(store.busy ? "ПОДКЛЮЧЕНИЕ…" : "ПЕРЕПОДКЛЮЧИТЬ") {
@@ -216,11 +369,6 @@ struct SettingsView: View {
             }
             .buttonStyle(GhostButton())
             .disabled(store.busy)
-
-            Text("Relay зашит в production-конфигурацию VO1D. Пользователю больше не нужно вводить адрес сервера вручную.")
-                .font(.caption2)
-                .foregroundStyle(Theme.secondary)
-                .lineSpacing(3)
         }
         .panel()
     }
@@ -311,6 +459,37 @@ struct SettingsView: View {
                 .buttonStyle(GhostButton())
         }
         .panel()
+    }
+
+    @MainActor
+    private func loadAvatar(_ item: PhotosPickerItem) async {
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                return
+            }
+
+            let maxSide: CGFloat = 512
+            let scale = min(1, maxSide / max(image.size.width, image.size.height))
+            let target = CGSize(
+                width: max(1, image.size.width * scale),
+                height: max(1, image.size.height * scale)
+            )
+            let renderer = UIGraphicsImageRenderer(size: target)
+            let rendered = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: target))
+            }
+
+            guard let jpeg = rendered.jpegData(compressionQuality: 0.78),
+                  jpeg.count <= 1_500_000 else {
+                throw MessengerError.invalid("Аватар получился слишком большим")
+            }
+
+            store.state.profileAvatar = jpeg
+            store.persist()
+        } catch {
+            store.error = error.localizedDescription
+        }
     }
 
     private func sectionTitle(_ title: String, icon: String) -> some View {

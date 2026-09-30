@@ -129,6 +129,7 @@ enum VoiceProcessor {
 @MainActor
 final class VoiceRecorder: ObservableObject {
     @Published var recording = false
+    @Published var paused = false
     @Published var seconds = 0
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
@@ -143,20 +144,32 @@ final class VoiceRecorder: ObservableObject {
         let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 24000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000])
         guard recorder.record(forDuration: 180) else { throw MessengerError.invalid("Не удалось начать запись") }
         try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
-        self.recorder = recorder; file = url; seconds = 0; recording = true
+        self.recorder = recorder; file = url; seconds = 0; paused = false; recording = true
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, !self.paused else { return }
                 self.seconds = min(self.seconds + 1, 180)
                 if self.seconds >= 180 { self.timer?.invalidate() }
             }
         }
     }
+    func togglePause() {
+        guard let recorder, recording else { return }
+        if paused {
+            recorder.record()
+            paused = false
+        } else {
+            recorder.pause()
+            paused = true
+        }
+    }
+
     func finish(effect: VoiceEffect) throws -> Attachment? {
         guard let file else { return nil }
         recorder?.stop()
         timer?.invalidate()
         recording = false
+        paused = false
 
         let rendered = try VoiceProcessor.render(input: file, effect: effect)
         let data = try Data(contentsOf: rendered)
@@ -175,7 +188,7 @@ final class VoiceRecorder: ObservableObject {
         )
     }
     func cancel() {
-        recorder?.stop(); timer?.invalidate(); recorder = nil; recording = false
+        recorder?.stop(); timer?.invalidate(); recorder = nil; recording = false; paused = false
         if let file { try? FileManager.default.removeItem(at: file) }
         file = nil; try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }

@@ -5,6 +5,9 @@ final class APIClient {
     private struct Failure: Decodable { var error: String }
     struct OK: Decodable { var ok: Bool }
     private struct CodeResponse: Decodable { var code: String }
+    struct UsernameCheck: Decodable { var username: String; var available: Bool; var valid: Bool }
+    private struct UsernameResponse: Decodable { var username: String }
+    private struct UsernameLookup: Decodable { var username: String; var card: ContactCard }
 
     var base: URL
     private var token: String?
@@ -74,6 +77,43 @@ final class APIClient {
     func ensurePublicCode() async throws -> String {
         let response: CodeResponse = try await request("v1/code", method: "POST", body: Data("{}".utf8))
         return response.code
+    }
+
+    func checkUsername(_ value: String) async throws -> UsernameCheck {
+        let username = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_")
+        guard username.count >= 1,
+              username.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
+            return UsernameCheck(username: username, available: false, valid: false)
+        }
+        let encoded = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username
+        let result: UsernameCheck = try await request("v1/username/check/\(encoded)")
+        return result
+    }
+
+    func claimUsername(_ value: String) async throws -> String {
+        struct Body: Encodable { var username: String }
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let result: UsernameResponse = try await request(
+            "v1/username",
+            method: "POST",
+            body: Wire.encoder.encode(Body(username: clean))
+        )
+        return result.username
+    }
+
+    func card(username: String) async throws -> ContactCard {
+        let clean = username
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+        guard clean.count >= 4 && clean.count <= 20 else {
+            throw MessengerError.invalid("Username должен содержать 4–20 символов")
+        }
+        let encoded = clean.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? clean
+        let result: UsernameLookup = try await request("v1/username/\(encoded)")
+        try Crypto.validate(result.card)
+        return result.card
     }
 
     func inbox() async throws -> [Envelope] {

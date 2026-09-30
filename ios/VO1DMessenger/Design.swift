@@ -186,16 +186,34 @@ struct Avatar: View {
     var name: String
     var group = false
     var size: CGFloat = 48
+    var imageData: Data? = nil
+
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: size * 0.34).fill(.white.opacity(0.075))
-            RoundedRectangle(cornerRadius: size * 0.34).stroke(.white.opacity(0.13), lineWidth: 1)
-            if group {
-                Image(systemName: "person.2.fill").font(.system(size: size * 0.30, weight: .medium))
+            RoundedRectangle(cornerRadius: size * 0.34)
+                .fill(.white.opacity(0.075))
+
+            if let imageData,
+               let image = UIImage(data: imageData),
+               !group {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.34, style: .continuous))
+            } else if group {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: size * 0.30, weight: .medium))
             } else {
-                Text(String(name.prefix(1)).uppercased()).font(.system(size: size * 0.36, weight: .black, design: .rounded))
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.system(size: size * 0.36, weight: .black, design: .rounded))
             }
-        }.frame(width: size, height: size).accessibilityHidden(true)
+
+            RoundedRectangle(cornerRadius: size * 0.34, style: .continuous)
+                .stroke(.white.opacity(0.13), lineWidth: 1)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }
 

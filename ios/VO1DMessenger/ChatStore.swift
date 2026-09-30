@@ -26,6 +26,7 @@ final class ChatStore: ObservableObject {
     static let builtinBotKey = "XROSB"
     static let builtinBotID = String(repeating: "b", count: 64)
     static let builtinBotRoomID = "bot:xrosb"
+    static let savedRoomID = "saved:me"
 
     static var builtinBotCard: ContactCard {
         ContactCard(
@@ -38,6 +39,8 @@ final class ChatStore: ObservableObject {
 
     func isBuiltinBot(_ id: String) -> Bool { id == Self.builtinBotID }
     func isBuiltinBotRoom(_ id: String) -> Bool { id == Self.builtinBotRoomID }
+    func isSavedRoom(_ id: String) -> Bool { id == Self.savedRoomID }
+    func isLocalUtilityRoom(_ id: String) -> Bool { isBuiltinBotRoom(id) || isSavedRoom(id) }
 
     init() {
         do {
@@ -63,7 +66,8 @@ final class ChatStore: ObservableObject {
 
             expire()
             let botChanged = state.onboarded ? ensureBuiltinBot() : false
-            if credentialsChanged || relayChanged || botChanged { try save() }
+            let savedChanged = state.onboarded ? ensureSavedMessages() : false
+            if credentialsChanged || relayChanged || botChanged || savedChanged { try save() }
         } catch { fatalError = error.localizedDescription }
     }
     func save() throws {
@@ -115,6 +119,7 @@ final class ChatStore: ObservableObject {
             if firstLaunch { state.credentialsAcknowledged = false }
             sessionUnlocked = true
             _ = ensureBuiltinBot()
+            _ = ensureSavedMessages()
             try save()
             CallManager.shared.configure(api: client, identity: identity) { [weak self] id in
                 self?.name(id) ?? "VO1D"
@@ -181,6 +186,34 @@ final class ChatStore: ObservableObject {
         return room
     }
 
+    @discardableResult
+    private func ensureSavedMessages() -> Bool {
+        guard let ownCard else { return false }
+        guard !state.rooms.contains(where: { $0.id == Self.savedRoomID }) else { return false }
+
+        state.rooms.append(
+            Room(
+                id: Self.savedRoomID,
+                title: "Сохранённые",
+                members: [ownCard],
+                creator: myID,
+                isGroup: false,
+                createdAt: Date(),
+                pinned: true
+            )
+        )
+        return true
+    }
+
+    func savedRoom() throws -> Room {
+        _ = ensureSavedMessages()
+        guard let room = state.rooms.first(where: { $0.id == Self.savedRoomID }) else {
+            throw MessengerError.invalid("Сохранённые сообщения недоступны")
+        }
+        try save()
+        return room
+    }
+
     private func botReply(to text: String, attachment: Attachment?) -> String {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = clean.lowercased()
@@ -189,10 +222,16 @@ final class ChatStore: ObservableObject {
             return "Вложение получил. Я системный бот VO1D; могу подсказать по функциям приложения. Напиши /help."
         }
         if lower == "/help" || lower.contains("помощ") {
-            return "Команды: /id — твой VO1D ID, /status — состояние соединения, /privacy — кратко о приватности, /groups — помощь с группами, /calls — помощь со звонками."
+            return "Команды: /id, /username, /status, /privacy, /groups, /calls, /saved. Можно также просто задать вопрос о VO1D."
         }
         if lower == "/id" || lower.contains("мой id") || lower.contains("мой айди") {
             return "Твой VO1D ID: \(state.publicCode ?? "----"). Ключ доступа смотри только в настройках — я его не показываю."
+        }
+        if lower == "/username" || lower.contains("юзернейм") || lower.contains("username") {
+            return state.username.map { "Твой username: @\($0)." } ?? "Username пока не занят. Задай его в Настройки → Профиль."
+        }
+        if lower == "/saved" || lower.contains("сохран") {
+            return "«Сохранённые» — локальный чат с собой. Перешли туда сообщение или открой его из списка чатов."
         }
         if lower == "/status" || lower.contains("статус") {
             return "Соединение: \(connection). Очередь отправки: \(state.outbox.count)."
@@ -288,6 +327,36 @@ final class ChatStore: ObservableObject {
             return false
         }
     }
+    func checkUsername(_ value: String) async -> APIClient.UsernameCheck? {
+        guard let api else {
+            error = "Нет соединения с VO1D"
+            return nil
+        }
+        do {
+            return try await api.checkUsername(value)
+        } catch {
+            self.error = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    func claimUsername(_ value: String) async -> Bool {
+        guard let api else {
+            error = "Нет соединения с VO1D"
+            return false
+        }
+        do {
+            let username = try await api.claimUsername(value)
+            state.username = username
+            try save()
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
     func invite() throws -> String {
         guard let ownCard else { throw MessengerError.invalid("Нет ключей") }
         let data = try Wire.encoder.encode(Invite(server: state.server, name: state.nickname, card: ownCard))
@@ -319,14 +388,22 @@ final class ChatStore: ObservableObject {
             }
             card = invite.card; name = String(invite.name.prefix(40))
         } else {
-            guard let api else { throw MessengerError.invalid("Подключись к relay-серверу") }
+            guard let api else { throw MessengerError.invalid("Нет соединения с VO1D") }
             let normalized = input.uppercased()
+            let usernameCandidate = input
+                .lowercased()
+                .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+
             if normalized.count == 4 {
                 card = try await api.card(publicCode: normalized)
+                name = "Ghost \(card.shortID.prefix(6))"
+            } else if input.hasPrefix("@") || (usernameCandidate.count >= 4 && usernameCandidate.count <= 20 && input.count != 64) {
+                card = try await api.card(username: usernameCandidate)
+                name = "@\(usernameCandidate)"
             } else {
                 card = try await api.card(input.lowercased())
+                name = "Ghost \(card.shortID.prefix(6))"
             }
-            name = "Ghost \(card.shortID.prefix(6))"
         }
         try Crypto.validate(card)
         guard card.id != myID else { throw MessengerError.invalid("Это твой собственный ID") }
@@ -340,7 +417,7 @@ final class ChatStore: ObservableObject {
     }
     func startCall(_ roomID: String) {
         guard connection == "Подключён",
-              !isBuiltinBotRoom(roomID),
+              !isLocalUtilityRoom(roomID),
               let room = state.rooms.first(where: { $0.id == roomID }),
               !room.isGroup,
               let peer = room.members.first(where: { $0.id != myID }) else {
@@ -384,7 +461,8 @@ final class ChatStore: ObservableObject {
             members: [ownCard] + cleanContacts.map(\.card),
             creator: myID,
             isGroup: true,
-            createdAt: Date()
+            createdAt: Date(),
+            admins: [myID]
         )
 
         let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
@@ -405,10 +483,39 @@ final class ChatStore: ObservableObject {
         let pending = try targets.map { PendingDelivery(envelope: try Crypto.seal(event, from: identity, to: $0), messageID: messageID) }
         state.outbox.append(contentsOf: pending)
     }
-    func send(roomID: String, text: String, attachment: Attachment? = nil, replyTo: String? = nil) throws {
+    func send(
+        roomID: String,
+        text: String,
+        attachment: Attachment? = nil,
+        replyTo: String? = nil,
+        forwardedFrom: String? = nil,
+        scheduledAt: Date? = nil
+    ) throws {
         guard let room = state.rooms.first(where: { $0.id == roomID }), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachment != nil else { return }
 
-        if isBuiltinBotRoom(roomID) {
+        if isSavedRoom(roomID) {
+            let message = ChatMessage(
+                id: UUID().uuidString,
+                roomID: roomID,
+                sender: myID,
+                text: text,
+                createdAt: Date(),
+                expiresAt: nil,
+                replyTo: replyTo,
+                attachment: attachment,
+                state: "read",
+                forwardedFrom: forwardedFrom,
+                scheduledAt: scheduledAt
+            )
+            state.messages.append(message)
+            if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
+                state.rooms[index].draft = ""
+            }
+            try save()
+            return
+        }
+
+        if isLocalUtilityRoom(roomID) {
             let now = Date()
             let mine = ChatMessage(
                 id: UUID().uuidString,
@@ -419,7 +526,9 @@ final class ChatStore: ObservableObject {
                 expiresAt: nil,
                 replyTo: replyTo,
                 attachment: attachment,
-                state: "read"
+                state: "read",
+                forwardedFrom: forwardedFrom,
+                scheduledAt: scheduledAt
             )
             let response = ChatMessage(
                 id: UUID().uuidString,
@@ -446,7 +555,18 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("В чате есть заблокированный контакт")
         }
         let expiry = room.disappearingSeconds > 0 ? Date().addingTimeInterval(Double(room.disappearingSeconds)) : nil
-        let message = ChatMessage(id: UUID().uuidString, roomID: roomID, sender: myID, text: text, createdAt: Date(), expiresAt: expiry, replyTo: replyTo, attachment: attachment)
+        let message = ChatMessage(
+            id: UUID().uuidString,
+            roomID: roomID,
+            sender: myID,
+            text: text,
+            createdAt: Date(),
+            expiresAt: expiry,
+            replyTo: replyTo,
+            attachment: attachment,
+            forwardedFrom: forwardedFrom,
+            scheduledAt: scheduledAt
+        )
         try enqueue(ChatEvent(kind: "message", room: room, message: message, senderName: state.nickname), room: room, messageID: message.id)
         state.messages.append(message)
         if let index = state.rooms.firstIndex(where: { $0.id == roomID }) { state.rooms[index].draft = "" }
@@ -458,7 +578,7 @@ final class ChatStore: ObservableObject {
             guard message.sender == myID else { return }
         }
 
-        if isBuiltinBotRoom(message.roomID) {
+        if isLocalUtilityRoom(message.roomID) {
             if kind == "edit" { state.messages[index].text = String((value ?? "").prefix(16000)); state.messages[index].edited = true }
             if kind == "delete" { state.messages.remove(at: index) }
             if kind == "reaction" { state.messages[index].reactions[myID] = value }
@@ -472,10 +592,52 @@ final class ChatStore: ObservableObject {
         if kind == "reaction" { state.messages[index].reactions[myID] = value }
         try save()
     }
+    func forward(_ message: ChatMessage, to roomID: String) throws {
+        let source = message.forwardedFrom ?? name(message.sender)
+        try send(
+            roomID: roomID,
+            text: message.text,
+            attachment: message.attachment,
+            replyTo: nil,
+            forwardedFrom: source
+        )
+    }
+
+    func pinnedMessages(_ roomID: String) -> [ChatMessage] {
+        guard let room = state.rooms.first(where: { $0.id == roomID }) else { return [] }
+        let ids = Set(room.pinnedMessageIDs ?? [])
+        return state.messages
+            .filter { $0.roomID == roomID && ids.contains($0.id) }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func togglePinnedMessage(_ message: ChatMessage) throws {
+        guard let roomIndex = state.rooms.firstIndex(where: { $0.id == message.roomID }) else { return }
+        var ids = state.rooms[roomIndex].pinnedMessageIDs ?? []
+        let willPin = !ids.contains(message.id)
+
+        if willPin {
+            ids.append(message.id)
+            if ids.count > 20 { ids.removeFirst(ids.count - 20) }
+        } else {
+            ids.removeAll { $0 == message.id }
+        }
+        state.rooms[roomIndex].pinnedMessageIDs = ids
+
+        if !isLocalUtilityRoom(message.roomID) {
+            let room = state.rooms[roomIndex]
+            try enqueue(
+                ChatEvent(kind: "pin", room: room, target: message.id, value: willPin ? "1" : "0", senderName: state.nickname),
+                room: room
+            )
+        }
+        try save()
+    }
+
     func markRead(_ roomID: String) {
         guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
         state.rooms[roomIndex].unread = 0
-        if isBuiltinBotRoom(roomID) {
+        if isLocalUtilityRoom(roomID) {
             persist()
             return
         }
@@ -490,7 +652,7 @@ final class ChatStore: ObservableObject {
         persist()
     }
     func sendTyping(_ roomID: String) async {
-        guard !isBuiltinBotRoom(roomID),
+        guard !isLocalUtilityRoom(roomID),
               let api, let identity, let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
         lastTyping[roomID] = Date()
         let event = ChatEvent(kind: "typing", room: room, senderName: state.nickname)
@@ -614,6 +776,17 @@ final class ChatStore: ObservableObject {
                 state.messages.remove(at: index)
             case "reaction":
                 if let value = event.value, ["❤️", "👍", "🔥", "😂", "👀", ""].contains(value) { state.messages[index].reactions[sender.id] = value.isEmpty ? nil : value }
+            case "pin":
+                if let roomIndex = state.rooms.firstIndex(where: { $0.id == incoming.id }) {
+                    var ids = state.rooms[roomIndex].pinnedMessageIDs ?? []
+                    if event.value == "1" {
+                        if !ids.contains(target) { ids.append(target) }
+                        if ids.count > 20 { ids.removeFirst(ids.count - 20) }
+                    } else {
+                        ids.removeAll { $0 == target }
+                    }
+                    state.rooms[roomIndex].pinnedMessageIDs = ids
+                }
             case "read" where state.messages[index].sender == myID:
                 if !state.messages[index].readBy.contains(sender.id) { state.messages[index].readBy.append(sender.id) }
                 state.messages[index].state = "read"
@@ -726,7 +899,7 @@ final class ChatStore: ObservableObject {
 
         let selected = state.messages.filter { ids.contains($0.id) && $0.roomID == roomID }
 
-        if isBuiltinBotRoom(roomID) {
+        if isLocalUtilityRoom(roomID) {
             state.messages.removeAll { ids.contains($0.id) && $0.roomID == roomID }
             try save()
             return
@@ -773,6 +946,7 @@ final class ChatStore: ObservableObject {
         if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
             state.rooms[index].unread = 0
             state.rooms[index].draft = ""
+            state.rooms[index].pinnedMessageIDs = []
         }
         typing[roomID] = nil
         persist()

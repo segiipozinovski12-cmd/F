@@ -165,6 +165,43 @@ class RelayTests(unittest.TestCase):
         self.assertEqual(self.request('/v1/account', 'DELETE', token=self.a)[0], 200)
         self.assertEqual(self.request('/v1/code/' + code['code'], token=self.b)[0], 404)
 
+    def test_username_claim_check_lookup_and_uniqueness(self):
+        status, check = self.request('/v1/username/check/void_user', token=self.a)
+        self.assertEqual(status, 200)
+        self.assertTrue(check['available'])
+        self.assertTrue(check['valid'])
+
+        status, claimed = self.request('/v1/username', 'POST', {'username':'Void_User'}, self.a)
+        self.assertEqual(status, 200)
+        self.assertEqual(claimed['username'], 'void_user')
+
+        status, check = self.request('/v1/username/check/void_user', token=self.b)
+        self.assertEqual(status, 200)
+        self.assertFalse(check['available'])
+
+        status, found = self.request('/v1/username/void_user', token=self.b)
+        self.assertEqual(status, 200)
+        self.assertEqual(found['card'], self.alice_card)
+
+        status, _ = self.request('/v1/username', 'POST', {'username':'void_user'}, self.b)
+        self.assertEqual(status, 409)
+
+    def test_username_rename_is_atomic_and_old_name_is_released(self):
+        self.assertEqual(self.request('/v1/username', 'POST', {'username':'alpha_user'}, self.a)[0], 200)
+        self.assertEqual(self.request('/v1/username', 'POST', {'username':'beta_user'}, self.a)[0], 200)
+        self.assertEqual(self.request('/v1/username/alpha_user', token=self.b)[0], 404)
+        self.assertEqual(self.request('/v1/username/beta_user', token=self.b)[0], 200)
+
+    def test_username_validation_and_reserved_names(self):
+        self.assertEqual(self.request('/v1/username/check/abc', token=self.a)[1]['valid'], False)
+        self.assertEqual(self.request('/v1/username', 'POST', {'username':'abc'}, self.a)[0], 400)
+        self.assertEqual(self.request('/v1/username', 'POST', {'username':'xrosb'}, self.a)[0], 409)
+
+    def test_username_removed_with_account(self):
+        self.assertEqual(self.request('/v1/username', 'POST', {'username':'gone_user'}, self.a)[0], 200)
+        self.assertEqual(self.request('/v1/account', 'DELETE', token=self.a)[0], 200)
+        self.assertEqual(self.request('/v1/username/gone_user', token=self.b)[0], 404)
+
     def test_rate_limit(self):
         for _ in range(4):
             self.relay.rate('isolated', 4)

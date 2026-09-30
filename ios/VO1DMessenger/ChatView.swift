@@ -20,6 +20,7 @@ struct ChatView: View {
     @State private var selectionMode = false
     @State private var selectedIDs: Set<String> = []
     @State private var showDeleteSelection = false
+    @State private var forwarding: ChatMessage?
     @StateObject private var audio = VoiceRecorder()
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
     var messages: [ChatMessage] { store.messages(roomID, search: search) }
@@ -27,20 +28,68 @@ struct ChatView: View {
         VStack(spacing: 0) {
             if let room {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 14) {
-                            Label("Приватная переписка", systemImage: "lock").font(.caption2).foregroundStyle(Theme.secondary).padding(.vertical, 18)
-                            ForEach(messages) { message in
-                                bubble(message, group: room.isGroup).id(message.id)
+                    VStack(spacing: 0) {
+                        if let pinned = store.pinnedMessages(roomID).last {
+                            Button {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                                    proxy.scrollTo(pinned.id, anchor: .center)
+                                }
+                            } label: {
+                                HStack(spacing: 11) {
+                                    Image(systemName: "pin.fill")
+                                        .font(.caption.bold())
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("ЗАКРЕПЛЕНО")
+                                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                                            .tracking(1.4)
+                                        Text(pinned.text.isEmpty ? (pinned.attachment?.name ?? "Вложение") : pinned.text)
+                                            .font(.caption)
+                                            .lineLimit(1)
+                                            .foregroundStyle(Theme.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.down")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(.ultraThinMaterial)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
+                                }
                             }
-                            Color.clear.frame(height: 1).id("bottom")
-                        }.padding(.horizontal, 18).padding(.bottom, 10)
-                    }.scrollDismissesKeyboard(.interactively)
+                            .buttonStyle(.plain)
+                        }
+
+                        ScrollView {
+                            LazyVStack(spacing: 14) {
+                                Label(
+                                    store.isSavedRoom(roomID) ? "Личный архив" : (store.isBuiltinBotRoom(roomID) ? "Системный помощник" : "Приватная переписка"),
+                                    systemImage: store.isSavedRoom(roomID) ? "bookmark.fill" : (store.isBuiltinBotRoom(roomID) ? "sparkles" : "lock")
+                                )
+                                .font(.caption2)
+                                .foregroundStyle(Theme.secondary)
+                                .padding(.vertical, 18)
+
+                                ForEach(messages) { message in
+                                    bubble(message, group: room.isGroup).id(message.id)
+                                }
+                                Color.clear.frame(height: 1).id("bottom")
+                            }
+                            .padding(.horizontal, 18)
+                            .padding(.bottom, 10)
+                        }
+                        .scrollDismissesKeyboard(.interactively)
                         .onChange(of: messages.count) { _, _ in
                             withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
                             store.markRead(roomID)
                         }
-                        .onAppear { proxy.scrollTo("bottom", anchor: .bottom); store.markRead(roomID) }
+                        .onAppear {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                            store.markRead(roomID)
+                        }
+                    }
                 }
                 if let until = store.typing[roomID], until > Date() {
                     Text("Собеседник печатает…")
@@ -72,7 +121,7 @@ struct ChatView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    if room?.isGroup == false && !selectionMode && !store.isBuiltinBotRoom(roomID) {
+                    if room?.isGroup == false && !selectionMode && !store.isLocalUtilityRoom(roomID) {
                         Button {
                             store.startCall(roomID)
                         } label: {
@@ -98,6 +147,9 @@ struct ChatView: View {
             }
             .searchable(text: $search, prompt: "Поиск в переписке")
             .sheet(isPresented: $info) { RoomInfoView(roomID: roomID) }
+            .sheet(item: $forwarding) { message in
+                ForwardPickerView(message: message, sourceRoomID: roomID)
+            }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
                 do {
                     let url = try result.get(); let granted = url.startAccessingSecurityScopedResource()
@@ -200,10 +252,23 @@ struct ChatView: View {
                 HStack {
                     Image(systemName: "waveform").symbolEffect(.variableColor)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Запись · \(audio.seconds) с").font(.subheadline.monospacedDigit())
-                        Text(store.selectedVoiceEffect().title).font(.caption2).foregroundStyle(Theme.secondary)
+                        Text(audio.paused ? "Пауза · \(audio.seconds) с" : "Запись · \(audio.seconds) с")
+                            .font(.subheadline.monospacedDigit())
+                        Text(store.selectedVoiceEffect().title)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.secondary)
                     }
                     Spacer()
+                    Button {
+                        audio.togglePause()
+                    } label: {
+                        Image(systemName: audio.paused ? "mic.fill" : "pause.fill")
+                            .font(.headline)
+                            .frame(width: 34, height: 34)
+                            .background(.white.opacity(0.08), in: Circle())
+                    }
+                    .accessibilityLabel(audio.paused ? "Продолжить запись" : "Поставить запись на паузу")
+
                     Button("Отмена") { audio.cancel() }
                     Button {
                         do {
@@ -252,7 +317,21 @@ struct ChatView: View {
         return HStack(alignment: .bottom) {
             if mine { Spacer(minLength: 42) }
             VStack(alignment: .leading, spacing: 8) {
-                if group && !mine { Text(store.name(message.sender)).font(.caption.bold()).foregroundStyle(Theme.accent) }
+                if group && !mine {
+                    Text(store.name(message.sender))
+                        .font(.caption.bold())
+                        .foregroundStyle(Theme.accent)
+                }
+
+                if let forwardedFrom = message.forwardedFrom {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrowshape.turn.up.right.fill")
+                        Text("Переслано · \(forwardedFrom)")
+                    }
+                    .font(.caption2.bold())
+                    .opacity(0.58)
+                }
+
                 if let replyID = message.replyTo,
                    let source = store.state.messages.first(where: { $0.id == replyID }) {
                     HStack(alignment: .top, spacing: 8) {
@@ -378,6 +457,15 @@ struct ChatView: View {
                         }
                     }
                     Button("Ответить", systemImage: "arrowshape.turn.up.left") { reply = message; editing = nil }
+                    Button("Переслать", systemImage: "arrowshape.turn.up.right") {
+                        forwarding = message
+                    }
+                    Button(
+                        (room?.pinnedMessageIDs ?? []).contains(message.id) ? "Открепить" : "Закрепить",
+                        systemImage: "pin"
+                    ) {
+                        perform { try store.togglePinnedMessage(message) }
+                    }
                     Button("Копировать", systemImage: "doc.on.doc") { UIPasteboard.general.setItems([["public.utf8-plain-text": message.text]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)]) }
                     Menu("Реакция") { ForEach(["❤️", "👍", "🔥", "😂", "👀"], id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
                     if mine {
@@ -429,6 +517,83 @@ struct ChatView: View {
     func perform(_ action: () throws -> Void) { do { try action() } catch { store.error = error.localizedDescription } }
 }
 
+private struct ForwardPickerView: View {
+    let message: ChatMessage
+    let sourceRoomID: String
+
+    @EnvironmentObject private var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+
+    private var rooms: [Room] {
+        store.state.rooms
+            .filter {
+                !$0.archived &&
+                ($0.title.localizedCaseInsensitiveContains(search) || search.isEmpty)
+            }
+            .sorted { a, b in
+                if store.isSavedRoom(a.id) != store.isSavedRoom(b.id) {
+                    return store.isSavedRoom(a.id)
+                }
+                if a.pinned != b.pinned { return a.pinned }
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                VoidBackground()
+
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(rooms) { room in
+                            Button {
+                                do {
+                                    try store.forward(message, to: room.id)
+                                    dismiss()
+                                } catch {
+                                    store.error = error.localizedDescription
+                                }
+                            } label: {
+                                HStack(spacing: 13) {
+                                    Image(systemName: store.isSavedRoom(room.id) ? "bookmark.fill" : (room.isGroup ? "person.2.fill" : "bubble.left.fill"))
+                                        .frame(width: 42, height: 42)
+                                        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(room.title)
+                                            .font(.headline)
+                                        Text(store.isSavedRoom(room.id) ? "Личный архив" : (room.id == sourceRoomID ? "Текущий чат" : "Переслать сюда"))
+                                            .font(.caption2)
+                                            .foregroundStyle(Theme.secondary)
+                                    }
+
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right")
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                                .panel()
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle("Переслать")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $search, prompt: "Найти чат")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 struct RoomInfoView: View {
     let roomID: String
     @EnvironmentObject var store: ChatStore
@@ -442,7 +607,7 @@ struct RoomInfoView: View {
                     Section {
                         HStack { Spacer(); VStack(spacing: 14) { Avatar(name: room.title, group: room.isGroup, size: 80); Text(room.title).font(.title2.bold()); Text(room.isGroup ? "\(room.members.count) участника · закрытая группа" : "Личный чат").font(.caption).foregroundStyle(Theme.secondary) }; Spacer() }.padding(.vertical, 16)
                     }
-                    if !room.isGroup && !store.isBuiltinBotRoom(roomID) {
+                    if !room.isGroup && !store.isLocalUtilityRoom(roomID) {
                         Section("Связь") {
                             Button("Позвонить", systemImage: "phone.fill") {
                                 store.startCall(roomID)
