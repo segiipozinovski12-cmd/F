@@ -4,11 +4,17 @@ from pathlib import Path
 import hashlib
 import json
 import plistlib
+import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 IOS = ROOT / 'ios'
 PROJECT = IOS / 'VO1DMessenger.xcodeproj'
 PROJECT.mkdir(exist_ok=True)
+
+# The upstream iCepa Tor XCFramework ships iOS slices as macOS-style deep bundles.
+# Xcode 26/27 rejects those on device builds, so prepare a cached local shallow copy first.
+subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_tor.py')], check=True)
 
 def uid(name):
     return hashlib.sha256(name.encode()).hexdigest()[:24].upper()
