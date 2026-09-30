@@ -1193,7 +1193,7 @@ private struct GroupManagementView: View {
                 }
             }
         }
-        .navigationTitle("Управление")
+        .navigationTitle(room?.isChannel == true ? "Канал" : "Управление")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             title = room?.title ?? ""

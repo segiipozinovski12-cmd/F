@@ -239,8 +239,8 @@ final class ChatStore: ObservableObject {
         if lower == "/privacy" || lower.contains("приват") {
             return "Содержимое переписки шифруется на устройстве. Сервис всё равно может видеть технические метаданные соединения, поэтому VO1D не заявляет абсолютную сетевую анонимность."
         }
-        if lower == "/groups" || lower.contains("групп") {
-            return "Группа: Чаты → + → включи «Создать группу» → выбери людей → введи название → «Создать группу». VO1D Bot в группы не добавляется."
+        if lower == "/groups" || lower.contains("групп") || lower.contains("канал") {
+            return "Группа или канал: Чаты → + → включи «Создать группу». Для канала включи «Режим канала»: писать смогут админы. VO1D Bot в группы и каналы не добавляется."
         }
         if lower == "/calls" || lower.contains("звон") {
             return "В личном чате нажми значок телефона. Для звонка оба пользователя должны быть онлайн и подключены к VO1D."
@@ -436,7 +436,7 @@ final class ChatStore: ObservableObject {
         let room = Room(id: id, title: contact.name, members: [ownCard, contact.card], creator: "", isGroup: false, createdAt: Date())
         state.rooms.append(room); try save(); return room
     }
-    func createGroup(name: String, contacts: [Contact]) throws -> Room {
+    func createGroup(name: String, contacts: [Contact], isChannel: Bool = false) throws -> Room {
         guard let ownCard else { throw MessengerError.invalid("Личность VO1D недоступна") }
 
         let cleanTitle = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
@@ -462,7 +462,9 @@ final class ChatStore: ObservableObject {
             creator: myID,
             isGroup: true,
             createdAt: Date(),
-            admins: [myID]
+            admins: [myID],
+            onlyAdminsCanPost: isChannel ? true : nil,
+            isChannel: isChannel ? true : nil
         )
 
         let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)

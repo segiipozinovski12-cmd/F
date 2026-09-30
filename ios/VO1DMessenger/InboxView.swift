@@ -8,12 +8,28 @@ struct InboxView: View {
 
     private var rooms: [Room] {
         store.state.rooms.filter { room in
-            (filter == "Архив" ? room.archived : !room.archived) &&
-            (filter != "Группы" || room.isGroup) &&
-            (filter != "Личные" || !room.isGroup) &&
-            (search.isEmpty ||
-             room.title.localizedCaseInsensitiveContains(search) ||
-             store.messages(room.id).contains { $0.text.localizedCaseInsensitiveContains(search) })
+            let archiveMatch = filter == "Архив" ? room.archived : !room.archived
+            let typeMatch: Bool
+            switch filter {
+            case "Непрочитанные":
+                typeMatch = room.unread > 0
+            case "Личные":
+                typeMatch = !room.isGroup && !store.isLocalUtilityRoom(room.id)
+            case "Группы":
+                typeMatch = room.isGroup && room.isChannel != true
+            case "Каналы":
+                typeMatch = room.isChannel == true
+            case "Сохранённые":
+                typeMatch = store.isSavedRoom(room.id)
+            default:
+                typeMatch = true
+            }
+
+            return archiveMatch &&
+                typeMatch &&
+                (search.isEmpty ||
+                 room.title.localizedCaseInsensitiveContains(search) ||
+                 store.messages(room.id).contains { $0.text.localizedCaseInsensitiveContains(search) })
         }
         .sorted { a, b in
             if a.pinned != b.pinned { return a.pinned }
@@ -107,6 +123,21 @@ struct InboxView: View {
                     .tracking(-1.4)
             }
             Spacer()
+
+            if store.state.rooms.contains(where: { store.isSavedRoom($0.id) }) {
+                NavigationLink {
+                    ChatView(roomID: ChatStore.savedRoomID)
+                } label: {
+                    Image(systemName: "bookmark.fill")
+                        .font(.subheadline.bold())
+                        .frame(width: 44, height: 44)
+                        .background(.white.opacity(0.075), in: Circle())
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Сохранённые сообщения")
+            }
+
             Button { composing = true } label: {
                 Image(systemName: "plus")
                     .font(.title3.bold())
@@ -190,7 +221,19 @@ struct InboxView: View {
     private func roomRow(_ room: Room) -> some View {
         let last = store.messages(room.id).last
         return HStack(spacing: 14) {
-            Avatar(name: room.title, group: room.isGroup, size: 56)
+            ZStack {
+                Avatar(name: room.title, group: room.isGroup, size: 56)
+                if room.isChannel == true {
+                    Circle()
+                        .fill(.black)
+                        .frame(width: 21, height: 21)
+                        .overlay(
+                            Image(systemName: "megaphone.fill")
+                                .font(.system(size: 9, weight: .bold))
+                        )
+                        .offset(x: 19, y: 19)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 7) {
@@ -258,6 +301,7 @@ struct ComposeView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var add = false
     @State private var group = false
+    @State private var channel = false
     @State private var title = ""
     @State private var selected: Set<String> = []
     @State private var room: Room?
@@ -291,11 +335,22 @@ struct ComposeView: View {
                                     if !value {
                                         selected.removeAll()
                                         title = ""
+                                        channel = false
                                     }
                                 }
 
                             if group {
-                                TextField("Название группы", text: $title)
+                                Toggle("Режим канала", isOn: $channel)
+                                    .tint(.white)
+
+                                Text(channel
+                                     ? "В канале по умолчанию публикуют только админы. Это можно изменить позже."
+                                     : "В обычной группе писать могут все участники.")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.secondary)
+                                    .lineSpacing(3)
+
+                                TextField(channel ? "Название канала" : "Название группы", text: $title)
                                     .textInputAutocapitalization(.sentences)
                                     .submitLabel(.done)
                                     .voidField()
@@ -359,7 +414,11 @@ struct ComposeView: View {
                                 creating = true
                                 do {
                                     let members = visibleContacts.filter { selected.contains($0.id) }
-                                    let created = try store.createGroup(name: title, contacts: members)
+                                    let created = try store.createGroup(
+                                        name: title,
+                                        contacts: members,
+                                        isChannel: channel
+                                    )
                                     selected.removeAll()
                                     title = ""
                                     room = created
@@ -369,7 +428,7 @@ struct ComposeView: View {
                                 creating = false
                             } label: {
                                 HStack {
-                                    Text(creating ? "СОЗДАЁМ…" : "СОЗДАТЬ ГРУППУ")
+                                    Text(creating ? "СОЗДАЁМ…" : (channel ? "СОЗДАТЬ КАНАЛ" : "СОЗДАТЬ ГРУППУ"))
                                     Spacer()
                                     if creating {
                                         ProgressView().tint(.black).scaleEffect(0.82)
@@ -385,7 +444,9 @@ struct ComposeView: View {
                                 title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             )
 
-                            Text("VO1D Bot · XROSB не добавляется в группы. Состав группы фиксируется при создании.")
+                            Text(channel
+                                 ? "VO1D Bot · XROSB не добавляется в каналы. Создатель становится владельцем и админом."
+                                 : "VO1D Bot · XROSB не добавляется в группы. Состав можно менять позже в управлении группой.")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.secondary)
                                 .lineSpacing(3)
