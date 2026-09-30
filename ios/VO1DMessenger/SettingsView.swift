@@ -33,6 +33,12 @@ struct SettingsView: View {
 
                         profileCard
                         keysCard
+                        NavigationLink {
+                            ToolsCenterView()
+                        } label: {
+                            Label("ПРИВАТНОСТЬ И ИНСТРУМЕНТЫ",systemImage:"lock.shield")
+                                .frame(maxWidth:.infinity,alignment:.leading).panel()
+                        }.buttonStyle(.plain)
                         privacyCard
                         voiceCard
                         callsCard
@@ -280,7 +286,7 @@ struct SettingsView: View {
             ))
             .tint(.white)
 
-            Text("Пока приложение открыто, уведомления работают сразу. Полноценные push при полностью закрытом приложении требуют APNs и подписанного production-сборочного профиля.")
+            Text("Локальные уведомления работают в приложении. Фоновые push требуют настроенного APNs на relay и подписанного профиля Apple.")
                 .font(.caption2)
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
@@ -724,3 +730,4 @@ private struct DocumentScreen: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 }
+

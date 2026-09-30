@@ -172,7 +172,7 @@ final class CallManager: ObservableObject {
     private let bridge: CallKitBridge
     private let controller = CXCallController()
     private let audio = CallAudioEngine()
-    private let urlSession: URLSession
+    var allowedPeer: ((String) -> Bool)?
 
     private var socket: URLSessionWebSocketTask?
     private var api: APIClient?
@@ -194,13 +194,6 @@ final class CallManager: ObservableObject {
 
         provider = CXProvider(configuration: configuration)
         bridge = CallKitBridge()
-
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 0
-        config.urlCache = nil
-        config.httpCookieStorage = nil
-        urlSession = URLSession(configuration: config)
 
         bridge.owner = self
         provider.setDelegate(bridge, queue: nil)
@@ -237,7 +230,7 @@ final class CallManager: ObservableObject {
     }
 
     func startCall(peer: ContactCard, name: String) {
-        guard session == nil else { return }
+        guard session == nil, allowedPeer?(peer.id) != false else { return }
         guard socketReady else {
             transport = "RECONNECTING"
             connectSocket()
@@ -333,6 +326,11 @@ final class CallManager: ObservableObject {
 
         Task {
             do {
+                for _ in 0..<100 {
+                    if socketReady && callKey != nil { break }
+                    try await Task.sleep(for:.milliseconds(100))
+                }
+                guard socketReady,callKey != nil else { failCurrent(reason:.failed); return }
                 try await send([
                     "type": "answer",
                     "to": current.peerID,
@@ -396,7 +394,7 @@ final class CallManager: ObservableObject {
 
         do {
             let request = try api.callSocketRequest()
-            let task = urlSession.webSocketTask(with: request)
+            let task = api.session.webSocketTask(with: request)
             socket = task
             task.resume()
             receiveLoop(task)
@@ -449,6 +447,9 @@ final class CallManager: ObservableObject {
         if type == "ready" {
             socketReady = true
             transport = "WSS"
+            if let current=session, current.incoming, callKey==nil {
+                await preparePushedMedia(current)
+            }
             return
         }
 
@@ -503,7 +504,8 @@ final class CallManager: ObservableObject {
     }
 
     private func receiveInvite(from peerID: String, callID: String) async {
-        guard session == nil,
+        if session?.callID == callID { return }
+        guard allowedPeer?(peerID) != false, session == nil,
               let api,
               let identity,
               let uuid = UUID(uuidString: callID) else { return }
@@ -543,6 +545,41 @@ final class CallManager: ObservableObject {
         } catch {
             cleanup()
         }
+    }
+
+    func reportPushedCall(peerID: String, callID: String, completion: @escaping () -> Void) {
+        guard let uuid=UUID(uuidString:callID) else { completion(); return }
+        if session?.id==uuid { completion(); return }
+        let update=CXCallUpdate()
+        update.remoteHandle=CXHandle(type:.generic,value:"VO1D")
+        update.localizedCallerName="VO1D"
+        update.hasVideo=false
+        let rejected=session != nil || allowedPeer?(peerID)==false || peerID.count != 64
+        if !rejected {
+            session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:"VO1D",incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
+        }
+        provider.reportNewIncomingCall(with:uuid,update:update) { [weak self] error in
+            completion()
+            Task { @MainActor in
+                guard let self else { return }
+                if rejected || error != nil {
+                    self.provider.reportCall(with:uuid,endedAt:Date(),reason:.failed)
+                    if self.session?.id==uuid { self.cleanup() }
+                } else if let current=self.session { await self.preparePushedMedia(current) }
+            }
+        }
+    }
+
+    private func preparePushedMedia(_ current: VoiceCallSession) async {
+        guard let api,let identity, session?.id==current.id, allowedPeer?(current.peerID) != false else { return }
+        do {
+            let peer=try await api.card(current.peerID)
+            guard session?.id==current.id else { return }
+            try audio.prepareSession()
+            peerCard=peer
+            callKey=try deriveKey(identity:identity,peer:peer,callID:current.callID)
+            activateMediaIfReady()
+        } catch { failCurrent(reason:.failed) }
     }
 
     private func activateMediaIfReady() {
@@ -833,3 +870,4 @@ struct CallScreen: View {
         .buttonStyle(.plain)
     }
 }
+

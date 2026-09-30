@@ -17,16 +17,13 @@ final class APIClient {
 
     var base: URL
     private var token: String?
-    private let session: URLSession
+    let session: URLSession
     private let identity: LocalIdentity
 
-    init(server: String, identity: LocalIdentity) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences()) throws {
         base = try Self.validateURL(server)
         self.identity = identity
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30
-        config.urlCache = nil
-        config.httpCookieStorage = nil
+        let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config)
     }
 
@@ -62,7 +59,7 @@ final class APIClient {
         }
         guard (200..<300).contains(status) else {
             let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка сервера \(status)"
-            throw MessengerError.invalid(detail)
+            throw HTTPFailure(status:status,detail:detail)
         }
         return try Wire.decoder.decode(T.self, from: data)
     }
@@ -273,4 +270,11 @@ final class APIClient {
     func deleteAccount() async throws {
         let _: OK = try await request("v1/account", method: "DELETE")
     }
+}
+
+
+struct HTTPFailure: LocalizedError {
+    var status: Int
+    var detail: String
+    var errorDescription: String? { detail }
 }

@@ -114,6 +114,7 @@ struct ChatEvent: Codable {
     var target: String?
     var value: String?
     var senderName: String
+    var padding: String? = nil
     var at: Date = Date()
 }
 
@@ -138,6 +139,7 @@ struct PendingDelivery: Codable, Identifiable {
 }
 
 struct VaultState: Codable {
+    var extended: ExtendedState? = nil
     var nickname = "Ghost"
     var server = ""
     var onboarded = false
@@ -188,3 +190,4 @@ enum Wire {
         return d
     }
 }
+
