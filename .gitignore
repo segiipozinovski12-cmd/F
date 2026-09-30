@@ -16,3 +16,6 @@ secrets/
 
 build-evidence/
 VO1D-unsigned-device.zip
+
+# Prepared locally from the verified upstream Tor release.
+Vendor/TorRuntime/tor.xcframework/
