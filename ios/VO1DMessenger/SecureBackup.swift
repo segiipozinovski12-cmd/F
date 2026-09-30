@@ -70,6 +70,9 @@ enum SecureBackup {
             guard identity.storage.count == 32 else { throw MessengerError.invalid("Повреждённые ключи копии") }
             try Crypto.validate(identity.card)
         } else if payload.mode != .history { throw MessengerError.invalid("В копии личности нет ключей") }
+        if let owner = payload.ownerCard { try Crypto.validate(owner); if let identity = payload.identity { guard owner == (try identity.card) else { throw MessengerError.invalid("Личность и владелец копии не совпадают") } } }
+        guard payload.state.rooms.count <= 10_000, payload.state.messages.count <= 1_000_000, Set(payload.state.rooms.map(\.id)).count == payload.state.rooms.count else { throw MessengerError.invalid("Повреждённый состав копии") }
+        for member in payload.state.rooms.flatMap(\.members) where member.id != ChatStore.builtinBotID { try Crypto.validate(member) }
         for contact in payload.state.contacts where contact.id != ChatStore.builtinBotID { try Crypto.validate(contact.card) }
         return try sanitized(payload)
     }

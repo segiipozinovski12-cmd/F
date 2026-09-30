@@ -1,11 +1,23 @@
 {$VO1D_DOMAIN} {
-    request_body {
-        max_size 9MB
-    }
     header {
         Strict-Transport-Security "max-age=31536000"
         X-Content-Type-Options nosniff
         -Server
     }
-    reverse_proxy relay:8080
+    @encrypted_upload {
+        method PUT
+        path /v1/blob /v2/blobs/*
+    }
+    handle @encrypted_upload {
+        request_body {
+            max_size 51MB
+        }
+        reverse_proxy relay:8080
+    }
+    handle {
+        request_body {
+            max_size 9MB
+        }
+        reverse_proxy relay:8080
+    }
 }

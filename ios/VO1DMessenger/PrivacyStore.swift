@@ -241,6 +241,7 @@ extension ChatStore {
         try await prepareNetworkRoute()
         guard expected == generation else { throw CancellationError() }
         let client = try APIClient(server:state.server.isEmpty ? AppConfig.productionRelay : state.server,identity:identity,privacy:preferences)
+        _ = try await client.publicWorkBits()
         try await client.authenticate()
         guard expected == generation else { throw CancellationError() }
         try await BackgroundCalls.prepare(self,api:client)
@@ -259,7 +260,7 @@ extension ChatStore {
     }
 
     func sealEvent(_ input: ChatEvent, from identity: LocalIdentity, to target: ContactCard) throws -> Envelope {
-        if preferences.requirePrivateDelivery, extended.peerMailboxes[target.id] == nil {
+        if preferences.requirePrivateDelivery, privateRoute(peerID:target.id,roomID:input.room.id) == nil {
             throw MessengerError.invalid("Нужен приватный QR контакта: строгий режим скрывает отправителя при доставке")
         }
         var event=input

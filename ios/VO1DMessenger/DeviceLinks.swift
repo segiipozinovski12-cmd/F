@@ -27,7 +27,8 @@ struct DeviceLink: Codable, Identifiable {
 
 enum DeviceHistory {
     static func snapshot(state: VaultState, owner: ContactCard) throws -> HistoryArchive {
-        let messages = Array(state.messages.filter { !$0.text.isEmpty || $0.poll != nil }.sorted { $0.createdAt < $1.createdAt }.suffix(200)).map { input -> ChatMessage in
+        let networkRooms = Set(state.rooms.filter { !$0.members.contains(where:{ $0.id == ChatStore.builtinBotID }) }.map(\.id))
+        let messages = Array(state.messages.filter { networkRooms.contains($0.roomID) && (!$0.text.isEmpty || $0.poll != nil) }.sorted { $0.createdAt < $1.createdAt }.suffix(200)).map { input -> ChatMessage in
             var result = input; result.attachment = nil; result.editHistory = nil
             result.readBy = []; result.deliveredTo = []; result.openedAt = nil
             return result

@@ -44,9 +44,14 @@ testgroup = obj('test-group', 'PBXGroup', f'children = {array(testrefs)}; name =
 main = obj('main-group','PBXGroup',f'children = {array([appgroup,testgroup,products])}; sourceTree = "<group>";')
 privacy = ref_file('VO1DMessenger/PrivacyInfo.xcprivacy', 'text.xml')
 privacy_build = obj('privacy-build','PBXBuildFile',f'fileRef = {privacy};')
+resource_builds = [privacy_build]
+for file in sorted((IOS / 'VO1DMessenger' / 'Resources').glob('*.txt')):
+    path = file.relative_to(IOS).as_posix()
+    ref = ref_file(path, 'text')
+    resource_builds.append(obj(path + ':resource', 'PBXBuildFile', f'fileRef = {ref};'))
 appsrc = obj('app-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(appbuild)}; runOnlyForDeploymentPostprocessing = 0;')
 testsrc = obj('test-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(testbuild)}; runOnlyForDeploymentPostprocessing = 0;')
-resources = obj('app-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {array([privacy_build])}; runOnlyForDeploymentPostprocessing = 0;')
+resources = obj('app-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(resource_builds)}; runOnlyForDeploymentPostprocessing = 0;')
 signalpackage=obj('signal-package','XCLocalSwiftPackageReference','relativePath = "../Vendor/libsignal/swift";')
 torpackage=obj('tor-package','XCLocalSwiftPackageReference','relativePath = "../Vendor/TorRuntime";')
 torproduct=obj('tor-product','XCSwiftPackageProductDependency',f'package = {torpackage}; productName = EmbeddedTor;')

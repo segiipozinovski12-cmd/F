@@ -9,27 +9,43 @@ jobs:
   relay:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
       - run: pip install --require-hashes -r server/requirements.lock
       - run: python -m unittest discover -s server/tests -v
+      - name: Audit pinned Python dependencies
+        run: |
+          pip install --require-hashes -r tools/audit-requirements.lock
+          mkdir -p build-evidence
+          pip-audit -r server/requirements.lock --disable-pip --no-deps -f json -o build-evidence/python-audit.json
+          python scripts/build_manifest.py
+      - name: Upload dependency evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relay-dependency-evidence
+          path: build-evidence/
+
       - name: Build Railway Docker image
         run: |
           docker build -t vo1d-relay:ci server
           docker run --rm --entrypoint python vo1d-relay:ci -c "from app import Relay; Relay('/tmp/smoke.sqlite3')"
   ios:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: macos-15
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           toolchain: nightly-2025-02-25
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         id: signal-cache
         with:
           path: |
@@ -46,7 +62,7 @@ jobs:
         run: |
           python3 scripts/generate_project.py
           git diff --exit-code ios/VO1DMessenger.xcodeproj
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         if: steps.signal-cache.outputs.cache-hit != 'true'
         with:
           path: |
@@ -66,14 +82,30 @@ jobs:
         run: |
           bash scripts/build_signal.sh aarch64-apple-ios release
           xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Release -destination 'generic/platform=iOS' -derivedDataPath release CODE_SIGNING_ALLOWED=NO
-      - uses: actions/upload-artifact@v4
+      - name: Package unsigned device build and dependency evidence
+        run: |
+          python3 scripts/build_manifest.py
+          ditto -c -k --keepParent release/Build/Products/Release-iphoneos/VO1DMessenger.app VO1D-unsigned-device.zip
+          shasum -a 256 VO1D-unsigned-device.zip > build-evidence/device-sha256.txt
+      - name: Attest device archive provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: VO1D-unsigned-device.zip
+      - name: Upload device archive and build evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VO1D-unsigned-device
+          path: |
+            VO1D-unsigned-device.zip
+            build-evidence/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: xcode-results
           path: |
             xcodebuild.log
             privacy-tests.xcresult
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: VO1D-iPhone-Simulator
           path: build/Build/Products/Debug-iphonesimulator/VO1DMessenger.app

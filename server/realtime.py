@@ -7,6 +7,7 @@ never receives audio plaintext.
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -18,6 +19,7 @@ from aiohttp import WSMsgType, web
 from push import PushService
 import call_authority
 import private_blobs
+import network_privacy
 from app import APIError, ID, MAX_BODY, UUID, Relay
 
 CALL_MAX_AUDIO = 96 * 1024
@@ -227,10 +229,17 @@ class RealtimeGateway:
             self._cleanup_blobs()
             scope = "upload" if request.method == "PUT" else "delete" if request.method == "DELETE" else "read"
             auth = request.headers.get("Authorization", "")
+            remote = network_privacy.client_address(self._env(request))
+            bucket = hmac.new(self.relay.rate_secret,remote.encode(),hashlib.sha256).hexdigest()
+            self.relay.rate("blob-attempt:"+bucket,600)
+            with self.relay.db() as authorized:
+                private_blobs.authorize(authorized,blob_id,auth,scope,APIError)
             self.relay.rate("blob-capability:"+private_blobs.digest(auth),240,3600)
             with self.relay.db() as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = private_blobs.authorize(db,blob_id,auth,scope,APIError)
+                if row is None and scope == "delete":
+                    return web.json_response({"ok":True},headers={"Cache-Control":"no-store"})
                 if scope == "delete":
                     db.execute("DELETE FROM private_blobs WHERE id=?", (blob_id,))
                 elif scope == "upload":

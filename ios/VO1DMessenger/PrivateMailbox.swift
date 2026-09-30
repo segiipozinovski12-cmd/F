@@ -17,15 +17,16 @@ struct MailboxAddress: Codable, Hashable {
 struct LocalMailbox: Codable, Identifiable {
     var address: MailboxAddress
     var readToken: String
+    var roomID: String? = nil
     var peerID: String?
     var registered = false
     var proof: String
     var id: String { address.id }
-    static func create(peerID: String?, bits: Int = 18) throws -> Self {
+    static func create(peerID: String?, roomID: String? = nil, bits: Int = 18) throws -> Self {
         func token() throws -> String { try Crypto.random(32).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
         let address = MailboxAddress(id: try token(), writeToken: try token(), expiresAt: Int(Date().timeIntervalSince1970) + 29 * 86400)
         let proof = try WorkProof.solve(prefix: "VO1D-MAILBOX-WORK-2\n\(address.id)\n\(address.expiresAt)\n", bits: bits)
-        return Self(address: address, readToken: try token(), peerID: peerID, proof: proof)
+        return Self(address: address, readToken: try token(), roomID:roomID, peerID: peerID, proof: proof)
     }
 }
 struct OpaqueEnvelope: Codable, Identifiable {

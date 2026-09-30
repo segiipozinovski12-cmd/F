@@ -19,6 +19,7 @@ FIELDS = {'id','mailbox','ephemeralKey','salt','expiresAt','ciphertext'}
 
 def install(db):
     db.executescript('''
+        CREATE TABLE IF NOT EXISTS retired_mailboxes (id TEXT PRIMARY KEY, read_digest TEXT NOT NULL, expires INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS private_mailboxes (
           id TEXT PRIMARY KEY, read_digest TEXT NOT NULL, write_digest TEXT NOT NULL,
           expires INTEGER NOT NULL);
@@ -39,6 +40,7 @@ def clean(db, now):
     db.execute('DELETE FROM private_envelopes WHERE expires<=? OR mailbox IN (SELECT id FROM private_mailboxes WHERE expires<=?)',(now,now))
     db.execute('DELETE FROM private_seen WHERE expires<=? OR mailbox IN (SELECT id FROM private_mailboxes WHERE expires<=?)',(now,now))
     db.execute('DELETE FROM private_mailboxes WHERE expires<=?',(now,))
+    db.execute('DELETE FROM retired_mailboxes WHERE expires<=?',(now,))
 
 
 def digest(token):
@@ -50,6 +52,9 @@ def authorize(db, mailbox, env, scope, error):
     if not auth.startswith('Capability ') or not TOKEN.fullmatch(auth[11:]):
         raise error(401,'Mailbox capability required')
     row = db.execute('SELECT read_digest,write_digest,expires FROM private_mailboxes WHERE id=?',(mailbox,)).fetchone()
+    if row is None and env['REQUEST_METHOD']=='DELETE':
+        retired=db.execute('SELECT read_digest,expires FROM retired_mailboxes WHERE id=? AND expires>?',(mailbox,int(time.time()))).fetchone()
+        if retired and hmac.compare_digest(retired[0],digest(auth[11:])): return retired[1]
     if row is None or row[2] <= int(time.time()) or not hmac.compare_digest(row[0 if scope=='read' else 1],digest(auth[11:])):
         raise error(403,'Invalid or expired mailbox capability')
     return row[2]
@@ -58,6 +63,7 @@ def authorize(db, mailbox, env, scope, error):
 def handle(relay, env, body, ip_hash, error, decode):
     path, method = env['PATH_INFO'], env['REQUEST_METHOD']
     now = int(time.time())
+    relay.rate('private-attempt:'+ip_hash,600)
     if path.startswith('/v2/private-invites/') and method=='GET':
         token=path.rsplit('/',1)[1]
         if not TOKEN.fullmatch(token): raise error(400,'Invalid private invitation')
@@ -84,6 +90,7 @@ def handle(relay, env, body, ip_hash, error, decode):
             raise error(403,'Mailbox work proof rejected')
         with relay.db() as db:
             clean(db,now)
+            if db.execute('SELECT 1 FROM retired_mailboxes WHERE id=?',(body['id'],)).fetchone(): raise error(409,'Mailbox address revoked')
             values=(body['id'],digest(body['readToken']),digest(body['writeToken']),expiry)
             old=db.execute('SELECT * FROM private_mailboxes WHERE id=?',(body['id'],)).fetchone()
             if old is not None and tuple(old)!=values:
@@ -146,6 +153,7 @@ def handle(relay, env, body, ip_hash, error, decode):
             db.executemany('DELETE FROM private_envelopes WHERE mailbox=? AND id=?',[(mailbox,v) for v in ids])
             return {'ok':True}
         if method=='DELETE' and action=='':
+            db.execute('INSERT OR IGNORE INTO retired_mailboxes SELECT id,read_digest,expires FROM private_mailboxes WHERE id=?',(mailbox,))
             db.execute('DELETE FROM private_invites WHERE mailbox=?',(mailbox,))
             db.execute('DELETE FROM private_envelopes WHERE mailbox=?',(mailbox,))
             db.execute('DELETE FROM private_seen WHERE mailbox=?',(mailbox,))

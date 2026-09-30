@@ -31,7 +31,11 @@ extension APIClient {
         enum CodingKeys: String, CodingKey { case protocolVersion = "protocol", workBits }
     }
     func publicWorkBits() async throws -> Int {
-        let result: Capabilities = try await blobRequest("v2/capabilities")
+        let result: Capabilities
+        do { result = try await blobRequest("v2/capabilities") }
+        catch let failure as HTTPFailure where failure.status == 404 {
+            throw MessengerError.invalid("Этот сервер не поддерживает приватные сообщения v2. Выбери обновлённый relay.")
+        }
         guard result.protocolVersion == 2, (18...24).contains(result.workBits) else { throw MessengerError.invalid("Сервер не поддерживает приватный протокол v2") }
         return result.workBits
     }
@@ -80,7 +84,7 @@ extension APIClient {
     func deletePrivateBlob(_ id: String, token: String) async throws {
         try WorkProof.validateToken(id)
         do { let _: OK = try await blobRequest("v2/blobs/" + id, method: "DELETE", capability: token) }
-        catch let failure as HTTPFailure where failure.status == 403 || failure.status == 404 { return }
+        catch let failure as HTTPFailure where failure.status == 404 { return }
     }
 }
 
@@ -94,7 +98,7 @@ extension ChatStore {
     }
     func erasePrivateRelayStorage() async throws {
         guard let api else { return }
-        for mailbox in extended.ownMailboxes { try await api.deleteMailbox(mailbox) }
+        for mailbox in extended.ownMailboxes where mailbox.address.expiresAt > Int(Date().timeIntervalSince1970) { try await api.deleteMailbox(mailbox) }
         try await revokePrivateFiles()
     }
 }

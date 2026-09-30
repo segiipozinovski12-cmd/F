@@ -103,6 +103,7 @@ final class ChatStore: ObservableObject {
             try await prepareNetworkRoute()
             guard expected == generation else { return }
             let client = try APIClient(server: server, identity: identity, privacy: preferences)
+            _ = try await client.publicWorkBits()
             try await client.authenticate()
             guard expected == generation else { return }
             try await BackgroundCalls.prepare(self, api: client)
@@ -142,6 +143,7 @@ final class ChatStore: ObservableObject {
             try await prepareNetworkRoute()
             guard expected == generation else { return }
             let client = try APIClient(server: server, identity: identity, privacy: preferences)
+            _ = try await client.publicWorkBits()
             try await client.authenticate()
             let publicCode = try await client.ensurePublicCode()
             guard expected == generation else { return }
@@ -1746,8 +1748,9 @@ final class ChatStore: ObservableObject {
         defer { busy = false }
         do {
             generation += 1
+            guard let api else { throw MessengerError.invalid("Для удаления данных с relay сначала подключись к нему") }
             try await erasePrivateRelayStorage()
-            if let api { try await api.deleteAccount() }
+            try await api.deleteAccount()
             try resetLocalIdentity()
         } catch { self.error = error.localizedDescription }
     }

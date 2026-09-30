@@ -34,6 +34,8 @@ private final class CallAudioEngine {
 
     private var running = false
     private var tapInstalled = false
+    private var captureConverter: AVAudioConverter?
+    private let captureFormat = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16_000,channels:1,interleaved:true)!
     var muted = false
 
     init() {
@@ -59,10 +61,12 @@ private final class CallAudioEngine {
             throw MessengerError.invalid("Микрофон недоступен")
         }
 
+        captureConverter = AVAudioConverter(from:format,to:captureFormat)
+        guard captureConverter != nil else { throw MessengerError.invalid("Формат микрофона не поддерживается") }
         if !tapInstalled {
             input.installTap(onBus: 0, bufferSize: 1920, format: format) { [weak self] buffer, _ in
                 guard let self, !self.muted else { return }
-                guard let data = Self.pcm16Mono16k(buffer: buffer, format: format), !data.isEmpty else { return }
+                guard let data = self.pcm16Mono16k(buffer: buffer, format: format), !data.isEmpty else { return }
                 onFrame(data)
             }
             tapInstalled = true
@@ -81,6 +85,7 @@ private final class CallAudioEngine {
         player.stop()
         engine.stop()
         running = false
+        captureConverter = nil
         muted = false
     }
 
@@ -108,24 +113,20 @@ private final class CallAudioEngine {
         if !player.isPlaying { player.play() }
     }
 
-    private static func pcm16Mono16k(buffer: AVAudioPCMBuffer, format: AVAudioFormat) -> Data? {
-        guard let source = buffer.floatChannelData?[0] else { return nil }
-        let frameCount = Int(buffer.frameLength)
-        guard frameCount > 0 else { return nil }
-
-        let ratio = max(1, Int((format.sampleRate / 16_000).rounded()))
-        var data = Data()
-        data.reserveCapacity((frameCount / ratio + 1) * 2)
-
-        var index = 0
-        while index < frameCount {
-            let value = max(-1, min(1, source[index]))
-            var sample = Int16(value * 32767).littleEndian
-            withUnsafeBytes(of: &sample) { data.append(contentsOf: $0) }
-            index += ratio
+    private func pcm16Mono16k(buffer: AVAudioPCMBuffer, format: AVAudioFormat) -> Data? {
+        guard let converter = captureConverter, buffer.frameLength > 0 else { return nil }
+        let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 16_000 / format.sampleRate) + 32)
+        guard let output = AVAudioPCMBuffer(pcmFormat:captureFormat,frameCapacity:capacity) else { return nil }
+        var supplied = false, conversionError: NSError?
+        let status = converter.convert(to:output,error:&conversionError) { _, inputStatus in
+            if supplied { inputStatus.pointee = .noDataNow; return nil }
+            supplied = true; inputStatus.pointee = .haveData; return buffer
         }
-        return data
+        guard status != .error, conversionError == nil, output.frameLength > 0,
+              let bytes = output.int16ChannelData?[0] else { return nil }
+        return Data(bytes:bytes,count:Int(output.frameLength)*2)
     }
+
 }
 
 private final class CallKitBridge: NSObject, CXProviderDelegate {

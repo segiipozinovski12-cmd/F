@@ -2,8 +2,8 @@ import Foundation
 import CryptoKit
 
 extension ChatStore {
-    func ensurePrivateMailbox(peerID: String?, api: APIClient, generation expected: Int, fresh: Bool = false) async throws -> LocalMailbox {
-        if !fresh, let mailbox = extended.ownMailboxes.last(where: { $0.peerID == peerID && $0.address.expiresAt > Int(Date().timeIntervalSince1970) + 7 * 86400 }) {
+    func ensurePrivateMailbox(peerID: String?, roomID: String? = nil, api: APIClient, generation expected: Int, fresh: Bool = false) async throws -> LocalMailbox {
+        if !fresh, let mailbox = extended.ownMailboxes.last(where: { $0.peerID == peerID && $0.roomID == roomID && $0.address.expiresAt > Int(Date().timeIntervalSince1970) + 7 * 86400 }) {
             if !mailbox.registered {
                 try await api.registerMailbox(mailbox)
                 guard expected == generation else { throw CancellationError() }
@@ -14,7 +14,7 @@ extension ChatStore {
             var ready = mailbox; ready.registered = true; return ready
         }
         let bits = try await api.publicWorkBits()
-        let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: peerID,bits:bits) }.value
+        let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: peerID,roomID:roomID,bits:bits) }.value
         guard expected == generation else { throw CancellationError() }
         var local = extended; local.ownMailboxes.append(mailbox); state.extended = local
         try save()
@@ -44,10 +44,10 @@ extension ChatStore {
         local.privateInviteLink = "vo1d://private/\(token)/\(key.base64URL)"
         state.extended = local; try save()
     }
-    func acceptReplyMailbox(_ route: MailboxAddress?, sender: ContactCard) throws {
+    func acceptReplyMailbox(_ route: MailboxAddress?, sender: ContactCard, roomID: String) throws {
         guard let route else { return }
         try route.validate()
-        var local = extended; local.peerMailboxes[sender.id] = route; state.extended = local
+        var local = extended; local.peerMailboxes[privateRouteKey(peerID:sender.id,roomID:roomID)] = route; state.extended = local
     }
     func importPrivateInvite(_ invite: Invite) throws {
         guard invite.version == 2, let route = invite.mailbox, let bundle = invite.prekey else { throw MessengerError.invalid("В приглашении отсутствуют приватный адрес или ключи") }
@@ -85,7 +85,8 @@ extension ChatStore {
                         let result = try SignalProtocol.decrypt(packet, from: content.0, state: signal)
                         let event = try Wire.decoder.decode(ChatEvent.self, from: result.1)
                         var local = extended; local.signal = result.0; state.extended = local
-                        try acceptReplyMailbox(event.replyMailbox, sender: content.0)
+                        guard mailbox.roomID == nil || mailbox.roomID == event.room.id else { throw MessengerError.invalid("Приватный адрес принадлежит другому чату") }
+                        try acceptReplyMailbox(event.replyMailbox, sender: content.0,roomID:event.room.id)
                         try applyAccepted(event, sender: content.0)
                         if mailbox.peerID == nil {
                             local = extended
@@ -106,7 +107,16 @@ extension ChatStore {
         for mailbox in extended.ownMailboxes.filter({ $0.peerID == peerID }) { try await api.deleteMailbox(mailbox) }
         var local = extended
         local.ownMailboxes.removeAll { $0.peerID == peerID }
-        local.peerMailboxes[peerID] = nil; local.invitationBundles[peerID] = nil
+        local.peerMailboxes = local.peerMailboxes.filter { $0.key != peerID && !$0.key.hasPrefix(peerID+"|") }; local.invitationBundles[peerID] = nil
         state.extended = local; try save()
+    }
+}
+
+
+
+extension ChatStore {
+    func privateRouteKey(peerID: String, roomID: String) -> String { peerID + "|" + roomID }
+    func privateRoute(peerID: String, roomID: String) -> MailboxAddress? {
+        extended.peerMailboxes[privateRouteKey(peerID:peerID,roomID:roomID)] ?? extended.peerMailboxes[peerID]
     }
 }

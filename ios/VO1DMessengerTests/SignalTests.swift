@@ -51,6 +51,21 @@ final class SignalTests: XCTestCase {
         XCTAssertThrowsError(try SignalProtocol.decrypt(changed, from: alice.card, state: b))
         XCTAssertNotNil(b.prekeys[String(bundle.prekeyId)])
     }
+    func testTruncatedCiphertextsAndMalformedPacketsAreRejectedWithoutConsumingPrekeys() throws {
+        let (alice,bob,a,b,bundle) = try setupPair()
+        let encrypted = try SignalProtocol.encrypt(Data("fuzz".utf8),to:bob.card,identity:alice,state:a,bundle:bundle)
+        let original = try Wire.decoder.decode(SignalPacket.self,from:encrypted.1)
+        for length in [0,1,2,4,8,16,32,64,128] where length < original.ciphertext.count {
+            var packet = original; packet.ciphertext = original.ciphertext.prefix(length)
+            XCTAssertThrowsError(try SignalProtocol.decrypt(packet,from:alice.card,state:b))
+        }
+        for index in 0..<32 {
+            var packet = original; packet.ciphertext[packet.ciphertext.count-1-index] ^= 128
+            XCTAssertThrowsError(try SignalProtocol.decrypt(packet,from:alice.card,state:b))
+        }
+        XCTAssertEqual(try SignalProtocol.decrypt(original,from:alice.card,state:b).1,Data("fuzz".utf8))
+        XCTAssertNotNil(b.prekeys[String(bundle.prekeyId)])
+    }
     @MainActor func testDeferredPlaintextCannotReachAPI() async throws {
         let alice = try LocalIdentity.create(), bob = try LocalIdentity.create()
         let client = try APIClient(server: "https://example.invalid", identity: alice)

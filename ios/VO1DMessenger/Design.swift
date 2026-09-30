@@ -303,7 +303,13 @@ struct WelcomeView: View {
                     VStack(alignment:.leading,spacing:12) {
                         Picker("Режим защиты", selection:$privacyProfile) { ForEach(PrivacyProfile.allCases) { Text($0.title).tag($0) } }.tint(.white)
                         Text(privacyProfile.detail).font(.caption).foregroundStyle(Theme.secondary)
-                        TextField("HTTPS или v3 onion relay",text:$relay).textInputAutocapitalization(.never).autocorrectionDisabled().voidField()
+                        DisclosureGroup("Расширенные настройки подключения") {
+                            TextField("HTTPS или v3 onion адрес",text:$relay)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled().voidField()
+                                .padding(.top,8)
+                            Text("Оставь пустым для обычного подключения. Собственный адрес нужен только при использовании другого узла доставки.")
+                                .font(.caption).foregroundStyle(Theme.secondary).padding(.top,4)
+                        }.font(.caption).tint(.white)
                         Text("Без push сообщения приходят при открытии приложения. Tor увеличивает время подключения и расход батареи. Резервная копия создаётся отдельно после входа.").font(.caption).foregroundStyle(Theme.secondary)
                     }.panel()
                     VStack(spacing: 12) {

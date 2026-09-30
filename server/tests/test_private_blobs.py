@@ -46,6 +46,7 @@ class PrivateBlobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status,206); self.assertEqual(await response.read(),payload[1024:])
         response=await self.client.delete(path,headers={'Authorization':'BlobCapability '+body['readToken']}); self.assertEqual(response.status,403)
         response=await self.client.delete(path,headers={'Authorization':'BlobCapability '+body['deleteToken']}); self.assertEqual(response.status,200)
+        response=await self.client.delete(path,headers={'Authorization':'BlobCapability '+body['deleteToken']}); self.assertEqual(response.status,200)
         response=await self.client.get(path,headers={'Authorization':'BlobCapability '+body['readToken']}); self.assertEqual(response.status,403)
         response=await self.client.post('/v2/blobs/ticket',json=body); self.assertEqual(response.status,409)
         import sqlite3

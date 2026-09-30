@@ -26,8 +26,10 @@ def install(db):
           expires INTEGER NOT NULL, uploaded INTEGER NOT NULL DEFAULT 0,
           lease INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS private_blob_expiry ON private_blobs(expires);
-        CREATE TABLE IF NOT EXISTS private_blob_seen (id TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS private_blob_seen (id TEXT PRIMARY KEY, expires INTEGER NOT NULL, delete_digest TEXT NOT NULL);
     ''')
+    if 'delete_digest' not in {r[1] for r in db.execute('PRAGMA table_info(private_blob_seen)')}:
+        db.execute("ALTER TABLE private_blob_seen ADD COLUMN delete_digest TEXT NOT NULL DEFAULT ''")
 
 
 def digest(token):
@@ -38,6 +40,9 @@ def authorize(db, blob_id, auth, scope, error):
     if not TOKEN.fullmatch(blob_id) or not auth.startswith('BlobCapability ') or not TOKEN.fullmatch(auth[15:]):
         raise error(401, 'Blob capability required')
     row = db.execute('SELECT * FROM private_blobs WHERE id=? AND expires>?', (blob_id, int(time.time()))).fetchone()
+    if row is None and scope == 'delete':
+        retired = db.execute('SELECT delete_digest FROM private_blob_seen WHERE id=? AND expires>?',(blob_id,int(time.time()))).fetchone()
+        if retired and hmac.compare_digest(retired[0],digest(auth[15:])): return None
     if row is None or not hmac.compare_digest(row[scope + '_digest'], digest(auth[15:])):
         raise error(403, 'Invalid or expired blob capability')
     return row
@@ -80,5 +85,5 @@ def ticket(relay, body, ip_hash, error):
             if count >= 1000 or size + body['size'] > quota:
                 raise error(429, 'Private blob storage quota reached')
             db.execute('INSERT INTO private_blobs(id,upload_digest,read_digest,delete_digest,size,digest,expires) VALUES (?,?,?,?,?,?,?)', values)
-            db.execute('INSERT INTO private_blob_seen VALUES (?,?)', (body['id'], expiry))
+            db.execute('INSERT INTO private_blob_seen VALUES (?,?,?)', (body['id'], expiry,digest(body['deleteToken'])))
     return {'id': body['id'], 'size': body['size'], 'digest': body['digest'], 'expiresAt': expiry}

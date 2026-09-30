@@ -13,3 +13,6 @@ data/
 secrets/
 *.p8
 *.p12
+
+build-evidence/
+VO1D-unsigned-device.zip

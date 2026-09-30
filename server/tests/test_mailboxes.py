@@ -41,6 +41,14 @@ class MailboxTests(unittest.TestCase):
         return dict(id=str(uuid.uuid4()),mailbox=box['id'],ephemeralKey=b64(bytes(32)),salt=b64(bytes(32)),
                     expiresAt=int(time.time())+3600,ciphertext=b64(bytes(2076)))
 
+    def test_deleted_address_cannot_be_recreated_by_late_retry(self):
+        box=self.mailbox()
+        self.assertEqual(self.call(box,'','DELETE')[0],200)
+        self.assertEqual(self.call(box,'','DELETE')[0],200)
+        self.assertEqual(self.request('/v2/mailboxes','POST',box)[0],409)
+        self.assertEqual(self.call(box,'inbox')[0],403)
+        self.assertEqual(self.call(box,'envelopes','POST',self.envelope(box),'write')[0],403)
+
     def test_independent_caps_no_account_sender_and_no_token_storage(self):
         box=self.mailbox(); envelope=self.envelope(box)
         self.assertEqual(self.call(box,'envelopes','POST',envelope,'write')[0],200)
