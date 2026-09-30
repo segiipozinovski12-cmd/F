@@ -835,6 +835,7 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("Встроенное вложение превышает 3 МБ")
         }
 
+        if let token = attachment.blobReadToken { try WorkProof.validateToken(token) }
         if let blobID = attachment.blobID {
             let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
             guard blobID.count >= 40,
@@ -852,7 +853,7 @@ final class ChatStore: ObservableObject {
                 throw MessengerError.invalid("Повреждены метаданные удалённого вложения")
             }
         } else {
-            guard attachment.blobKey == nil,
+            guard attachment.blobReadToken == nil, attachment.blobKey == nil,
                   attachment.blobSize == nil,
                   attachment.blobDigest == nil else {
                 throw MessengerError.invalid("Неполные метаданные удалённого вложения")
@@ -893,11 +894,16 @@ final class ChatStore: ObservableObject {
         }.value
 
         let localDigest = Crypto.hex(SHA256.hash(data: encrypted.1))
-        let receipt = try await api.uploadBlob(encrypted.1)
+        let uploadProfile = profileID
+        let receipt = try await api.uploadPrivateBlob(encrypted.1)
+        guard profileID == uploadProfile else {
+            if let token = receipt.deleteToken { try? await api.deletePrivateBlob(receipt.id,token:token) }
+            throw MessengerError.invalid("Профиль изменился во время загрузки")
+        }
 
         guard receipt.digest.lowercased() == localDigest.lowercased(),
               receipt.size == encrypted.1.count else {
-            try? await api.deleteBlob(receipt.id)
+            if let token = receipt.deleteToken { try? await api.deletePrivateBlob(receipt.id,token:token) }
             throw MessengerError.invalid("VO1D отклонил проверку целостности вложения")
         }
 
@@ -907,12 +913,18 @@ final class ChatStore: ObservableObject {
             data: Data()
         )
         attachment.blobID = receipt.id
+        attachment.blobReadToken = receipt.readToken
         attachment.blobKey = encrypted.0.base64EncodedString()
         attachment.blobSize = plainSize
         attachment.blobDigest = receipt.digest.lowercased()
         attachment.blobExpiresAt = Date(timeIntervalSince1970: TimeInterval(receipt.expiresAt))
         attachment.previewData = preview
         try validateAttachment(attachment)
+        if let token = receipt.deleteToken {
+            var local = extended; local.privateBlobDeletes[receipt.id] = OwnedPrivateBlob(deleteToken:token,expiresAt:receipt.expiresAt)
+            state.extended = local
+            do { try save() } catch { try? await api.deletePrivateBlob(receipt.id,token:token); throw error }
+        }
         return attachment
     }
 
@@ -926,7 +938,9 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("Удалённое вложение недоступно")
         }
 
-        let ciphertext = try await api.downloadBlob(blobID)
+        let ciphertext: Data
+        if let token = attachment.blobReadToken { ciphertext = try await api.downloadPrivateBlob(blobID,token:token) }
+        else { ciphertext = try await api.downloadBlob(blobID) }
         let digest = Crypto.hex(SHA256.hash(data: ciphertext))
         guard digest.lowercased() == expectedDigest.lowercased() else {
             throw MessengerError.invalid("Проверка SHA-256 вложения не пройдена")
@@ -1698,6 +1712,7 @@ final class ChatStore: ObservableObject {
         defer { busy = false }
         do {
             generation += 1
+            try await erasePrivateRelayStorage()
             if let api { try await api.deleteAccount() }
             try resetLocalIdentity()
         } catch { self.error = error.localizedDescription }

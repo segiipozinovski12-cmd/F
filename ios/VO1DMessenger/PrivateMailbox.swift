@@ -21,17 +21,11 @@ struct LocalMailbox: Codable, Identifiable {
     var registered = false
     var proof: String
     var id: String { address.id }
-    static func create(peerID: String?) throws -> Self {
+    static func create(peerID: String?, bits: Int = 18) throws -> Self {
         func token() throws -> String { try Crypto.random(32).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") }
         let address = MailboxAddress(id: try token(), writeToken: try token(), expiresAt: Int(Date().timeIntervalSince1970) + 29 * 86400)
-        let prefix = Data("VO1D-MAILBOX-WORK-2\n\(address.id)\n\(address.expiresAt)\n".utf8)
-        var nonce: UInt64 = 0
-        while true {
-            let hash = Array(SHA256.hash(data: prefix + Data(String(nonce).utf8)))
-            if hash[0] == 0, hash[1] == 0, hash[2] < 64 { break }
-            nonce += 1
-        }
-        return Self(address: address, readToken: try token(), peerID: peerID, proof: String(nonce))
+        let proof = try WorkProof.solve(prefix: "VO1D-MAILBOX-WORK-2\n\(address.id)\n\(address.expiresAt)\n", bits: bits)
+        return Self(address: address, readToken: try token(), peerID: peerID, proof: proof)
     }
 }
 struct OpaqueEnvelope: Codable, Identifiable {

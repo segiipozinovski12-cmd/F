@@ -272,6 +272,10 @@ extension ChatStore {
     }
 
     func retryDelivery(_ messageID: String) {
+        guard state.outbox.contains(where: { $0.messageID == messageID }) else {
+            error = "Сохранённой очереди для этого сообщения нет. Отправь его заново: старые ключи из резервной копии не восстанавливаются."
+            return
+        }
         for pending in state.outbox where pending.messageID==messageID { deliveryIssues[pending.id]=nil }
         if let i=state.messages.firstIndex(where: { $0.id==messageID }) { state.messages[i].state="queued" }
         persist()

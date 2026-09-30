@@ -13,7 +13,8 @@ extension ChatStore {
             }
             var ready = mailbox; ready.registered = true; return ready
         }
-        let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: peerID) }.value
+        let bits = try await api.publicWorkBits()
+        let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: peerID,bits:bits) }.value
         guard expected == generation else { throw CancellationError() }
         var local = extended; local.ownMailboxes.append(mailbox); state.extended = local
         try save()

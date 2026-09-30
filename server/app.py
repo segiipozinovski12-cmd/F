@@ -13,6 +13,8 @@ import privacy
 import prekeys
 import mailboxes
 import call_authority
+import network_privacy
+import private_blobs
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -103,6 +105,7 @@ class Relay:
             prekeys.install(db)
             mailboxes.install(db)
             call_authority.install(db)
+            private_blobs.install(db)
 
     @contextmanager
     def db(self):
@@ -147,13 +150,17 @@ class Relay:
     def dispatch(self, env, body):
         method, path = env['REQUEST_METHOD'], env.get('PATH_INFO', '/')
         now = int(time.time())
-        # Only the immediate peer is used; untrusted forwarded headers never bypass limits.
+        # Forwarded addresses are accepted only through explicitly trusted proxy CIDRs.
         import hmac
-        ip_hash = hmac.new(self.rate_secret,env.get('REMOTE_ADDR','').encode(),hashlib.sha256).hexdigest()
+        ip_hash = hmac.new(self.rate_secret,network_privacy.client_address(env).encode(),hashlib.sha256).hexdigest()
+        if method == 'GET' and path == '/v2/capabilities':
+            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True}
+        if method == 'POST' and path == '/v2/blobs/ticket':
+            return private_blobs.ticket(self,body,ip_hash,APIError)
         if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
             return mailboxes.handle(self,env,body,ip_hash,APIError,b64)
         if method == 'GET' and path == '/health':
-            return {'status': 'ok', 'protocol': 1}
+            return {'status': 'ok', 'protocol': 2}
         if path in ('/v1/register', '/v1/challenge', '/v1/session'):
             self.rate('auth:' + ip_hash, 90)
         if path == '/v1/register':

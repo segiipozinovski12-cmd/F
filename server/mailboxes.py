@@ -10,6 +10,7 @@ import json
 import os
 import re
 import time
+from private_blobs import work_bits
 
 TOKEN = re.compile(r'^[A-Za-z0-9_-]{43}$')
 UUID = re.compile(r'^[A-Za-z0-9-]{16,64}$')
@@ -77,7 +78,7 @@ def handle(relay, env, body, ip_hash, error, decode):
         proof = body['proof']
         if not isinstance(proof,str) or not re.fullmatch('[0-9]{1,20}',proof):
             raise error(400,'Invalid work proof')
-        bits = max(18,min(24,int(os.environ.get('VO1D_MAILBOX_POW_BITS','18'))))
+        bits = work_bits()
         value = hashlib.sha256(f"VO1D-MAILBOX-WORK-2\n{body['id']}\n{expiry}\n{proof}".encode()).digest()
         if int.from_bytes(value,'big') >> (256-bits) != 0:
             raise error(403,'Mailbox work proof rejected')

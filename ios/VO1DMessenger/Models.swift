@@ -45,6 +45,7 @@ struct Attachment: Codable, Hashable {
     var viewSeconds: Int? = nil
     var voiceEffect: String? = nil
     var blobID: String? = nil
+    var blobReadToken: String? = nil
     var blobKey: String? = nil
     var blobSize: Int? = nil
     var blobDigest: String? = nil

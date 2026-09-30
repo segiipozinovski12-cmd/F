@@ -13,6 +13,8 @@ final class APIClient {
         var size: Int
         var digest: String
         var expiresAt: Int
+        var readToken: String? = nil
+        var deleteToken: String? = nil
     }
 
     var base: URL
