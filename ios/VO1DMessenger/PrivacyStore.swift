@@ -235,8 +235,16 @@ extension ChatStore {
 extension ChatStore {
     func reconfigureTransport() async throws {
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
+        generation += 1
+        let expected = generation
+        CallManager.shared.disconnect(); api?.session.invalidateAndCancel(); api = nil
+        try await prepareNetworkRoute()
+        guard expected == generation else { throw CancellationError() }
         let client = try APIClient(server:state.server.isEmpty ? AppConfig.productionRelay : state.server,identity:identity,privacy:preferences)
         try await client.authenticate()
+        guard expected == generation else { throw CancellationError() }
+        try await BackgroundCalls.prepare(self,api:client)
+        guard expected == generation else { throw CancellationError() }
         api=client
         CallManager.shared.configure(api:client,identity:identity,nameResolver:{ [weak self] in self?.name($0) ?? "VO1D" },recordSink:{ [weak self] in self?.recordCall($0) })
         CallManager.shared.allowedPeer = { [weak self] id in

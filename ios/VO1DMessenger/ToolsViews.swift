@@ -50,7 +50,10 @@ struct ToolsCenterView: View {
                 }
                 Button("Освободить username") { Task { do { try await store.releaseUsername(); report="Username освобождён" } catch { report=error.localizedDescription } } }
             }
-            Section("Сеть") { NetworkStatusRow() }
+            Section("Сеть") {
+                NavigationLink("Маршруты и профили защиты") { NetworkRouteView() }
+                NetworkStatusRow()
+            }
         }.navigationTitle("Инструменты VO1D")
     }
 }

@@ -24,7 +24,7 @@ final class APIClient {
     private let callToken: String?
 
     init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil) throws {
-        base = try Self.validateURL(server)
+        base = try Self.validateURL(server,privacy:privacy)
         self.privacy = privacy
         self.identity = identity
         self.authenticationCard = authenticationCard
@@ -33,11 +33,16 @@ final class APIClient {
         session = URLSession(configuration: config)
     }
 
-    static func validateURL(_ string: String) throws -> URL {
+    nonisolated static func validateURL(_ string: String, privacy: PrivacyPreferences? = nil) throws -> URL {
         guard let url = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else {
             throw MessengerError.invalid("Укажи адрес сервера, например https://chat.example.com")
+        }
+        if host.hasSuffix(".onion") {
+            guard ["http","https"].contains(url.scheme ?? ""), let privacy, privacy.embeddedTor || (privacy.proxyEnabled && privacy.proxyUsesTor),
+                  host.range(of:"^[a-z2-7]{56}\\.onion$",options:.regularExpression) != nil else { throw MessengerError.invalid("v3 onion требует маршрута Tor") }
+            return url
         }
         if url.scheme == "https" { return url }
         #if DEBUG

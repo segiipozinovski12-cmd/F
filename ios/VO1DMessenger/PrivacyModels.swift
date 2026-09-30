@@ -18,6 +18,10 @@ struct PrivacyPreferences: Codable {
     var proxyPort = 9050
     var proxyEnabled = false
     var requirePrivateDelivery = false
+    var embeddedTor = false
+    var torBridges = ""
+    var proxyUsesTor = false
+    var streamIsolation = ""
     var padding = true
     var quietHours = false
     var quietStart = 22
@@ -39,6 +43,7 @@ struct PrivacyPreferences: Codable {
     init() {}
     enum CodingKeys: String, CodingKey {
         case requirePrivateDelivery
+        case embeddedTor, torBridges, proxyUsesTor, streamIsolation
         case backgroundCalls, requireRequests, allowGroupInvites, discoverable, typingSignals, deliveryReceipts, notificationPreview, cleanLinks, confirmLinks, clipboardSeconds, inactivityDays, localRetentionDays, defaultDisappearing, proxyHost, proxyPort, proxyEnabled, padding, quietHours, quietStart, quietEnd, compactRows, sortOrder, fontSize, lowData, maxUploadMB, hideMedia, forwardWithoutName, verifiedOnlyCalls, autoLockSeconds, keepEditHistory, protectRecording, linkPreviews, wifiOnlyUploads, anonymizeFilenames
     }
     init(from decoder: Decoder) throws {
@@ -61,6 +66,10 @@ struct PrivacyPreferences: Codable {
         proxyPort=try container.decodeIfPresent(Int.self,forKey:.proxyPort) ?? proxyPort
         proxyEnabled=try container.decodeIfPresent(Bool.self,forKey:.proxyEnabled) ?? proxyEnabled
         requirePrivateDelivery=try container.decodeIfPresent(Bool.self,forKey:.requirePrivateDelivery) ?? requirePrivateDelivery
+        embeddedTor=try container.decodeIfPresent(Bool.self,forKey:.embeddedTor) ?? embeddedTor
+        torBridges=try container.decodeIfPresent(String.self,forKey:.torBridges) ?? torBridges
+        proxyUsesTor=try container.decodeIfPresent(Bool.self,forKey:.proxyUsesTor) ?? proxyUsesTor
+        streamIsolation=try container.decodeIfPresent(String.self,forKey:.streamIsolation) ?? streamIsolation
         padding=try container.decodeIfPresent(Bool.self,forKey:.padding) ?? padding
         quietHours=try container.decodeIfPresent(Bool.self,forKey:.quietHours) ?? quietHours
         quietStart=try container.decodeIfPresent(Int.self,forKey:.quietStart) ?? quietStart

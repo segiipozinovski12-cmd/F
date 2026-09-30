@@ -98,7 +98,7 @@ struct RootView: View {
         .environment(\.openURL,OpenURLAction { url in
             guard ["http","https"].contains(url.scheme?.lowercased() ?? ""), url.user==nil, url.password==nil else { return .discarded }
             let clean=store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url
-            if store.preferences.confirmLinks { pendingLink=clean; return .handled }
+            if store.preferences.confirmLinks || store.preferences.proxyEnabled || store.preferences.embeddedTor { pendingLink=clean; return .handled }
             return .systemAction(clean)
         })
         .confirmationDialog("Открыть внешний сайт?",isPresented:Binding(get:{ pendingLink != nil },set:{ if !$0 { pendingLink=nil } }),titleVisibility:.visible) {

@@ -82,16 +82,22 @@ enum TransportConfiguration {
         config.urlCache = nil
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
-        if privacy.proxyEnabled {
-            let host = privacy.proxyHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.waitsForConnectivity = false
+        if privacy.proxyEnabled || privacy.embeddedTor {
+            let host = privacy.embeddedTor ? "127.0.0.1" : privacy.proxyHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            let selectedPort = privacy.embeddedTor ? 19050 : privacy.proxyPort
             guard !host.isEmpty, host.count <= 253, !host.contains("/"), !host.contains("@"),
-                  (1...65535).contains(privacy.proxyPort),
-                  let port = NWEndpoint.Port(rawValue: UInt16(privacy.proxyPort)) else {
+                  (1...65535).contains(selectedPort),
+                  let port = NWEndpoint.Port(rawValue: UInt16(selectedPort)) else {
                 throw MessengerError.invalid("Укажи SOCKS5 host и порт 1–65535")
             }
             let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host),port: port)
             var proxy = ProxyConfiguration(socksv5Proxy: endpoint)
             proxy.allowFailover = false
+            if privacy.embeddedTor || privacy.proxyUsesTor {
+                guard !privacy.streamIsolation.isEmpty else { throw MessengerError.invalid("Сначала подготовь изоляцию соединений Tor") }
+                proxy.applyCredential(username:privacy.streamIsolation,password:privacy.streamIsolation)
+            }
             config.proxyConfigurations = [proxy]
         }
         return config

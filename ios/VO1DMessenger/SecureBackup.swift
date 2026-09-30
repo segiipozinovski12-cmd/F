@@ -89,6 +89,7 @@ enum SecureBackup {
         }
         local.ownMailboxes = []; local.privateInvite = nil; local.privateInviteLink = nil
         local.invitationBundles = [:]; local.pendingEvents = []; local.reminders = []
+        local.privacy.streamIsolation = ""
         payload.state.outbox = []; payload.state.processed = []
         payload.state.extended = local
         if mode == .history {

@@ -64,7 +64,7 @@ extension ChatStore {
         let encrypted = try await api.redeemPrivateInvite(token: token)
         let clear = try AES.GCM.open(AES.GCM.SealedBox(combined: encrypted), using: SymmetricKey(data: key), authenticating: Data("VO1D-PRIVATE-INVITE-2\n\(token)".utf8))
         let invite = try Wire.decoder.decode(Invite.self, from: clear)
-        let server = try APIClient.validateURL(invite.server)
+        let server = try APIClient.validateURL(invite.server,privacy:preferences)
         guard server == api.base else { throw MessengerError.invalid("Приглашение использует другой relay") }
         return invite
     }

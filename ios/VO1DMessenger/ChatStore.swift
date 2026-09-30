@@ -96,13 +96,19 @@ final class ChatStore: ObservableObject {
 
     func connectProductionRelay() async {
         guard state.onboarded, let identity else { return }
+        let expected = generation
         connection = "Подключение…"
         do {
             let server=state.server.isEmpty ? AppConfig.productionRelay : state.server
+            try await prepareNetworkRoute()
+            guard expected == generation else { return }
             let client = try APIClient(server: server, identity: identity, privacy: preferences)
             try await client.authenticate()
+            guard expected == generation else { return }
             try await BackgroundCalls.prepare(self, api: client)
+            guard expected == generation else { return }
             let publicCode = try await client.ensurePublicCode()
+            guard expected == generation else { return }
             api = client
             state.server = server
             state.publicCode = publicCode
@@ -122,18 +128,23 @@ final class ChatStore: ObservableObject {
             try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
             connection = "Подключён"
         } catch {
+            guard expected == generation else { return }
             connection = "Нет связи"
         }
     }
 
     func configure(name: String, server: String) async {
         guard let identity else { return }
+        let expected = generation
         busy = true; defer { busy = false }
         do {
             let firstLaunch = !state.onboarded
+            try await prepareNetworkRoute()
+            guard expected == generation else { return }
             let client = try APIClient(server: server, identity: identity, privacy: preferences)
             try await client.authenticate()
             let publicCode = try await client.ensurePublicCode()
+            guard expected == generation else { return }
             api = client
             state.server = client.base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
@@ -428,7 +439,7 @@ final class ChatStore: ObservableObject {
             input += String(repeating: "=", count: (4 - input.count % 4) % 4)
             let invite = try Wire.decoder.decode(Invite.self, from: Crypto.decode(input))
             guard [1,2].contains(invite.version) else { throw MessengerError.invalid("Неподдерживаемое приглашение") }
-            let server = try APIClient.validateURL(invite.server)
+            let server = try APIClient.validateURL(invite.server,privacy:preferences)
             guard server.host == api?.base.host, server.port == api?.base.port, server.scheme == api?.base.scheme else {
                 throw MessengerError.invalid("Контакт использует другой сервер. Оба устройства должны подключаться к одному серверу.")
             }
@@ -1311,6 +1322,7 @@ final class ChatStore: ObservableObject {
                     try await api.send(envelope)
                 }
                 catch {
+                    guard currentGeneration == generation else { return }
                     let attempts=(deliveryIssues[pending.id]?.attempts ?? 0)+1
                     let permanent=(error as? HTTPFailure).map { [400,403,404,409,413].contains($0.status) } ?? false
                     let delay=min(300.0,pow(2.0,Double(min(attempts,8))))+Double.random(in:0...1)
@@ -1356,6 +1368,7 @@ final class ChatStore: ObservableObject {
             if !ack.isEmpty { try await api.ack(ack) }
             connection = "Подключён"
         } catch {
+            guard currentGeneration == generation else { return }
             connection = "Нет связи · очередь сохранена"
             // The visible status keeps transient network failures from producing alert loops.
         }
