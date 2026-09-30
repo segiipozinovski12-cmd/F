@@ -15,7 +15,7 @@ struct ContactsView: View {
             $0.card.shortID.localizedCaseInsensitiveContains(search))
         }.sorted { a,b in
             let af=store.extended.favorites.contains(a.id), bf=store.extended.favorites.contains(b.id)
-            return af != bf ? af : a.name.localizedCaseInsensitiveCompare(b.name)== .orderedAscending
+            return af != bf ? af : a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
     }
 

@@ -125,6 +125,7 @@ struct RootView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
 
+            store.beginActiveSession()
             NotificationCoordinator.shared.clearDelivered()
 
             if store.state.onboarded {

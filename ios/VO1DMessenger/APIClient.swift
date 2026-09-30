@@ -151,38 +151,18 @@ final class APIClient {
         return try Wire.decoder.decode(BlobReceipt.self, from: data)
     }
 
-    func downloadBlob(_ id: String, retry: Bool = true) async throws -> Data {
-        guard id.count >= 40 && id.count <= 64 else {
+    func downloadBlob(_ id: String,retry: Bool = true) async throws -> Data {
+        guard (40...64).contains(id.count),id.unicodeScalars.allSatisfy({ CharacterSet(charactersIn:"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0) }) else {
             throw MessengerError.invalid("Некорректный blob ID")
         }
-        if token == nil {
-            try await authenticate()
+        if token==nil { try await authenticate() }
+        var request=URLRequest(url:base.appendingPathComponent("v1/blob/"+id))
+        if let token { request.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization") }
+        do { return try await ResumableDownload().download(request,id:id,configuration:session.configuration) }
+        catch let error as HTTPFailure {
+            if error.status==401 && retry { try await authenticate(); return try await downloadBlob(id,retry:false) }
+            throw error
         }
-
-        var request = URLRequest(url: base.appendingPathComponent("v1/blob/\(id)"))
-        request.timeoutInterval = 120
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw MessengerError.invalid("Нет ответа VO1D")
-        }
-
-        if http.statusCode == 401 && retry {
-            try await authenticate()
-            return try await downloadBlob(id, retry: false)
-        }
-
-        guard (200..<300).contains(http.statusCode) else {
-            let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка download \(http.statusCode)"
-            throw MessengerError.invalid(detail)
-        }
-        guard data.count <= 50 * 1024 * 1024 + 64 else {
-            throw MessengerError.invalid("Удалённое вложение превышает лимит")
-        }
-        return data
     }
 
     func deleteBlob(_ id: String, retry: Bool = true) async throws {

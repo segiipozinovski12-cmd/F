@@ -81,12 +81,13 @@ extension ChatStore {
                 if let expiry = pending.event.message?.expiresAt, expiry <= Date() { continue }
                 try applyAccepted(pending.event, sender: sender)
                 changeExtended { if !$0.trustedIDs.contains(sender.id) { $0.trustedIDs.append(sender.id) } }
-                try? await trustOnServer(sender.id,trusted:true)
             }
             changeExtended { $0.pendingEvents.removeAll { $0.room.id == roomID } }
             try save()
+            for id in Set(events.map { $0.sender.id }) { try? await trustOnServer(id,trusted:true) }
         } catch {
             state = original
+            try? save()
             throw error
         }
     }
@@ -204,6 +205,7 @@ extension ChatStore {
             else { state.messages[i].attachment = nil }
         }
         MediaFiles.clear()
+        ResumableDownload.clear()
         persist()
     }
 
@@ -279,5 +281,51 @@ extension ChatStore {
             let blocked=self.state.contacts.first(where: { $0.id==id })?.blocked==true
             return !blocked && (!self.preferences.requireRequests || known) && (!self.preferences.verifiedOnlyCalls || verified)
         }
+    }
+}
+
+extension ChatStore {
+    func recordPrivateVote(messageID: String,voterID: String,optionID: String) throws {
+        guard let index=state.messages.firstIndex(where: { $0.id==messageID }),state.messages[index].sender==myID,
+              var poll=state.messages[index].poll,poll.privateVotes==true,!poll.closed,
+              poll.options.contains(where: { $0.id==optionID }),
+              let room=state.rooms.first(where: { $0.id==state.messages[index].roomID }),room.members.contains(where: { $0.id==voterID }) else { return }
+        var extra=extended
+        var votes=extra.privatePollVotes[messageID] ?? [:]
+        votes[voterID]=optionID
+        extra.privatePollVotes[messageID]=votes
+        state.extended=extra
+        var counts: [String:Int]=[:]
+        for value in votes.values { counts[value,default:0] += 1 }
+        poll.privateCounts=counts
+        for i in poll.options.indices { poll.options[i].voterIDs=[] }
+        state.messages[index].poll=poll
+        if !isLocalUtilityRoom(room.id) {
+            let encoded=String(data:try JSONEncoder().encode(counts),encoding:.utf8) ?? "{}"
+            try enqueue(ChatEvent(kind:"privatePollResult",room:room,target:messageID,value:encoded,senderName:state.nickname),room:room)
+        }
+        try save()
+    }
+
+    func setPrivateRoster(_ roomID: String,enabled: Bool) throws {
+        guard let index=state.rooms.firstIndex(where: { $0.id==roomID }),isGroupOwner(state.rooms[index]),state.rooms[index].isChannel==true else {
+            throw MessengerError.invalid("Скрытый состав доступен для собственного канала")
+        }
+        let old=state.rooms[index]
+        guard Set(old.admins ?? [myID])==Set([myID]) else { throw MessengerError.invalid("Сначала оставь одного администратора канала") }
+        var updated=old
+        updated.privateRoster=enabled
+        updated.onlyAdminsCanPost=true
+        try publishRoomUpdate(oldRoom:old,newRoom:updated)
+        state.rooms[index]=updated
+        try save()
+    }
+
+    func beginActiveSession() {
+        let days=preferences.inactivityDays
+        if days>0,let previous=extended.lastOpenedAt,Date().timeIntervalSince(previous)>=Double(days)*86400 {
+            do { try resetLocalIdentity() } catch { self.error=error.localizedDescription }
+        }
+        changeExtended { $0.lastOpenedAt=Date() }
     }
 }

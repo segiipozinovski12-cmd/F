@@ -20,7 +20,7 @@ final class ChatStore: ObservableObject {
     var vault: Vault?
     var api: APIClient?
     private var syncing = false
-    private var generation = 0
+    var generation = 0
     @Published var revealedHiddenRooms = false
     @Published var deliveryIssues: [String: DeliveryIssue] = [:]
     var acceptedPendingIDs = Set<String>()
@@ -28,7 +28,7 @@ final class ChatStore: ObservableObject {
     var myID: String { ownCard?.id ?? "" }
 
     static let builtinBotKey = "XROSB"
-    static let builtinBotID = String(repeating: "b", count: 64)
+    nonisolated static let builtinBotID = String(repeating: "b", count: 64)
     static let builtinBotRoomID = "bot:xrosb"
     static let savedRoomID = "saved:me"
 
@@ -683,7 +683,7 @@ final class ChatStore: ObservableObject {
         room.isGroup && groupAdminIDs(room).contains(myID)
     }
 
-    private func publishRoomUpdate(oldRoom: Room, newRoom: Room) throws {
+    func publishRoomUpdate(oldRoom: Room, newRoom: Room) throws {
         guard oldRoom.isGroup,
               newRoom.isGroup,
               oldRoom.creator == myID,
@@ -746,6 +746,7 @@ final class ChatStore: ObservableObject {
     func toggleGroupAdmin(_ roomID: String, memberID: String) throws {
         guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
         let oldRoom = state.rooms[roomIndex]
+        guard oldRoom.privateRoster != true else { throw MessengerError.invalid("В канале со скрытым составом один администратор") }
         guard isGroupOwner(oldRoom) else {
             throw MessengerError.invalid("Админов назначает создатель группы")
         }
@@ -770,6 +771,7 @@ final class ChatStore: ObservableObject {
     func setGroupAdminsOnly(_ roomID: String, enabled: Bool) throws {
         guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
         let oldRoom = state.rooms[roomIndex]
+        guard oldRoom.privateRoster != true || enabled else { throw MessengerError.invalid("В скрытом канале публикует только владелец") }
         guard isGroupOwner(oldRoom) else {
             throw MessengerError.invalid("Это разрешение меняет создатель группы")
         }
@@ -1132,7 +1134,8 @@ final class ChatStore: ObservableObject {
         question: String,
         options: [String],
         scheduledAt: Date? = nil,
-        topic: String? = nil
+        topic: String? = nil,
+        privateVotes: Bool = false
     ) throws {
         let cleanQuestion = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
         let cleanOptions = options
@@ -1148,6 +1151,8 @@ final class ChatStore: ObservableObject {
 
         let poll = PollData(
             question: cleanQuestion,
+            privateVotes: privateVotes,
+            privateCounts: privateVotes ? [:] : nil,
             options: cleanOptions.map {
                 PollOption(id: UUID().uuidString, text: $0, voterIDs: [])
             }
@@ -1172,6 +1177,17 @@ final class ChatStore: ObservableObject {
               !poll.closed,
               poll.options.contains(where: { $0.id == optionID }) else { return }
 
+        if poll.privateVotes==true {
+            let message=state.messages[index]
+            changeExtended { $0.privatePollSelections[messageID]=optionID }
+            if message.sender==myID {
+                try recordPrivateVote(messageID:messageID,voterID:myID,optionID:optionID)
+            } else if let room=state.rooms.first(where: { $0.id==message.roomID }),let author=room.members.first(where: { $0.id==message.sender }) {
+                try enqueue(ChatEvent(kind:"privatePollVote",room:room,target:messageID,value:optionID,senderName:state.nickname),room:room,to:[author])
+                try save()
+            }
+            return
+        }
         for optionIndex in poll.options.indices {
             poll.options[optionIndex].voterIDs.removeAll { $0 == myID }
             if poll.options[optionIndex].id == optionID {
@@ -1393,9 +1409,11 @@ final class ChatStore: ObservableObject {
                 updated.draft = current.draft
                 updated.disappearingSeconds = current.disappearingSeconds
                 updated.pinnedMessageIDs = current.pinnedMessageIDs
+                updated.mutedUntil = current.mutedUntil
                 state.rooms[roomIndex] = updated
             } else {
-                guard Set(current.members) == Set(incoming.members),
+                let limitedRoster=current.privateRoster==true && current.isChannel==true && sender.id != current.creator && current.creator==myID
+                guard (limitedRoster ? Set(incoming.members).isSubset(of:Set(current.members)) : Set(current.members)==Set(incoming.members)),
                       current.creator == incoming.creator,
                       current.isGroup == incoming.isGroup else {
                     throw MessengerError.invalid("Изменение состава группы требует roomUpdate")
@@ -1407,6 +1425,7 @@ final class ChatStore: ObservableObject {
                     guard currentAdmins == incomingAdmins,
                           current.onlyAdminsCanPost == incoming.onlyAdminsCanPost,
                           current.isChannel == incoming.isChannel,
+                          current.privateRoster == incoming.privateRoster,
                           current.topics == incoming.topics,
                           current.title == incoming.title else {
                         throw MessengerError.invalid("Метаданные группы изменены без roomUpdate")
@@ -1428,7 +1447,8 @@ final class ChatStore: ObservableObject {
             let needsConsent = incoming.isGroup ? !preferences.allowGroupInvites : (preferences.requireRequests && !known)
             if needsConsent && !acceptedPendingIDs.contains(incoming.id) {
                 changeExtended {
-                    if $0.pendingEvents.count < 100 && !$0.pendingEvents.contains(where: { $0.id == event.id }) {
+                    let bytes=$0.pendingEvents.reduce(0) { $0 + ($1.event.message?.attachment?.data.count ?? 0) }
+                    if $0.pendingEvents.count < 100 && bytes + (event.message?.attachment?.data.count ?? 0)<=10*1024*1024 && !$0.pendingEvents.contains(where: { $0.id == event.id }) {
                         $0.pendingEvents.append(PendingRequest(event:event,sender:sender))
                     }
                 }
@@ -1479,8 +1499,12 @@ final class ChatStore: ObservableObject {
                   message.expiresAt == nil || message.expiresAt! > Date() else {
                 throw MessengerError.invalid("Неверное содержимое сообщения")
             }
-            if let attachment = message.attachment {
-                try validateAttachment(attachment)
+            if let attachment = message.attachment { try validateAttachment(attachment) }
+            if let poll=message.poll {
+                guard (2...10).contains(poll.options.count),poll.question.count<=240,
+                      Set(poll.options.map(\.id)).count==poll.options.count,
+                      poll.options.allSatisfy({ $0.id.count<=64 && $0.text.count<=100 && $0.voterIDs.count<=16 }),
+                      (poll.privateCounts ?? [:]).values.allSatisfy({ $0>=0 && $0<=16 }) else { throw MessengerError.invalid("Неверный опрос") }
             }
             if !state.messages.contains(where: { $0.id == message.id }) {
                 message.state = "delivered"; message.reactions = [:]; message.readBy = []; message.deliveredTo = []; message.edited = false; message.openedAt = nil
@@ -1526,6 +1550,17 @@ final class ChatStore: ObservableObject {
                 state.messages.remove(at: index)
             case "reaction":
                 if let value = event.value, ["❤️", "👍", "🔥", "😂", "👀", ""].contains(value) { state.messages[index].reactions[sender.id] = value.isEmpty ? nil : value }
+            case "privatePollVote" where state.messages[index].sender==myID:
+                if let option=event.value { try recordPrivateVote(messageID:target,voterID:sender.id,optionID:option) }
+            case "privatePollResult" where state.messages[index].sender==sender.id:
+                if var poll=state.messages[index].poll, poll.privateVotes==true,
+                   let text=event.value, let data=text.data(using:.utf8),
+                   let counts=try? JSONDecoder().decode([String:Int].self,from:data),
+                   Set(counts.keys).isSubset(of:Set(poll.options.map(\.id))),
+                   counts.values.allSatisfy({ $0>=0 && $0<=16 }), counts.values.reduce(0,+)<=16 {
+                    poll.privateCounts=counts
+                    state.messages[index].poll=poll
+                }
             case "pollVote":
                 if var poll = state.messages[index].poll,
                    let optionID = event.value,
@@ -1610,7 +1645,7 @@ final class ChatStore: ObservableObject {
             if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Открыть приватные чаты VO1D") { locked = false }
         } catch { self.error = error.localizedDescription }
     }
-    private func resetLocalIdentity() throws {
+    func resetLocalIdentity() throws {
         CallManager.shared.disconnect()
         try vault?.delete()
         try Keychain.delete()

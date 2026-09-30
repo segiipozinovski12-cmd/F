@@ -29,15 +29,22 @@ jobs:
       - name: Build Debug for iPhone Simulator
         run: |
           set -o pipefail
-          xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO | tee xcodebuild.log
+          xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES | tee xcodebuild.log
+      - name: Run cryptography and privacy tests
+        run: |
+          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and "iPhone" in d["name"]))')
+          xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=NO
       - name: Build release for device
         run: xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Release -destination 'generic/platform=iOS' -derivedDataPath release CODE_SIGNING_ALLOWED=NO
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: xcode-results
-          path: xcodebuild.log
+          path: |
+            xcodebuild.log
+            privacy-tests.xcresult
       - uses: actions/upload-artifact@v4
         with:
           name: VO1D-iPhone-Simulator
           path: build/Build/Products/Debug-iphonesimulator/VO1DMessenger.app
+

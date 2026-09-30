@@ -56,6 +56,9 @@ enum Crypto {
     static func seal(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
         var event = input
         event.room = input.room.wireCopy
+        if event.room.privateRoster==true && event.room.isChannel==true && event.room.creator == (try identity.card.id) && recipient.id != event.room.creator {
+            event.room.members = event.room.members.filter { $0.id==event.room.creator || $0.id==recipient.id }
+        }
         if var message = event.message {
             message.editHistory = nil; message.readBy = []; message.deliveredTo = []
             message.reactions = [:]; message.openedAt = nil

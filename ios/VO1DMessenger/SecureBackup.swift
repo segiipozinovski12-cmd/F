@@ -151,6 +151,7 @@ extension ChatStore {
     func restoreBackup(_ payload: BackupPayload) throws {
         guard let oldIdentity=identity else { throw MessengerError.invalid("Нет текущих ключей") }
         let oldState=state
+        generation += 1
         CallManager.shared.disconnect()
         do {
             try Keychain.replace(payload.identity)

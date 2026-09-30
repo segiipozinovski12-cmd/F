@@ -294,6 +294,12 @@ struct RoomToolsView: View {
                 Button("Сохранить") { store.changeExtended { $0.roomNotes[roomID]=String(note.prefix(2000)) } }
             }
             Section("Приватность") {
+                if let room=store.state.rooms.first(where: { $0.id==roomID }),store.isGroupOwner(room),room.isChannel==true {
+                    Toggle("Скрытый список подписчиков",isOn:Binding(get:{ room.privateRoster==true },set:{ value in
+                        do { try store.setPrivateRoster(roomID,enabled:value) } catch { store.error=error.localizedDescription }
+                    }))
+                    Text("Подписчик получает только свой ключ и ключ владельца. Состав уже раскрытых старых сообщений скрыть задним числом нельзя.").font(.caption)
+                }
                 Toggle("Не отправлять прочтение и доставку",isOn:Binding(
                     get:{ store.extended.receiptExceptions.contains(roomID) },
                     set:{ value in store.changeExtended { if value { if !$0.receiptExceptions.contains(roomID) { $0.receiptExceptions.append(roomID) } } else { $0.receiptExceptions.removeAll { $0==roomID } } } }))

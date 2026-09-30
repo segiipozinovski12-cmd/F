@@ -67,7 +67,7 @@ struct InboxView: View {
                                     NavigationLink {
                                         ChatView(roomID: room.id)
                                     } label: {
-                                        roomRow(room).scaleEffect(store.preferences.compactRows ? 0.96 : 1,anchor:.leading)
+                                        roomRow(room)
                                     }
                                     .buttonStyle(.plain)
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -257,7 +257,7 @@ struct InboxView: View {
     private func roomRow(_ room: Room) -> some View {
         let last = store.messages(room.id).last
         return HStack(spacing: 14) {
-            Avatar(name: room.title, group: room.isGroup, size: 56)
+            Avatar(name: room.title, group: room.isGroup, size: store.preferences.compactRows ? 42 : 56)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 7) {

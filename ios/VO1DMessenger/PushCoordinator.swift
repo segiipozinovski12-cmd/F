@@ -3,7 +3,7 @@ import PushKit
 import UserNotifications
 
 @MainActor
-final class PushCoordinator: NSObject, PKPushRegistryDelegate {
+final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
     static let shared = PushCoordinator()
     private var registry: PKPushRegistry?
     private var alertToken: String?
