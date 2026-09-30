@@ -8,14 +8,29 @@ struct InboxView: View {
 
     private var rooms: [Room] {
         store.state.rooms.filter { room in
-            (filter == "Архив" ? room.archived : !room.archived) &&
-            (filter != "Группы" || (room.isGroup && room.isChannel != true)) &&
-            (filter != "Личные" || !room.isGroup) &&
-            (filter != "Каналы" || room.isChannel == true) &&
-            (filter != "Непрочитанные" || room.unread > 0) &&
-            (search.isEmpty ||
-             room.title.localizedCaseInsensitiveContains(search) ||
-             store.messages(room.id).contains { $0.text.localizedCaseInsensitiveContains(search) })
+            let archiveMatch = filter == "Архив" ? room.archived : !room.archived
+            let typeMatch: Bool
+
+            switch filter {
+            case "Непрочитанные":
+                typeMatch = room.unread > 0
+            case "Личные":
+                typeMatch = !room.isGroup && !store.isLocalUtilityRoom(room.id)
+            case "Группы":
+                typeMatch = room.isGroup && room.isChannel != true
+            case "Каналы":
+                typeMatch = room.isChannel == true
+            case "Сохранённые":
+                typeMatch = store.isSavedRoom(room.id)
+            default:
+                typeMatch = true
+            }
+
+            return archiveMatch &&
+                typeMatch &&
+                (search.isEmpty ||
+                 room.title.localizedCaseInsensitiveContains(search) ||
+                 store.messages(room.id).contains { $0.text.localizedCaseInsensitiveContains(search) })
         }
         .sorted { a, b in
             if a.pinned != b.pinned { return a.pinned }
@@ -129,6 +144,20 @@ struct InboxView: View {
                     .tracking(-1.4)
             }
             Spacer()
+            if store.state.rooms.contains(where: { store.isSavedRoom($0.id) }) {
+                NavigationLink {
+                    ChatView(roomID: ChatStore.savedRoomID)
+                } label: {
+                    Image(systemName: "bookmark.fill")
+                        .font(.subheadline.bold())
+                        .frame(width: 44, height: 44)
+                        .background(.white.opacity(0.075), in: Circle())
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Сохранённые сообщения")
+            }
+
             Button { composing = true } label: {
                 Image(systemName: "plus")
                     .font(.title3.bold())
