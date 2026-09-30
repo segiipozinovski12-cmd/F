@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum Theme {
     static let background = Color.black
@@ -99,6 +100,15 @@ struct VoidBackground: View {
             )
         }
         .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil,
+                from: nil,
+                for: nil
+            )
+        }
         .onAppear {
             drift = true
             scan = true
@@ -303,11 +313,9 @@ struct WelcomeView: View {
                         Wordmark(compact: true)
                         Spacer()
                         HStack(spacing: 7) {
-                            Circle()
-                                .fill(.white)
-                                .frame(width: 6, height: 6)
-                                .scaleEffect(appeared ? 1 : 0.55)
-                            Text("PRODUCTION")
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("PRIVATE / E2EE")
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                                 .tracking(1.5)
                         }
@@ -339,7 +347,7 @@ struct WelcomeView: View {
                             .tracking(-1.9)
                             .minimumScaleFactor(0.82)
 
-                        Text("Никакого телефона и почты. Ник, VO1D ID и локальные криптографические ключи. Production relay подключается автоматически.")
+                        Text("Никакого телефона и почты. Только ник, VO1D ID и локальные криптографические ключи. Всё остальное VO1D настраивает сам.")
                             .font(.subheadline)
                             .foregroundStyle(Theme.secondary)
                             .lineSpacing(5)
@@ -384,19 +392,12 @@ struct WelcomeView: View {
                         .disabled(store.busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
 
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("OFFICIAL RELAY")
-                                .font(.caption2.monospaced())
-                                .tracking(1.7)
-                            Text(AppConfig.productionRelayHost)
-                                .font(.caption)
-                                .foregroundStyle(Theme.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "lock.fill")
-                            .foregroundStyle(.white.opacity(0.72))
+                    HStack(spacing: 0) {
+                        feature("phone.down.fill", "БЕЗ НОМЕРА")
+                        Divider().frame(height: 34).overlay(.white.opacity(0.08))
+                        feature("lock.fill", "E2EE")
+                        Divider().frame(height: 34).overlay(.white.opacity(0.08))
+                        feature("eye.slash.fill", "ПРИВАТНО")
                     }
                     .panel()
 
@@ -417,6 +418,20 @@ struct WelcomeView: View {
                 appeared = true
             }
         }
+    }
+
+    private func feature(_ icon: String, _ title: String) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+            Text(title)
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .tracking(1)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity)
+        .foregroundStyle(.white.opacity(0.80))
     }
 }
 

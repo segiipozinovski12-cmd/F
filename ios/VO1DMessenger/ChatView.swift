@@ -72,7 +72,7 @@ struct ChatView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    if room?.isGroup == false && !selectionMode {
+                    if room?.isGroup == false && !selectionMode && !store.isBuiltinBotRoom(roomID) {
                         Button {
                             store.startCall(roomID)
                         } label: {
@@ -442,7 +442,7 @@ struct RoomInfoView: View {
                     Section {
                         HStack { Spacer(); VStack(spacing: 14) { Avatar(name: room.title, group: room.isGroup, size: 80); Text(room.title).font(.title2.bold()); Text(room.isGroup ? "\(room.members.count) участника · закрытая группа" : "Личный чат").font(.caption).foregroundStyle(Theme.secondary) }; Spacer() }.padding(.vertical, 16)
                     }
-                    if !room.isGroup {
+                    if !room.isGroup && !store.isBuiltinBotRoom(roomID) {
                         Section("Связь") {
                             Button("Позвонить", systemImage: "phone.fill") {
                                 store.startCall(roomID)
@@ -481,7 +481,9 @@ struct RoomInfoView: View {
                         ForEach(room.members) { member in
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(store.name(member.id))
-                                Text(member.shortID).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
+                                Text(store.isBuiltinBot(member.id) ? "XROSB" : member.shortID)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(Theme.secondary)
                             }
                         }
                     }

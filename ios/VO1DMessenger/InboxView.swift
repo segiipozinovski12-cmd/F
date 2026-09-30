@@ -44,6 +44,29 @@ struct InboxView: View {
                                         roomRow(room)
                                     }
                                     .buttonStyle(.plain)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        Button {
+                                            store.updateRoom(room.id) { $0.archived.toggle() }
+                                        } label: {
+                                            Label(room.archived ? "Вернуть" : "Архив", systemImage: "archivebox")
+                                        }
+                                        .tint(.gray)
+
+                                        Button {
+                                            store.updateRoom(room.id) { $0.muted.toggle() }
+                                        } label: {
+                                            Label(room.muted ? "Со звуком" : "Без звука", systemImage: room.muted ? "speaker.wave.2" : "speaker.slash")
+                                        }
+                                        .tint(.black)
+                                    }
+                                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                        Button {
+                                            store.updateRoom(room.id) { $0.pinned.toggle() }
+                                        } label: {
+                                            Label(room.pinned ? "Открепить" : "Закрепить", systemImage: "pin")
+                                        }
+                                        .tint(.white)
+                                    }
                                     .contextMenu {
                                         Button(room.pinned ? "Открепить" : "Закрепить", systemImage: "pin") {
                                             store.updateRoom(room.id) { $0.pinned.toggle() }
@@ -175,8 +198,24 @@ struct InboxView: View {
                         .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
 
+                    if store.isBuiltinBotRoom(room.id) {
+                        Text("BOT")
+                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                            .tracking(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.white, in: Capsule())
+                            .foregroundStyle(.black)
+                    }
+
                     if room.pinned {
                         Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.secondary)
+                    }
+
+                    if room.muted {
+                        Image(systemName: "speaker.slash.fill")
                             .font(.caption2)
                             .foregroundStyle(Theme.secondary)
                     }
@@ -222,6 +261,13 @@ struct ComposeView: View {
     @State private var title = ""
     @State private var selected: Set<String> = []
     @State private var room: Room?
+    @State private var creating = false
+
+    private var visibleContacts: [Contact] {
+        store.state.contacts.filter {
+            !$0.blocked && (!group || !store.isBuiltinBot($0.id))
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -241,10 +287,26 @@ struct ComposeView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             Toggle("Создать группу", isOn: $group)
                                 .tint(.white)
+                                .onChange(of: group) { _, value in
+                                    if !value {
+                                        selected.removeAll()
+                                        title = ""
+                                    }
+                                }
 
                             if group {
                                 TextField("Название группы", text: $title)
+                                    .textInputAutocapitalization(.sentences)
+                                    .submitLabel(.done)
                                     .voidField()
+
+                                HStack {
+                                    Label("\(selected.count) выбрано", systemImage: "person.2.fill")
+                                    Spacer()
+                                    Text("до 15")
+                                }
+                                .font(.caption)
+                                .foregroundStyle(Theme.secondary)
                             }
 
                             Button("ДОБАВИТЬ ЧЕЛОВЕКА", systemImage: "person.badge.plus") { add = true }
@@ -252,10 +314,10 @@ struct ComposeView: View {
                         }
                         .panel()
 
-                        if store.state.contacts.filter({ !$0.blocked }).isEmpty {
+                        if visibleContacts.isEmpty {
                             VStack(spacing: 14) {
                                 Text("Нет доступных контактов").font(.headline)
-                                Text("Сначала добавь человека по VO1D ID.")
+                                Text(group ? "Для группы нужен хотя бы один обычный контакт." : "Сначала добавь человека по VO1D ID.")
                                     .font(.subheadline)
                                     .foregroundStyle(Theme.secondary)
                                 Button("ДОБАВИТЬ") { add = true }.buttonStyle(PrimaryButton())
@@ -264,7 +326,7 @@ struct ComposeView: View {
                             .panel()
                         } else {
                             VStack(spacing: 10) {
-                                ForEach(store.state.contacts.filter { !$0.blocked }) { contact in
+                                ForEach(visibleContacts) { contact in
                                     Button {
                                         if group {
                                             if selected.contains(contact.id) { selected.remove(contact.id) }
@@ -292,18 +354,41 @@ struct ComposeView: View {
                         }
 
                         if group {
-                            Button("СОЗДАТЬ ГРУППУ") {
+                            Button {
+                                guard !creating else { return }
+                                creating = true
                                 do {
-                                    room = try store.createGroup(
-                                        name: title,
-                                        contacts: store.state.contacts.filter { selected.contains($0.id) }
-                                    )
+                                    let members = visibleContacts.filter { selected.contains($0.id) }
+                                    let created = try store.createGroup(name: title, contacts: members)
+                                    selected.removeAll()
+                                    title = ""
+                                    room = created
                                 } catch {
                                     store.error = error.localizedDescription
                                 }
+                                creating = false
+                            } label: {
+                                HStack {
+                                    Text(creating ? "СОЗДАЁМ…" : "СОЗДАТЬ ГРУППУ")
+                                    Spacer()
+                                    if creating {
+                                        ProgressView().tint(.black).scaleEffect(0.82)
+                                    } else {
+                                        Image(systemName: "arrow.up.right")
+                                    }
+                                }
                             }
                             .buttonStyle(PrimaryButton())
-                            .disabled(selected.isEmpty || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(
+                                creating ||
+                                selected.isEmpty ||
+                                title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            )
+
+                            Text("VO1D Bot · XROSB не добавляется в группы. Состав группы фиксируется при создании.")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.secondary)
+                                .lineSpacing(3)
                         }
                     }
                     .padding(24)

@@ -23,6 +23,22 @@ final class ChatStore: ObservableObject {
     private var lastTyping: [String: Date] = [:]
     var myID: String { ownCard?.id ?? "" }
 
+    static let builtinBotKey = "XROSB"
+    static let builtinBotID = String(repeating: "b", count: 64)
+    static let builtinBotRoomID = "bot:xrosb"
+
+    static var builtinBotCard: ContactCard {
+        ContactCard(
+            id: builtinBotID,
+            signingKey: Data(repeating: 0x42, count: 32).base64EncodedString(),
+            agreementKey: Data(repeating: 0x24, count: 32).base64EncodedString(),
+            binding: Data(repeating: 0, count: 64).base64EncodedString()
+        )
+    }
+
+    func isBuiltinBot(_ id: String) -> Bool { id == Self.builtinBotID }
+    func isBuiltinBotRoom(_ id: String) -> Bool { id == Self.builtinBotRoomID }
+
     init() {
         do {
             let identity = try Keychain.load()
@@ -46,7 +62,8 @@ final class ChatStore: ObservableObject {
             }
 
             expire()
-            if credentialsChanged || relayChanged { try save() }
+            let botChanged = state.onboarded ? ensureBuiltinBot() : false
+            if credentialsChanged || relayChanged || botChanged { try save() }
         } catch { fatalError = error.localizedDescription }
     }
     func save() throws {
@@ -97,12 +114,105 @@ final class ChatStore: ObservableObject {
             state.onboarded = true
             if firstLaunch { state.credentialsAcknowledged = false }
             sessionUnlocked = true
+            _ = ensureBuiltinBot()
             try save()
             CallManager.shared.configure(api: client, identity: identity) { [weak self] id in
                 self?.name(id) ?? "VO1D"
             }
             connection = "Подключён"
         } catch { self.error = error.localizedDescription }
+    }
+
+    @discardableResult
+    private func ensureBuiltinBot() -> Bool {
+        guard let ownCard else { return false }
+        var changed = false
+
+        if !state.contacts.contains(where: { $0.id == Self.builtinBotID }) {
+            state.contacts.append(
+                Contact(
+                    card: Self.builtinBotCard,
+                    name: "VO1D Bot",
+                    verified: true,
+                    blocked: false
+                )
+            )
+            changed = true
+        }
+
+        if !state.rooms.contains(where: { $0.id == Self.builtinBotRoomID }) {
+            state.rooms.append(
+                Room(
+                    id: Self.builtinBotRoomID,
+                    title: "VO1D Bot",
+                    members: [ownCard, Self.builtinBotCard],
+                    creator: Self.builtinBotID,
+                    isGroup: false,
+                    createdAt: Date(),
+                    pinned: true
+                )
+            )
+
+            state.messages.append(
+                ChatMessage(
+                    id: UUID().uuidString,
+                    roomID: Self.builtinBotRoomID,
+                    sender: Self.builtinBotID,
+                    text: "VO1D Bot готов. Мой ключ — XROSB. Напиши /help, чтобы увидеть команды.",
+                    createdAt: Date(),
+                    expiresAt: nil,
+                    replyTo: nil,
+                    attachment: nil,
+                    state: "delivered"
+                )
+            )
+            changed = true
+        }
+
+        return changed
+    }
+
+    func builtinBotRoom() throws -> Room {
+        _ = ensureBuiltinBot()
+        guard let room = state.rooms.first(where: { $0.id == Self.builtinBotRoomID }) else {
+            throw MessengerError.invalid("VO1D Bot недоступен")
+        }
+        try save()
+        return room
+    }
+
+    private func botReply(to text: String, attachment: Attachment?) -> String {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = clean.lowercased()
+
+        if attachment != nil && clean.isEmpty {
+            return "Вложение получил. Я системный бот VO1D; могу подсказать по функциям приложения. Напиши /help."
+        }
+        if lower == "/help" || lower.contains("помощ") {
+            return "Команды: /id — твой VO1D ID, /status — состояние соединения, /privacy — кратко о приватности, /groups — помощь с группами, /calls — помощь со звонками."
+        }
+        if lower == "/id" || lower.contains("мой id") || lower.contains("мой айди") {
+            return "Твой VO1D ID: \(state.publicCode ?? "----"). Ключ доступа смотри только в настройках — я его не показываю."
+        }
+        if lower == "/status" || lower.contains("статус") {
+            return "Соединение: \(connection). Очередь отправки: \(state.outbox.count)."
+        }
+        if lower == "/privacy" || lower.contains("приват") {
+            return "Содержимое переписки шифруется на устройстве. Сервис всё равно может видеть технические метаданные соединения, поэтому VO1D не заявляет абсолютную сетевую анонимность."
+        }
+        if lower == "/groups" || lower.contains("групп") {
+            return "Группа: Чаты → + → включи «Создать группу» → выбери людей → введи название → «Создать группу». VO1D Bot в группы не добавляется."
+        }
+        if lower == "/calls" || lower.contains("звон") {
+            return "В личном чате нажми значок телефона. Для звонка оба пользователя должны быть онлайн и подключены к VO1D."
+        }
+        if ["привет", "hello", "hi", "ку", "здарова"].contains(lower) {
+            return "Привет. Я VO1D Bot · XROSB. Могу подсказать по функциям приложения — напиши /help."
+        }
+
+        return clean.isEmpty
+            ? "Я здесь. Напиши /help."
+            : "Получил сообщение. Я системный VO1D Bot, а не человек. Для списка полезных команд напиши /help."
     }
 
     @discardableResult
@@ -188,6 +298,16 @@ final class ChatStore: ObservableObject {
         var input = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let card: ContactCard
         let name: String
+
+        if input.uppercased() == Self.builtinBotKey {
+            _ = ensureBuiltinBot()
+            try save()
+            guard let bot = state.contacts.first(where: { $0.id == Self.builtinBotID }) else {
+                throw MessengerError.invalid("VO1D Bot недоступен")
+            }
+            return bot
+        }
+
         if input.hasPrefix("vo1d://contact/") {
             input = String(input.dropFirst("vo1d://contact/".count)).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
             input += String(repeating: "=", count: (4 - input.count % 4) % 4)
@@ -220,6 +340,7 @@ final class ChatStore: ObservableObject {
     }
     func startCall(_ roomID: String) {
         guard connection == "Подключён",
+              !isBuiltinBotRoom(roomID),
               let room = state.rooms.first(where: { $0.id == roomID }),
               !room.isGroup,
               let peer = room.members.first(where: { $0.id != myID }) else {
@@ -230,6 +351,7 @@ final class ChatStore: ObservableObject {
     }
 
     func direct(_ contact: Contact) throws -> Room {
+        if isBuiltinBot(contact.id) { return try builtinBotRoom() }
         guard !contact.blocked, let ownCard else { throw MessengerError.invalid("Контакт заблокирован") }
         let ids = [myID, contact.id].sorted().joined(separator: ":")
         let id = "dm:" + ids
@@ -238,13 +360,44 @@ final class ChatStore: ObservableObject {
         state.rooms.append(room); try save(); return room
     }
     func createGroup(name: String, contacts: [Contact]) throws -> Room {
-        guard let ownCard, !contacts.isEmpty, contacts.count <= 15, contacts.allSatisfy({ !$0.blocked }) else {
-            throw MessengerError.invalid("Выбери от 1 до 15 незаблокированных контактов")
+        guard let ownCard else { throw MessengerError.invalid("Личность VO1D недоступна") }
+
+        let cleanTitle = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !cleanTitle.isEmpty else { throw MessengerError.invalid("Введи название группы") }
+
+        var seen = Set<String>()
+        let cleanContacts = contacts.filter {
+            !$0.blocked &&
+            !isBuiltinBot($0.id) &&
+            seen.insert($0.id).inserted
         }
-        let room = Room(id: UUID().uuidString, title: String(name.prefix(60)), members: [ownCard] + contacts.map(\.card), creator: myID, isGroup: true, createdAt: Date())
+
+        guard !cleanContacts.isEmpty, cleanContacts.count <= 15 else {
+            throw MessengerError.invalid("Выбери от 1 до 15 доступных контактов")
+        }
+
+        for contact in cleanContacts { try Crypto.validate(contact.card) }
+
+        let room = Room(
+            id: UUID().uuidString,
+            title: cleanTitle,
+            members: [ownCard] + cleanContacts.map(\.card),
+            creator: myID,
+            isGroup: true,
+            createdAt: Date()
+        )
+
+        let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
+        let targets = cleanContacts.map(\.card)
+        guard let identity else { throw MessengerError.invalid("Нет ключей") }
+        let pending = try targets.map {
+            PendingDelivery(envelope: try Crypto.seal(event, from: identity, to: $0), messageID: nil)
+        }
+
         state.rooms.append(room)
-        try enqueue(ChatEvent(kind: "room", room: room, senderName: state.nickname), room: room)
-        try save(); return room
+        state.outbox.append(contentsOf: pending)
+        try save()
+        return room
     }
     func enqueue(_ event: ChatEvent, room: Room, to recipients: [ContactCard]? = nil, messageID: String? = nil) throws {
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
@@ -254,6 +407,39 @@ final class ChatStore: ObservableObject {
     }
     func send(roomID: String, text: String, attachment: Attachment? = nil, replyTo: String? = nil) throws {
         guard let room = state.rooms.first(where: { $0.id == roomID }), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachment != nil else { return }
+
+        if isBuiltinBotRoom(roomID) {
+            let now = Date()
+            let mine = ChatMessage(
+                id: UUID().uuidString,
+                roomID: roomID,
+                sender: myID,
+                text: text,
+                createdAt: now,
+                expiresAt: nil,
+                replyTo: replyTo,
+                attachment: attachment,
+                state: "read"
+            )
+            let response = ChatMessage(
+                id: UUID().uuidString,
+                roomID: roomID,
+                sender: Self.builtinBotID,
+                text: botReply(to: text, attachment: attachment),
+                createdAt: now.addingTimeInterval(0.001),
+                expiresAt: nil,
+                replyTo: mine.id,
+                attachment: nil,
+                state: "delivered"
+            )
+            state.messages.append(contentsOf: [mine, response])
+            if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
+                state.rooms[index].draft = ""
+                state.rooms[index].unread = 0
+            }
+            try save()
+            return
+        }
         guard text.count <= 16000 else { throw MessengerError.invalid("Сообщение слишком длинное") }
         guard (attachment?.data.count ?? 0) <= 3 * 1024 * 1024 else { throw MessengerError.invalid("Размер вложения — до 3 МБ") }
         guard !room.members.contains(where: { member in state.contacts.contains(where: { $0.id == member.id && $0.blocked }) }) else {
@@ -271,6 +457,15 @@ final class ChatStore: ObservableObject {
         if kind == "edit" || kind == "delete" {
             guard message.sender == myID else { return }
         }
+
+        if isBuiltinBotRoom(message.roomID) {
+            if kind == "edit" { state.messages[index].text = String((value ?? "").prefix(16000)); state.messages[index].edited = true }
+            if kind == "delete" { state.messages.remove(at: index) }
+            if kind == "reaction" { state.messages[index].reactions[myID] = value }
+            try save()
+            return
+        }
+
         try enqueue(ChatEvent(kind: kind, room: room, target: message.id, value: value, senderName: state.nickname), room: room)
         if kind == "edit" { state.messages[index].text = String((value ?? "").prefix(16000)); state.messages[index].edited = true }
         if kind == "delete" { state.messages.remove(at: index) }
@@ -280,6 +475,10 @@ final class ChatStore: ObservableObject {
     func markRead(_ roomID: String) {
         guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
         state.rooms[roomIndex].unread = 0
+        if isBuiltinBotRoom(roomID) {
+            persist()
+            return
+        }
         let room = state.rooms[roomIndex]
         for index in state.messages.indices where state.messages[index].roomID == roomID && state.messages[index].sender != myID && !state.messages[index].readBy.contains(myID) {
             state.messages[index].readBy.append(myID)
@@ -291,7 +490,8 @@ final class ChatStore: ObservableObject {
         persist()
     }
     func sendTyping(_ roomID: String) async {
-        guard let api, let identity, let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
+        guard !isBuiltinBotRoom(roomID),
+              let api, let identity, let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
         lastTyping[roomID] = Date()
         let event = ChatEvent(kind: "typing", room: room, senderName: state.nickname)
         for target in room.members where target.id != myID {
@@ -433,6 +633,10 @@ final class ChatStore: ObservableObject {
         typing = typing.filter { $0.value > now }
     }
     func toggleBlock(_ contact: Contact) async {
+        if isBuiltinBot(contact.id) {
+            error = "VO1D Bot — системный контакт"
+            return
+        }
         do {
             guard let api else { return }
             try await api.block(contact.id, blocked: !contact.blocked)
@@ -479,7 +683,11 @@ final class ChatStore: ObservableObject {
             try resetLocalIdentity()
         } catch { self.error = error.localizedDescription }
     }
-    func name(_ id: String) -> String { id == myID ? "Ты" : state.contacts.first(where: { $0.id == id })?.name ?? "Ghost" }
+    func name(_ id: String) -> String {
+        if id == myID { return "Ты" }
+        if isBuiltinBot(id) { return "VO1D Bot" }
+        return state.contacts.first(where: { $0.id == id })?.name ?? "Ghost"
+    }
     func messages(_ roomID: String, search: String = "") -> [ChatMessage] {
         state.messages.filter { $0.roomID == roomID && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search)) }.sorted { $0.createdAt < $1.createdAt }
     }
@@ -517,6 +725,13 @@ final class ChatStore: ObservableObject {
               let room = state.rooms.first(where: { $0.id == roomID }) else { return }
 
         let selected = state.messages.filter { ids.contains($0.id) && $0.roomID == roomID }
+
+        if isBuiltinBotRoom(roomID) {
+            state.messages.removeAll { ids.contains($0.id) && $0.roomID == roomID }
+            try save()
+            return
+        }
+
         for message in selected where message.sender == myID {
             try enqueue(
                 ChatEvent(kind: "delete", room: room, target: message.id, senderName: state.nickname),

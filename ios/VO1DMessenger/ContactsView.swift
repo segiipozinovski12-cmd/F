@@ -37,7 +37,7 @@ struct ContactsView: View {
 
                         HStack(spacing: 11) {
                             Image(systemName: "magnifyingglass").foregroundStyle(Theme.secondary)
-                            TextField("Ник или отпечаток", text: $search)
+                            TextField("Ник, ID или XROSB", text: $search)
                                 .textInputAutocapitalization(.never)
                         }
                         .voidField()
@@ -89,9 +89,23 @@ struct ContactsView: View {
                                             VStack(alignment: .leading, spacing: 5) {
                                                 HStack(spacing: 6) {
                                                     Text(contact.name).font(.headline)
-                                                    if contact.verified { Image(systemName: "checkmark.seal.fill").font(.caption) }
+                                                    if store.isBuiltinBot(contact.id) {
+                                                        Text("BOT")
+                                                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                                                            .tracking(1)
+                                                            .padding(.horizontal, 6)
+                                                            .padding(.vertical, 3)
+                                                            .background(.white, in: Capsule())
+                                                            .foregroundStyle(.black)
+                                                    } else if contact.verified {
+                                                        Image(systemName: "checkmark.seal.fill").font(.caption)
+                                                    }
                                                 }
-                                                Text(contact.blocked ? "ЗАБЛОКИРОВАН" : contact.card.shortID)
+                                                Text(
+                                                    store.isBuiltinBot(contact.id)
+                                                        ? "XROSB · СИСТЕМНЫЙ КОНТАКТ"
+                                                        : (contact.blocked ? "ЗАБЛОКИРОВАН" : contact.card.shortID)
+                                                )
                                                     .font(.caption2.monospaced())
                                                     .tracking(1)
                                                     .foregroundStyle(Theme.secondary)
@@ -138,13 +152,13 @@ struct AddContactView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Найди своего.")
                             .font(.system(size: 34, weight: .black, design: .rounded))
-                        Text("Введи 4-символьный VO1D ID. Также поддерживаются QR-приглашения и полный технический ID.")
+                        Text("Введи 4-символьный VO1D ID, специальный ключ XROSB, QR-приглашение или полный технический ID.")
                             .font(.subheadline)
                             .foregroundStyle(Theme.secondary)
                             .lineSpacing(4)
                     }
 
-                    TextField("Например 7KQ2", text: $value)
+                    TextField("Например 7KQ2 или XROSB", text: $value)
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
                         .font(.system(size: 20, weight: .bold, design: .monospaced))
@@ -221,7 +235,7 @@ struct MyIdentityView: View {
                             .font(.system(size: 32, weight: .black, design: .monospaced))
                             .tracking(6)
                             .textSelection(.enabled)
-                        Text("Эти 4 символа можно отправить другу для поиска на том же relay.")
+                        Text("Эти 4 символа можно отправить другу для поиска в VO1D.")
                             .font(.caption)
                             .foregroundStyle(Theme.secondary)
                     }
@@ -271,8 +285,21 @@ struct ContactDetailView: View {
                     VStack(spacing: 18) {
                         VStack(spacing: 12) {
                             Avatar(name: contact.name, size: 82)
-                            Text(contact.name).font(.title2.bold())
-                            Text(contact.card.shortID).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
+                            HStack(spacing: 8) {
+                                Text(contact.name).font(.title2.bold())
+                                if store.isBuiltinBot(contact.id) {
+                                    Text("BOT")
+                                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                                        .tracking(1)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 4)
+                                        .background(.white, in: Capsule())
+                                        .foregroundStyle(.black)
+                                }
+                            }
+                            Text(store.isBuiltinBot(contact.id) ? "XROSB" : contact.card.shortID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(Theme.secondary)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
@@ -284,27 +311,30 @@ struct ContactDetailView: View {
                         .buttonStyle(PrimaryButton())
                         .disabled(contact.blocked)
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("ЛОКАЛЬНОЕ ИМЯ").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
-                            TextField("Имя", text: $alias).voidField()
-                            Button("СОХРАНИТЬ") {
-                                guard let index = store.state.contacts.firstIndex(where: { $0.id == contactID }),
-                                      !alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                                let clean = String(alias.prefix(40))
-                                store.state.contacts[index].name = clean
-                                for roomIndex in store.state.rooms.indices
-                                where !store.state.rooms[roomIndex].isGroup &&
-                                      store.state.rooms[roomIndex].members.contains(where: { $0.id == contactID }) {
-                                    store.state.rooms[roomIndex].title = clean
+                        if !store.isBuiltinBot(contact.id) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("ЛОКАЛЬНОЕ ИМЯ").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
+                                TextField("Имя", text: $alias).voidField()
+                                Button("СОХРАНИТЬ") {
+                                    guard let index = store.state.contacts.firstIndex(where: { $0.id == contactID }),
+                                          !alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                                    let clean = String(alias.prefix(40))
+                                    store.state.contacts[index].name = clean
+                                    for roomIndex in store.state.rooms.indices
+                                    where !store.state.rooms[roomIndex].isGroup &&
+                                          store.state.rooms[roomIndex].members.contains(where: { $0.id == contactID }) {
+                                        store.state.rooms[roomIndex].title = clean
+                                    }
+                                    store.persist()
                                 }
-                                store.persist()
+                                .buttonStyle(GhostButton())
                             }
-                            .buttonStyle(GhostButton())
+                            .panel()
                         }
-                        .panel()
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("ПРОВЕРКА").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
+                        if !store.isBuiltinBot(contact.id) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("ПРОВЕРКА").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
                             Text(contact.id).font(.caption2.monospaced()).textSelection(.enabled)
                             Toggle("Отпечаток сверен", isOn: Binding(
                                 get: { contact.verified },
@@ -320,12 +350,26 @@ struct ContactDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(Theme.secondary)
                         }
-                        .panel()
+                            .panel()
 
-                        Button(contact.blocked ? "РАЗБЛОКИРОВАТЬ" : "ЗАБЛОКИРОВАТЬ") {
-                            Task { await store.toggleBlock(contact) }
+                            Button(contact.blocked ? "РАЗБЛОКИРОВАТЬ" : "ЗАБЛОКИРОВАТЬ") {
+                                Task { await store.toggleBlock(contact) }
+                            }
+                            .buttonStyle(GhostButton())
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("СИСТЕМНЫЙ КОНТАКТ")
+                                    .font(.caption2.monospaced())
+                                    .tracking(2)
+                                    .foregroundStyle(Theme.secondary)
+                                Text("VO1D Bot работает локально внутри приложения и не является обычным сетевым пользователем.")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.secondary)
+                                    .lineSpacing(4)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .panel()
                         }
-                        .buttonStyle(GhostButton())
                     }
                     .padding(24)
                 }
