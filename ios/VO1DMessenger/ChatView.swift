@@ -102,6 +102,24 @@ struct ChatView: View {
                 if selectionMode {
                     selectionBar
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if room.isGroup && room.onlyAdminsCanPost == true && !store.isGroupAdmin(room) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "lock.fill")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Только админы могут писать")
+                                .font(.subheadline.bold())
+                            Text("Ты можешь читать сообщения и реакции.")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(.ultraThinMaterial)
+                    .overlay(alignment: .top) {
+                        Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
+                    }
                 } else {
                     composer
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -616,6 +634,32 @@ struct RoomInfoView: View {
                             .disabled(store.connection != "Подключён")
                         }
                     }
+                    if room.isGroup {
+                        Section("Группа") {
+                            NavigationLink {
+                                GroupManagementView(roomID: roomID)
+                            } label: {
+                                Label("Управление группой", systemImage: "person.2.badge.gearshape")
+                            }
+
+                            HStack {
+                                Text("Режим")
+                                Spacer()
+                                Text(room.onlyAdminsCanPost == true ? "Только админы" : "Все участники")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.secondary)
+                            }
+
+                            HStack {
+                                Text("Админов")
+                                Spacer()
+                                Text("\(store.groupAdminIDs(room).count)")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(Theme.secondary)
+                            }
+                        }
+                    }
+
                     Section("Переписка") {
                         Toggle("Закрепить", isOn: Binding(get: { room.pinned }, set: { value in store.updateRoom(roomID) { $0.pinned = value } }))
                         Toggle("Архивировать", isOn: Binding(get: { room.archived }, set: { value in store.updateRoom(roomID) { $0.archived = value } }))
@@ -668,6 +712,194 @@ struct RoomInfoView: View {
     }
 }
 
+
+private struct GroupManagementView: View {
+    let roomID: String
+
+    @EnvironmentObject private var store: ChatStore
+    @State private var title = ""
+    @State private var showAdd = false
+
+    private var room: Room? {
+        store.state.rooms.first { $0.id == roomID }
+    }
+
+    private var memberContacts: [Contact] {
+        guard let room else { return [] }
+        let ids = Set(room.members.map(\.id))
+        return store.state.contacts.filter {
+            ids.contains($0.id) &&
+            $0.id != store.myID &&
+            !store.isBuiltinBot($0.id)
+        }
+    }
+
+    private var addableContacts: [Contact] {
+        guard let room else { return [] }
+        let ids = Set(room.members.map(\.id))
+        return store.state.contacts.filter {
+            !ids.contains($0.id) &&
+            !$0.blocked &&
+            !store.isBuiltinBot($0.id)
+        }
+    }
+
+    var body: some View {
+        Form {
+            if let room {
+                Section {
+                    HStack {
+                        Avatar(name: room.title, group: true, size: 64)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(room.title)
+                                .font(.title3.bold())
+                            Text("\(room.members.count) участников")
+                                .font(.caption)
+                                .foregroundStyle(Theme.secondary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                if store.isGroupOwner(room) {
+                    Section("Настройки") {
+                        TextField("Название группы", text: $title)
+
+                        Button("Сохранить название") {
+                            do {
+                                try store.renameGroup(roomID, title: title)
+                            } catch {
+                                store.error = error.localizedDescription
+                            }
+                        }
+                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Toggle(
+                            "Писать могут только админы",
+                            isOn: Binding(
+                                get: { room.onlyAdminsCanPost == true },
+                                set: { value in
+                                    do {
+                                        try store.setGroupAdminsOnly(roomID, enabled: value)
+                                    } catch {
+                                        store.error = error.localizedDescription
+                                    }
+                                }
+                            )
+                        )
+                    }
+                }
+
+                Section("Участники") {
+                    ForEach(room.members) { member in
+                        HStack(spacing: 12) {
+                            Avatar(name: store.name(member.id), size: 38)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(store.name(member.id))
+                                HStack(spacing: 6) {
+                                    if member.id == room.creator {
+                                        Text("ВЛАДЕЛЕЦ")
+                                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                                            .tracking(1)
+                                    } else if store.groupAdminIDs(room).contains(member.id) {
+                                        Text("АДМИН")
+                                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                                            .tracking(1)
+                                    } else {
+                                        Text(member.shortID)
+                                            .font(.caption2.monospaced())
+                                    }
+                                }
+                                .foregroundStyle(Theme.secondary)
+                            }
+
+                            Spacer()
+
+                            if store.isGroupOwner(room) && member.id != store.myID {
+                                Menu {
+                                    Button(
+                                        store.groupAdminIDs(room).contains(member.id) ? "Снять админа" : "Сделать админом",
+                                        systemImage: "person.badge.key"
+                                    ) {
+                                        do {
+                                            try store.toggleGroupAdmin(roomID, memberID: member.id)
+                                        } catch {
+                                            store.error = error.localizedDescription
+                                        }
+                                    }
+
+                                    Button("Удалить из группы", systemImage: "person.badge.minus", role: .destructive) {
+                                        let remaining = memberContacts.filter { $0.id != member.id }
+                                        do {
+                                            try store.updateGroupMembers(roomID, contacts: remaining)
+                                        } catch {
+                                            store.error = error.localizedDescription
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                }
+                            }
+                        }
+                    }
+
+                    if store.isGroupOwner(room) {
+                        Button("Добавить участников", systemImage: "person.badge.plus") {
+                            showAdd = true
+                        }
+                        .disabled(addableContacts.isEmpty || room.members.count >= 16)
+                    }
+                }
+
+                if !store.isGroupOwner(room) {
+                    Section {
+                        Text("Состав группы, админов и режим публикации меняет создатель группы.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Управление")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            title = room?.title ?? ""
+        }
+        .sheet(isPresented: $showAdd) {
+            NavigationStack {
+                List(addableContacts) { contact in
+                    Button {
+                        var next = memberContacts
+                        next.append(contact)
+                        do {
+                            try store.updateGroupMembers(roomID, contacts: next)
+                            showAdd = false
+                        } catch {
+                            store.error = error.localizedDescription
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Avatar(name: contact.name, size: 42)
+                            Text(contact.name)
+                            Spacer()
+                            Image(systemName: "plus.circle.fill")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .navigationTitle("Добавить")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Закрыть") { showAdd = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
 
 private struct EphemeralPhotoPickerSheet: View {
     @Binding var selection: PhotosPickerItem?

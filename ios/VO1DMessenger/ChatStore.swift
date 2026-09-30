@@ -477,6 +477,136 @@ final class ChatStore: ObservableObject {
         try save()
         return room
     }
+    func groupAdminIDs(_ room: Room) -> Set<String> {
+        var result = Set(room.admins ?? [])
+        if !room.creator.isEmpty { result.insert(room.creator) }
+        return result
+    }
+
+    func isGroupOwner(_ room: Room) -> Bool {
+        room.isGroup && room.creator == myID
+    }
+
+    func isGroupAdmin(_ room: Room) -> Bool {
+        room.isGroup && groupAdminIDs(room).contains(myID)
+    }
+
+    private func publishRoomUpdate(oldRoom: Room, newRoom: Room) throws {
+        guard oldRoom.isGroup,
+              newRoom.isGroup,
+              oldRoom.creator == myID,
+              newRoom.creator == myID,
+              let identity else {
+            throw MessengerError.invalid("Только создатель группы может менять её структуру")
+        }
+
+        let event = ChatEvent(kind: "roomUpdate", room: newRoom, senderName: state.nickname)
+        var recipients: [ContactCard] = []
+        var seen = Set<String>()
+        for card in oldRoom.members + newRoom.members where card.id != myID {
+            if seen.insert(card.id).inserted { recipients.append(card) }
+        }
+
+        let pending = try recipients.map {
+            PendingDelivery(
+                envelope: try Crypto.seal(event, from: identity, to: $0),
+                messageID: nil
+            )
+        }
+
+        state.outbox.append(contentsOf: pending)
+    }
+
+    func updateGroupMembers(_ roomID: String, contacts: [Contact]) throws {
+        guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }),
+              let ownCard else { return }
+
+        let oldRoom = state.rooms[roomIndex]
+        guard isGroupOwner(oldRoom) else {
+            throw MessengerError.invalid("Менять состав может только создатель группы")
+        }
+
+        var seen = Set<String>()
+        let cleanContacts = contacts.filter {
+            !$0.blocked &&
+            !isBuiltinBot($0.id) &&
+            $0.id != myID &&
+            seen.insert($0.id).inserted
+        }
+        guard cleanContacts.count <= 15 else {
+            throw MessengerError.invalid("В группе может быть до 16 участников вместе с тобой")
+        }
+        for contact in cleanContacts { try Crypto.validate(contact.card) }
+
+        var newRoom = oldRoom
+        newRoom.members = [ownCard] + cleanContacts.map(\.card)
+
+        let allowed = Set(newRoom.members.map(\.id))
+        var admins = groupAdminIDs(oldRoom).intersection(allowed)
+        admins.insert(myID)
+        newRoom.admins = Array(admins).sorted()
+
+        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        state.rooms[roomIndex] = newRoom
+        try save()
+    }
+
+    func toggleGroupAdmin(_ roomID: String, memberID: String) throws {
+        guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+        let oldRoom = state.rooms[roomIndex]
+        guard isGroupOwner(oldRoom) else {
+            throw MessengerError.invalid("Админов назначает создатель группы")
+        }
+        guard memberID != myID,
+              oldRoom.members.contains(where: { $0.id == memberID }) else { return }
+
+        var newRoom = oldRoom
+        var admins = groupAdminIDs(oldRoom)
+        if admins.contains(memberID) {
+            admins.remove(memberID)
+        } else {
+            admins.insert(memberID)
+        }
+        admins.insert(myID)
+        newRoom.admins = Array(admins).sorted()
+
+        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        state.rooms[roomIndex] = newRoom
+        try save()
+    }
+
+    func setGroupAdminsOnly(_ roomID: String, enabled: Bool) throws {
+        guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+        let oldRoom = state.rooms[roomIndex]
+        guard isGroupOwner(oldRoom) else {
+            throw MessengerError.invalid("Это разрешение меняет создатель группы")
+        }
+
+        var newRoom = oldRoom
+        newRoom.onlyAdminsCanPost = enabled
+
+        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        state.rooms[roomIndex] = newRoom
+        try save()
+    }
+
+    func renameGroup(_ roomID: String, title: String) throws {
+        guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+        let oldRoom = state.rooms[roomIndex]
+        guard isGroupOwner(oldRoom) else {
+            throw MessengerError.invalid("Название меняет создатель группы")
+        }
+        let clean = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !clean.isEmpty else { throw MessengerError.invalid("Название не может быть пустым") }
+
+        var newRoom = oldRoom
+        newRoom.title = clean
+
+        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        state.rooms[roomIndex] = newRoom
+        try save()
+    }
+
     func enqueue(_ event: ChatEvent, room: Room, to recipients: [ContactCard]? = nil, messageID: String? = nil) throws {
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
         let targets = recipients ?? room.members.filter { $0.id != myID }
@@ -548,6 +678,9 @@ final class ChatStore: ObservableObject {
             }
             try save()
             return
+        }
+        if room.isGroup && room.onlyAdminsCanPost == true && !isGroupAdmin(room) {
+            throw MessengerError.invalid("В этой группе писать могут только админы")
         }
         guard text.count <= 16000 else { throw MessengerError.invalid("Сообщение слишком длинное") }
         guard (attachment?.data.count ?? 0) <= 3 * 1024 * 1024 else { throw MessengerError.invalid("Размер вложения — до 3 МБ") }
@@ -711,34 +844,135 @@ final class ChatStore: ObservableObject {
     }
     private func apply(_ event: ChatEvent, sender: ContactCard) throws {
         let incoming = event.room
-        guard !incoming.id.isEmpty, incoming.id.count <= 160, incoming.members.count >= 2, incoming.members.count <= 16,
+        let minimumMembers = incoming.isGroup ? 1 : 2
+
+        guard !incoming.id.isEmpty,
+              incoming.id.count <= 160,
+              incoming.members.count >= minimumMembers,
+              incoming.members.count <= 16,
               Set(incoming.members.map(\.id)).count == incoming.members.count,
-              incoming.members.contains(where: { $0.id == myID }), incoming.members.contains(sender) else {
+              incoming.members.contains(sender) else {
             throw MessengerError.invalid("Неверный состав участников")
         }
+
         for member in incoming.members { try Crypto.validate(member) }
+
         if !incoming.isGroup {
             guard incoming.members.count == 2,
-                  incoming.id == "dm:" + incoming.members.map(\.id).sorted().joined(separator: ":") else { throw MessengerError.invalid("Неверный личный чат") }
-        }
-        if let room = state.rooms.first(where: { $0.id == incoming.id }) {
-            guard Set(room.members) == Set(incoming.members), room.creator == incoming.creator, room.isGroup == incoming.isGroup else {
-                throw MessengerError.invalid("Изменение состава группы не разрешено")
+                  incoming.members.contains(where: { $0.id == myID }),
+                  incoming.id == "dm:" + incoming.members.map(\.id).sorted().joined(separator: ":") else {
+                throw MessengerError.invalid("Неверный личный чат")
             }
         } else {
-            guard ["room", "message"].contains(event.kind), !incoming.isGroup || incoming.creator == sender.id else {
+            guard incoming.members.contains(where: { $0.id == incoming.creator }) else {
+                throw MessengerError.invalid("Создатель должен оставаться участником группы")
+            }
+            let adminIDs = Set(incoming.admins ?? [incoming.creator])
+            guard adminIDs.isSubset(of: Set(incoming.members.map(\.id))),
+                  adminIDs.contains(incoming.creator) else {
+                throw MessengerError.invalid("Некорректный список админов")
+            }
+        }
+
+        if let roomIndex = state.rooms.firstIndex(where: { $0.id == incoming.id }) {
+            let current = state.rooms[roomIndex]
+
+            if event.kind == "roomUpdate" {
+                guard current.isGroup,
+                      incoming.isGroup,
+                      current.creator == incoming.creator,
+                      sender.id == current.creator else {
+                    throw MessengerError.invalid("Недопустимое изменение группы")
+                }
+
+                if !incoming.members.contains(where: { $0.id == myID }) {
+                    let removedRoomID = current.id
+                    let messageIDs = Set(state.messages.filter { $0.roomID == removedRoomID }.map(\.id))
+                    state.messages.removeAll { $0.roomID == removedRoomID }
+                    state.outbox.removeAll { pending in
+                        guard let messageID = pending.messageID else { return false }
+                        return messageIDs.contains(messageID)
+                    }
+                    state.rooms.remove(at: roomIndex)
+                    typing[removedRoomID] = nil
+                    return
+                }
+
+                var updated = incoming
+                updated.pinned = current.pinned
+                updated.archived = current.archived
+                updated.muted = current.muted
+                updated.unread = current.unread
+                updated.draft = current.draft
+                updated.disappearingSeconds = current.disappearingSeconds
+                updated.pinnedMessageIDs = current.pinnedMessageIDs
+                state.rooms[roomIndex] = updated
+            } else {
+                guard Set(current.members) == Set(incoming.members),
+                      current.creator == incoming.creator,
+                      current.isGroup == incoming.isGroup else {
+                    throw MessengerError.invalid("Изменение состава группы требует roomUpdate")
+                }
+
+                if current.isGroup {
+                    let currentAdmins = Set(current.admins ?? [current.creator])
+                    let incomingAdmins = Set(incoming.admins ?? [incoming.creator])
+                    guard currentAdmins == incomingAdmins,
+                          current.onlyAdminsCanPost == incoming.onlyAdminsCanPost,
+                          current.title == incoming.title else {
+                        throw MessengerError.invalid("Метаданные группы изменены без roomUpdate")
+                    }
+                }
+            }
+        } else {
+            guard incoming.members.contains(where: { $0.id == myID }) else {
+                throw MessengerError.invalid("Событие не адресовано этому участнику")
+            }
+
+            let allowedFirstEvents = ["room", "message", "roomUpdate"]
+            guard allowedFirstEvents.contains(event.kind),
+                  !incoming.isGroup || incoming.creator == sender.id else {
                 throw MessengerError.invalid("Сначала нужно приглашение создателя группы")
             }
+
             var room = incoming
-            room.pinned = false; room.archived = false; room.muted = false; room.unread = 0; room.draft = ""
+            room.pinned = false
+            room.archived = false
+            room.muted = false
+            room.unread = 0
+            room.draft = ""
             room.disappearingSeconds = 0
-            if !room.isGroup { room.title = state.contacts.first(where: { $0.id == sender.id })?.name ?? String(event.senderName.prefix(40)) }
+            room.pinnedMessageIDs = []
+
+            if !room.isGroup {
+                room.title = state.contacts.first(where: { $0.id == sender.id })?.name ?? String(event.senderName.prefix(40))
+            }
             state.rooms.append(room)
         }
+
+        if event.kind == "roomUpdate" {
+            for member in incoming.members where member.id != myID && !state.contacts.contains(where: { $0.id == member.id }) {
+                state.contacts.append(
+                    Contact(
+                        card: member,
+                        name: member.id == sender.id ? String(event.senderName.prefix(40)) : "Ghost \(member.shortID.prefix(6))"
+                    )
+                )
+            }
+            return
+        }
+
         for member in incoming.members where member.id != myID && !state.contacts.contains(where: { $0.id == member.id }) {
             state.contacts.append(Contact(card: member, name: member.id == sender.id ? String(event.senderName.prefix(40)) : "Ghost \(member.shortID.prefix(6))"))
         }
         if event.kind == "message", var message = event.message {
+            if let effectiveRoom = state.rooms.first(where: { $0.id == incoming.id }),
+               effectiveRoom.isGroup,
+               effectiveRoom.onlyAdminsCanPost == true,
+               !groupAdminIDs(effectiveRoom).contains(sender.id) {
+                throw MessengerError.invalid("Участник без прав попытался отправить сообщение")
+            }
+
             guard message.sender == sender.id, message.roomID == incoming.id, !message.id.isEmpty,
                   message.text.count <= 16000, (message.attachment?.data.count ?? 0) <= 3 * 1024 * 1024,
                   message.expiresAt == nil || message.expiresAt! > Date() else { throw MessengerError.invalid("Неверное содержимое сообщения") }
