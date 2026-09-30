@@ -12,6 +12,8 @@ IOS = ROOT / 'ios'
 PROJECT = IOS / 'VO1DMessenger.xcodeproj'
 PROJECT.mkdir(exist_ok=True)
 
+# Prepare pinned native dependencies before Xcode resolves the local Swift packages.
+subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_signal.py')], check=True)
 # The upstream iCepa Tor XCFramework ships iOS slices as macOS-style deep bundles.
 # Xcode 26/27 rejects those on device builds, so prepare a cached local shallow copy first.
 subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_tor.py')], check=True)
@@ -78,9 +80,15 @@ def configurations(name, settings):
             allsettings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
             allsettings['ENABLE_TESTABILITY']='YES'
         if name=='app':
-            allsettings['APS_ENVIRONMENT']='development' if mode=='Debug' else 'production'
-            allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.entitlements'
-            allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.Debug.plist' if mode=='Debug' else 'VO1DMessenger/Info.plist'
+            if mode == 'Debug':
+                # Personal Apple Development teams cannot provision Push Notifications.
+                # Keep Debug installable on a real iPhone; Release retains APNs for paid-team/App Store signing.
+                allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.Debug.entitlements'
+                allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.Debug.plist'
+            else:
+                allsettings['APS_ENVIRONMENT']='production'
+                allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.entitlements'
+                allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.plist'
         content=' '.join(f'{k} = {q(v)};' for k,v in allsettings.items())
         ids.append(obj(f'{name}-{mode}','XCBuildConfiguration',f'buildSettings = {{ {content} }}; name = {mode};'))
     return obj(name+'-configs','XCConfigurationList',f'buildConfigurations = {array(ids)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
