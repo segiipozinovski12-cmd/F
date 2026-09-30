@@ -35,6 +35,7 @@ struct SettingsView: View {
                         keysCard
                         privacyCard
                         voiceCard
+                        callsCard
                         relayCard
                         emergencyCard
                         vpnCard
@@ -330,6 +331,42 @@ struct SettingsView: View {
         .panel()
     }
 
+    private var callsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionTitle("ЗВОНКИ", icon: "phone.fill")
+
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("История звонков")
+                        .font(.subheadline.bold())
+                    Text("\(store.callRecords().count) записей на этом устройстве")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.secondary)
+                }
+                Spacer()
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(Theme.secondary)
+            }
+
+            NavigationLink {
+                CallHistoryView()
+            } label: {
+                HStack {
+                    Text("ОТКРЫТЬ ИСТОРИЮ")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+            }
+            .buttonStyle(GhostButton())
+
+            Text("История звонков хранится локально в зашифрованном хранилище VO1D.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
+        }
+        .panel()
+    }
+
     private var relayCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             sectionTitle("СОЕДИНЕНИЕ", icon: "point.3.connected.trianglepath.dotted")
@@ -506,6 +543,104 @@ struct SettingsView: View {
             Text(title).font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
             Text(value).font(.system(size: 24, weight: .black, design: .monospaced)).tracking(4).textSelection(.enabled)
             Text(detail).font(.caption2).foregroundStyle(Theme.secondary)
+        }
+    }
+}
+
+struct CallHistoryView: View {
+    @EnvironmentObject private var store: ChatStore
+    @State private var showClear = false
+
+    var body: some View {
+        ZStack {
+            VoidBackground()
+
+            if store.callRecords().isEmpty {
+                ContentUnavailableView(
+                    "История пуста",
+                    systemImage: "phone",
+                    description: Text("Здесь появятся входящие, исходящие и пропущенные VO1D-звонки.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(store.callRecords()) { record in
+                            HStack(spacing: 13) {
+                                ZStack {
+                                    Circle()
+                                        .fill(.white.opacity(0.07))
+                                        .frame(width: 46, height: 46)
+                                    Image(systemName: icon(record))
+                                }
+
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(record.peerName)
+                                        .font(.headline)
+                                        .lineLimit(1)
+
+                                    HStack(spacing: 6) {
+                                        Text(title(record))
+                                        if record.duration > 0 {
+                                            Text("·")
+                                            Text(String(format: "%d:%02d", record.duration / 60, record.duration % 60))
+                                        }
+                                    }
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.secondary)
+                                }
+
+                                Spacer()
+
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Text(record.endedAt, style: .time)
+                                        .font(.caption2.monospaced())
+                                    Text(record.endedAt, style: .date)
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.secondary)
+                                }
+                            }
+                            .panel()
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+        }
+        .navigationTitle("Звонки")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !store.callRecords().isEmpty {
+                Button("Очистить") { showClear = true }
+            }
+        }
+        .confirmationDialog("Очистить локальную историю звонков?", isPresented: $showClear) {
+            Button("Очистить", role: .destructive) {
+                store.clearCallHistory()
+            }
+        }
+    }
+
+    private func icon(_ record: CallRecord) -> String {
+        if record.status == "missed" { return "phone.down.fill" }
+        return record.incoming ? "phone.arrow.down.left.fill" : "phone.arrow.up.right.fill"
+    }
+
+    private func title(_ record: CallRecord) -> String {
+        switch record.status {
+        case "completed":
+            return record.incoming ? "Входящий" : "Исходящий"
+        case "missed":
+            return "Пропущенный"
+        case "declined":
+            return "Отклонён"
+        case "unanswered":
+            return "Без ответа"
+        case "cancelled":
+            return "Отменён"
+        case "interrupted":
+            return "Прерван"
+        default:
+            return "Ошибка"
         }
     }
 }

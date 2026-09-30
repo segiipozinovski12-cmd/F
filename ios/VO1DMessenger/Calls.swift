@@ -16,6 +16,7 @@ struct VoiceCallSession: Identifiable, Equatable {
     let peerID: String
     let peerName: String
     let incoming: Bool
+    let createdAt: Date
     var phase: VoiceCallPhase
     var startedAt: Date?
 }
@@ -181,6 +182,7 @@ final class CallManager: ObservableObject {
     private var audioSessionActive = false
     private var socketReady = false
     private var nameResolver: ((String) -> String)?
+    private var recordSink: ((CallRecord) -> Void)?
 
     private init() {
         let configuration = CXProviderConfiguration(localizedName: "VO1D")
@@ -207,19 +209,23 @@ final class CallManager: ObservableObject {
     func configure(
         api: APIClient,
         identity: LocalIdentity,
-        nameResolver: @escaping (String) -> String
+        nameResolver: @escaping (String) -> String,
+        recordSink: @escaping (CallRecord) -> Void
     ) {
         self.api = api
         self.identity = identity
         self.nameResolver = nameResolver
+        self.recordSink = recordSink
         connectSocket()
     }
 
     func disconnect() {
-        if let session {
-            provider.reportCall(with: session.id, endedAt: Date(), reason: .failed)
+        if let current = session {
+            provider.reportCall(with: current.id, endedAt: Date(), reason: .failed)
+            finishCurrent(status: current.phase == .active ? "interrupted" : (current.incoming ? "missed" : "cancelled"))
+        } else {
+            cleanup()
         }
-        cleanup()
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         socketReady = false
@@ -227,6 +233,7 @@ final class CallManager: ObservableObject {
         api = nil
         identity = nil
         nameResolver = nil
+        recordSink = nil
     }
 
     func startCall(peer: ContactCard, name: String) {
@@ -252,6 +259,7 @@ final class CallManager: ObservableObject {
                 peerID: peer.id,
                 peerName: name,
                 incoming: false,
+                createdAt: Date(),
                 phase: .connecting,
                 startedAt: nil
             )
@@ -350,7 +358,7 @@ final class CallManager: ObservableObject {
                 "to": current.peerID,
                 "callID": current.callID,
             ])
-            cleanup()
+            finishCurrent(status: localEndStatus(current))
         }
     }
 
@@ -361,7 +369,11 @@ final class CallManager: ObservableObject {
     }
 
     fileprivate func providerReset() {
-        cleanup()
+        if let current = session {
+            finishCurrent(status: current.phase == .active ? "interrupted" : (current.incoming ? "missed" : "cancelled"))
+        } else {
+            cleanup()
+        }
     }
 
     fileprivate func audioActivated() {
@@ -483,7 +495,7 @@ final class CallManager: ObservableObject {
 
         case "end":
             provider.reportCall(with: current.id, endedAt: Date(), reason: .remoteEnded)
-            cleanup()
+            finishCurrent(status: remoteEndStatus(current))
 
         default:
             break
@@ -509,6 +521,7 @@ final class CallManager: ObservableObject {
                 peerID: peerID,
                 peerName: name,
                 incoming: true,
+                createdAt: Date(),
                 phase: .ringing,
                 startedAt: nil
             )
@@ -524,7 +537,7 @@ final class CallManager: ObservableObject {
 
             provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
                 if error != nil {
-                    Task { @MainActor in self?.cleanup() }
+                    Task { @MainActor in self?.finishCurrent(status: "failed") }
                 }
             }
         } catch {
@@ -602,9 +615,59 @@ final class CallManager: ObservableObject {
     }
 
     private func failCurrent(reason: CXCallEndedReason) {
-        if let session {
-            provider.reportCall(with: session.id, endedAt: Date(), reason: reason)
+        guard let current = session else {
+            cleanup()
+            return
         }
+        provider.reportCall(with: current.id, endedAt: Date(), reason: reason)
+
+        let status: String
+        switch reason {
+        case .unanswered:
+            status = current.incoming ? "missed" : "unanswered"
+        default:
+            status = current.phase == .active ? "interrupted" : "failed"
+        }
+        finishCurrent(status: status)
+    }
+
+    private func localEndStatus(_ current: VoiceCallSession) -> String {
+        if current.phase == .active { return "completed" }
+        if current.incoming { return "declined" }
+        return "cancelled"
+    }
+
+    private func remoteEndStatus(_ current: VoiceCallSession) -> String {
+        if current.phase == .active { return "completed" }
+        if current.incoming { return "missed" }
+        return "unanswered"
+    }
+
+    private func finishCurrent(status: String) {
+        guard let current = session else {
+            cleanup()
+            return
+        }
+
+        let endedAt = Date()
+        let duration = current.startedAt.map {
+            max(0, Int(endedAt.timeIntervalSince($0)))
+        } ?? 0
+
+        recordSink?(
+            CallRecord(
+                id: UUID().uuidString,
+                callID: current.callID,
+                peerID: current.peerID,
+                peerName: current.peerName,
+                incoming: current.incoming,
+                startedAt: current.startedAt ?? current.createdAt,
+                endedAt: endedAt,
+                status: status,
+                duration: duration
+            )
+        )
+
         cleanup()
     }
 

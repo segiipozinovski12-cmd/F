@@ -92,9 +92,16 @@ final class ChatStore: ObservableObject {
             state.server = AppConfig.productionRelay
             state.publicCode = publicCode
             try save()
-            CallManager.shared.configure(api: client, identity: identity) { [weak self] id in
-                self?.name(id) ?? "VO1D"
-            }
+            CallManager.shared.configure(
+                api: client,
+                identity: identity,
+                nameResolver: { [weak self] id in
+                    self?.name(id) ?? "VO1D"
+                },
+                recordSink: { [weak self] record in
+                    self?.recordCall(record)
+                }
+            )
             connection = "Подключён"
         } catch {
             connection = "Нет связи"
@@ -121,9 +128,16 @@ final class ChatStore: ObservableObject {
             _ = ensureBuiltinBot()
             _ = ensureSavedMessages()
             try save()
-            CallManager.shared.configure(api: client, identity: identity) { [weak self] id in
-                self?.name(id) ?? "VO1D"
-            }
+            CallManager.shared.configure(
+                api: client,
+                identity: identity,
+                nameResolver: { [weak self] id in
+                    self?.name(id) ?? "VO1D"
+                },
+                recordSink: { [weak self] record in
+                    self?.recordCall(record)
+                }
+            )
             connection = "Подключён"
         } catch { self.error = error.localizedDescription }
     }
@@ -425,6 +439,59 @@ final class ChatStore: ObservableObject {
             return
         }
         CallManager.shared.startCall(peer: peer, name: room.title)
+    }
+
+
+    func recordCall(_ record: CallRecord) {
+        var history = state.callHistory ?? []
+        guard !history.contains(where: { $0.callID == record.callID }) else { return }
+
+        history.append(record)
+        if history.count > 200 {
+            history.removeFirst(history.count - 200)
+        }
+        state.callHistory = history
+
+        if let roomIndex = state.rooms.firstIndex(where: { room in
+            !room.isGroup &&
+            !isLocalUtilityRoom(room.id) &&
+            room.members.contains(where: { $0.id == record.peerID })
+        }) {
+            let event = ChatMessage(
+                id: UUID().uuidString,
+                roomID: state.rooms[roomIndex].id,
+                sender: record.incoming ? record.peerID : myID,
+                text: "",
+                createdAt: record.endedAt,
+                expiresAt: nil,
+                replyTo: nil,
+                attachment: nil,
+                state: "read",
+                call: CallMessageData(
+                    incoming: record.incoming,
+                    status: record.status,
+                    duration: record.duration
+                )
+            )
+            state.messages.append(event)
+
+            if record.incoming &&
+               ["missed", "failed", "interrupted"].contains(record.status) &&
+               activeRoomID != state.rooms[roomIndex].id {
+                state.rooms[roomIndex].unread += 1
+            }
+        }
+
+        persist()
+    }
+
+    func callRecords() -> [CallRecord] {
+        (state.callHistory ?? []).sorted { $0.endedAt > $1.endedAt }
+    }
+
+    func clearCallHistory() {
+        state.callHistory = []
+        persist()
     }
 
     func direct(_ contact: Contact) throws -> Room {

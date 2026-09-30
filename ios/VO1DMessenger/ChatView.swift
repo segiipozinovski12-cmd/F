@@ -435,6 +435,29 @@ struct ChatView: View {
         return HStack(alignment: .bottom) {
             if mine { Spacer(minLength: 42) }
             VStack(alignment: .leading, spacing: 8) {
+                if let call = message.call {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            Circle()
+                                .fill((mine ? Color.black : Color.white).opacity(0.08))
+                                .frame(width: 36, height: 36)
+                            Image(systemName: call.incoming ? "phone.arrow.down.left.fill" : "phone.arrow.up.right.fill")
+                                .font(.subheadline.bold())
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(callTitle(call))
+                                .font(.subheadline.bold())
+                            Text(callDetail(call))
+                                .font(.caption2.monospaced())
+                                .opacity(0.58)
+                        }
+
+                        Spacer(minLength: 8)
+                    }
+                    .padding(.vertical, 2)
+                }
+
                 if group && !mine {
                     Text(store.name(message.sender))
                         .font(.caption.bold())
@@ -625,9 +648,16 @@ struct ChatView: View {
                             perform { try store.closePoll(messageID: message.id) }
                         }
                     }
-                    Button("Копировать", systemImage: "doc.on.doc") { UIPasteboard.general.setItems([["public.utf8-plain-text": message.text]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)]) }
+                    if !message.text.isEmpty {
+                        Button("Копировать", systemImage: "doc.on.doc") {
+                            UIPasteboard.general.setItems(
+                                [["public.utf8-plain-text": message.text]],
+                                options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)]
+                            )
+                        }
+                    }
                     Menu("Реакция") { ForEach(["❤️", "👍", "🔥", "😂", "👀"], id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
-                    if mine {
+                    if mine && message.call == nil {
                         Button("Редактировать", systemImage: "pencil") { editing = message; reply = nil; text = message.text }
                         Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
                     }
@@ -635,6 +665,32 @@ struct ChatView: View {
             if !mine { Spacer(minLength: 42) }
         }
     }
+    func callTitle(_ call: CallMessageData) -> String {
+        switch call.status {
+        case "completed":
+            return call.incoming ? "Входящий звонок" : "Исходящий звонок"
+        case "missed":
+            return "Пропущенный звонок"
+        case "declined":
+            return "Звонок отклонён"
+        case "unanswered":
+            return "Без ответа"
+        case "cancelled":
+            return "Звонок отменён"
+        case "interrupted":
+            return "Звонок прерван"
+        default:
+            return "Ошибка звонка"
+        }
+    }
+
+    func callDetail(_ call: CallMessageData) -> String {
+        guard call.duration > 0 else {
+            return call.incoming ? "ВХОДЯЩИЙ" : "ИСХОДЯЩИЙ"
+        }
+        return String(format: "%@ · %02d:%02d", call.incoming ? "ВХОДЯЩИЙ" : "ИСХОДЯЩИЙ", call.duration / 60, call.duration % 60)
+    }
+
     @MainActor
     func processPhoto(_ item: PhotosPickerItem, viewSeconds: Int?) async {
         do {
