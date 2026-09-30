@@ -58,13 +58,15 @@ def configurations(name, settings):
             allsettings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
             allsettings['ENABLE_TESTABILITY']='YES'
         if name=='app':
+            allsettings['APS_ENVIRONMENT']='development' if mode=='Debug' else 'production'
+            allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.entitlements'
             allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.Debug.plist' if mode=='Debug' else 'VO1DMessenger/Info.plist'
         content=' '.join(f'{k} = {q(v)};' for k,v in allsettings.items())
         ids.append(obj(f'{name}-{mode}','XCBuildConfiguration',f'buildSettings = {{ {content} }}; name = {mode};'))
     return obj(name+'-configs','XCConfigurationList',f'buildConfigurations = {array(ids)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
 
 projectconfigs=configurations('project', {'SDKROOT':'iphoneos','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SWIFT_VERSION':'5.0','CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','GCC_C_LANGUAGE_STANDARD':'gnu17','ENABLE_USER_SCRIPT_SANDBOXING':'YES'})
-appconfigs=configurations('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'io.vo1d.messenger','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','MARKETING_VERSION':'1.0.0','CURRENT_PROJECT_VERSION':'1','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator','SUPPORTS_MACCATALYST':'NO','SWIFT_EMIT_LOC_STRINGS':'YES','GENERATE_INFOPLIST_FILE':'NO'})
+appconfigs=configurations('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'io.vo1d.messenger','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','MARKETING_VERSION':'1.3.0','CURRENT_PROJECT_VERSION':'1','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator','SUPPORTS_MACCATALYST':'NO','SWIFT_EMIT_LOC_STRINGS':'YES','GENERATE_INFOPLIST_FILE':'NO'})
 testconfigs=configurations('test',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'io.vo1d.messenger.tests','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'YES','TEST_HOST':'$(BUILT_PRODUCTS_DIR)/VO1DMessenger.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VO1DMessenger','BUNDLE_LOADER':'$(TEST_HOST)','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @loader_path/Frameworks'})
 app=uid('app-target'); project=uid('project')
 proxy=obj('test-proxy','PBXContainerItemProxy',f'containerPortal = {project}; proxyType = 1; remoteGlobalIDString = {app}; remoteInfo = VO1DMessenger;')
@@ -86,3 +88,4 @@ ar=buildref(app,'VO1DMessenger','VO1DMessenger.app'); tr=buildref(test,'VO1DMess
 <AnalyzeAction buildConfiguration="Debug"/><ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
 </Scheme>''')
 print('Generated', PROJECT)
+

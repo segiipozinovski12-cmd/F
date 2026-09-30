@@ -53,9 +53,19 @@ enum Crypto {
             throw MessengerError.invalid("Отпечаток контакта или подпись не совпадают")
         }
     }
-    static func seal(_ event: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
-        try validate(recipient)
+    static func seal(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
+        var event = input
         let own = try identity.card
+        event.room = input.room.wireCopy
+        if event.room.privateRoster==true && event.room.isChannel==true && event.room.creator == own.id && recipient.id != event.room.creator {
+            event.room.members = event.room.members.filter { $0.id==event.room.creator || $0.id==recipient.id }
+        }
+        if var message = event.message {
+            message.editHistory = nil; message.readBy = []; message.deliveredTo = []
+            message.reactions = [:]; message.openedAt = nil
+            event.message = message
+        }
+        try validate(recipient)
         let ephemeral = Curve25519.KeyAgreement.PrivateKey()
         let salt = try random(32)
         var envelope = Envelope(id: UUID().uuidString, sender: own.id, recipient: recipient.id,
@@ -138,3 +148,4 @@ struct Vault {
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 }
+

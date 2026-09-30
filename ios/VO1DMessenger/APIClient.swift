@@ -17,16 +17,17 @@ final class APIClient {
 
     var base: URL
     private var token: String?
-    private let session: URLSession
+    let session: URLSession
+    let privacy: PrivacyPreferences
     private let identity: LocalIdentity
+    private let authenticationCard: ContactCard?
 
-    init(server: String, identity: LocalIdentity) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil) throws {
         base = try Self.validateURL(server)
+        self.privacy = privacy
         self.identity = identity
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30
-        config.urlCache = nil
-        config.httpCookieStorage = nil
+        self.authenticationCard = authenticationCard
+        let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config)
     }
 
@@ -62,14 +63,16 @@ final class APIClient {
         }
         guard (200..<300).contains(status) else {
             let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка сервера \(status)"
-            throw MessengerError.invalid(detail)
+            throw HTTPFailure(status:status,detail:detail)
         }
         return try Wire.decoder.decode(T.self, from: data)
     }
 
     func authenticate() async throws {
         token = nil
-        let card = try identity.card
+        let card: ContactCard
+        if let authenticationCard { card = authenticationCard }
+        else { card = try identity.card }
         let _: OK = try await request("v1/register", method: "POST", body: Wire.encoder.encode(card), retry: false)
         struct Challenge: Decodable { var nonce: String }
         let challenge: Challenge = try await request("v1/challenge", method: "POST", body: Wire.encoder.encode(["id": card.id]), retry: false)
@@ -154,38 +157,18 @@ final class APIClient {
         return try Wire.decoder.decode(BlobReceipt.self, from: data)
     }
 
-    func downloadBlob(_ id: String, retry: Bool = true) async throws -> Data {
-        guard id.count >= 40 && id.count <= 64 else {
+    func downloadBlob(_ id: String,retry: Bool = true) async throws -> Data {
+        guard (40...64).contains(id.count),id.unicodeScalars.allSatisfy({ CharacterSet(charactersIn:"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0) }) else {
             throw MessengerError.invalid("Некорректный blob ID")
         }
-        if token == nil {
-            try await authenticate()
+        if token==nil { try await authenticate() }
+        var request=URLRequest(url:base.appendingPathComponent("v1/blob/"+id))
+        if let token { request.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization") }
+        do { return try await ResumableDownload().download(request,id:id,configuration:session.configuration) }
+        catch let error as HTTPFailure {
+            if error.status==401 && retry { try await authenticate(); return try await downloadBlob(id,retry:false) }
+            throw error
         }
-
-        var request = URLRequest(url: base.appendingPathComponent("v1/blob/\(id)"))
-        request.timeoutInterval = 120
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw MessengerError.invalid("Нет ответа VO1D")
-        }
-
-        if http.statusCode == 401 && retry {
-            try await authenticate()
-            return try await downloadBlob(id, retry: false)
-        }
-
-        guard (200..<300).contains(http.statusCode) else {
-            let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка download \(http.statusCode)"
-            throw MessengerError.invalid(detail)
-        }
-        guard data.count <= 50 * 1024 * 1024 + 64 else {
-            throw MessengerError.invalid("Удалённое вложение превышает лимит")
-        }
-        return data
     }
 
     func deleteBlob(_ id: String, retry: Bool = true) async throws {
@@ -273,4 +256,11 @@ final class APIClient {
     func deleteAccount() async throws {
         let _: OK = try await request("v1/account", method: "DELETE")
     }
+}
+
+
+struct HTTPFailure: LocalizedError {
+    var status: Int
+    var detail: String
+    var errorDescription: String? { detail }
 }

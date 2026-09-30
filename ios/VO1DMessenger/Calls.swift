@@ -172,13 +172,14 @@ final class CallManager: ObservableObject {
     private let bridge: CallKitBridge
     private let controller = CXCallController()
     private let audio = CallAudioEngine()
-    private let urlSession: URLSession
+    var allowedPeer: ((String) -> Bool)?
 
     private var socket: URLSessionWebSocketTask?
     private var api: APIClient?
     private var identity: LocalIdentity?
     private var peerCard: ContactCard?
     private var callKey: SymmetricKey?
+    private var callSecrets: CallSecrets?
     private var audioSessionActive = false
     private var socketReady = false
     private var nameResolver: ((String) -> String)?
@@ -195,13 +196,6 @@ final class CallManager: ObservableObject {
         provider = CXProvider(configuration: configuration)
         bridge = CallKitBridge()
 
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 0
-        config.urlCache = nil
-        config.httpCookieStorage = nil
-        urlSession = URLSession(configuration: config)
-
         bridge.owner = self
         provider.setDelegate(bridge, queue: nil)
     }
@@ -216,7 +210,7 @@ final class CallManager: ObservableObject {
         self.identity = identity
         self.nameResolver = nameResolver
         self.recordSink = recordSink
-        connectSocket()
+        if session==nil || socket==nil { connectSocket() }
     }
 
     func disconnect() {
@@ -237,7 +231,7 @@ final class CallManager: ObservableObject {
     }
 
     func startCall(peer: ContactCard, name: String) {
-        guard session == nil else { return }
+        guard session == nil, allowedPeer?(peer.id) != false else { return }
         guard socketReady else {
             transport = "RECONNECTING"
             connectSocket()
@@ -250,9 +244,9 @@ final class CallManager: ObservableObject {
             try audio.prepareSession()
 
             let uuid = UUID()
-            let key = try deriveKey(identity: identity, peer: peer, callID: uuid.uuidString)
             peerCard = peer
-            callKey = key
+            callSecrets = CallSecrets()
+            callKey = nil
             session = VoiceCallSession(
                 id: uuid,
                 callID: uuid.uuidString,
@@ -309,11 +303,10 @@ final class CallManager: ObservableObject {
 
         Task {
             do {
-                try await send([
-                    "type": "invite",
-                    "to": current.peerID,
-                    "callID": current.callID,
-                ])
+                guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
+                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID)
+                packet["type"]="invite"; packet["to"]=current.peerID; packet["callID"]=current.callID
+                try await send(packet)
             } catch {
                 failCurrent(reason: .failed)
             }
@@ -333,11 +326,15 @@ final class CallManager: ObservableObject {
 
         Task {
             do {
-                try await send([
-                    "type": "answer",
-                    "to": current.peerID,
-                    "callID": current.callID,
-                ])
+                for _ in 0..<100 {
+                    if socketReady && callKey != nil { break }
+                    try await Task.sleep(for:.milliseconds(100))
+                }
+                guard socketReady,callKey != nil else { failCurrent(reason:.failed); return }
+                guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
+                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID)
+                packet["type"]="answer"; packet["to"]=current.peerID; packet["callID"]=current.callID
+                try await send(packet)
                 activateMediaIfReady()
             } catch {
                 failCurrent(reason: .failed)
@@ -396,7 +393,7 @@ final class CallManager: ObservableObject {
 
         do {
             let request = try api.callSocketRequest()
-            let task = urlSession.webSocketTask(with: request)
+            let task = api.session.webSocketTask(with: request)
             socket = task
             task.resume()
             receiveLoop(task)
@@ -449,6 +446,9 @@ final class CallManager: ObservableObject {
         if type == "ready" {
             socketReady = true
             transport = "WSS"
+            if let current=session, current.incoming, callKey==nil {
+                await preparePushedMedia(current)
+            }
             return
         }
 
@@ -464,7 +464,7 @@ final class CallManager: ObservableObject {
               let callID = packet["callID"] as? String else { return }
 
         if type == "invite" {
-            await receiveInvite(from: peerID, callID: callID)
+            await receiveInvite(from: peerID, callID: callID,packet:packet)
             return
         }
 
@@ -474,7 +474,9 @@ final class CallManager: ObservableObject {
 
         switch type {
         case "answer":
-            guard !current.incoming else { return }
+            guard !current.incoming,let callSecrets,let identity,let peerCard,
+                  let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
+            callKey=try callSecrets.accept(key:key,signature:signature,identity:identity,peer:peerCard,callID:callID)
             var updated = current
             updated.phase = .active
             updated.startedAt = Date()
@@ -488,9 +490,8 @@ final class CallManager: ObservableObject {
                   let encrypted = Data(base64Encoded: payload),
                   let key = callKey else { return }
 
-            let aad = Data("VO1D-CALL-AUDIO-1\n\(callID)".utf8)
-            let box = try AES.GCM.SealedBox(combined: encrypted)
-            let clear = try AES.GCM.open(box, using: key, authenticating: aad)
+            guard let callSecrets,let sequence=packet["sequence"] as? String,
+                  let clear=try callSecrets.open(encrypted,sequence:sequence,key:key,callID:callID) else { return }
             audio.play(clear)
 
         case "end":
@@ -502,47 +503,58 @@ final class CallManager: ObservableObject {
         }
     }
 
-    private func receiveInvite(from peerID: String, callID: String) async {
-        guard session == nil,
-              let api,
-              let identity,
-              let uuid = UUID(uuidString: callID) else { return }
-
+    private func receiveInvite(from peerID: String,callID: String,packet: [String:Any]) async {
+        guard allowedPeer?(peerID) != false, session==nil || session?.callID==callID,
+              let api,let identity,let uuid=UUID(uuidString:callID),
+              let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
         do {
-            let peer = try await api.card(peerID)
+            let peer=try await api.card(peerID)
+            guard session==nil || session?.callID==callID else { return }
+            let secrets=callSecrets ?? CallSecrets()
+            let symmetric=try secrets.accept(key:key,signature:signature,identity:identity,peer:peer,callID:callID)
             try audio.prepareSession()
-            peerCard = peer
-            callKey = try deriveKey(identity: identity, peer: peer, callID: callID)
-
-            let name = nameResolver?(peerID) ?? "VO1D"
-            session = VoiceCallSession(
-                id: uuid,
-                callID: callID,
-                peerID: peerID,
-                peerName: name,
-                incoming: true,
-                createdAt: Date(),
-                phase: .ringing,
-                startedAt: nil
-            )
-
-            let update = CXCallUpdate()
-            update.remoteHandle = CXHandle(type: .generic, value: name)
-            update.localizedCallerName = name
-            update.hasVideo = false
-            update.supportsHolding = false
-            update.supportsGrouping = false
-            update.supportsUngrouping = false
-            update.supportsDTMF = false
-
-            provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
-                if error != nil {
-                    Task { @MainActor in self?.finishCurrent(status: "failed") }
+            callSecrets=secrets; peerCard=peer; callKey=symmetric
+            if session==nil {
+                let name=nameResolver?(peerID) ?? "VO1D"
+                session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:name,incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
+                let update=CXCallUpdate()
+                update.remoteHandle=CXHandle(type:.generic,value:name); update.localizedCallerName=name
+                update.hasVideo=false; update.supportsHolding=false; update.supportsGrouping=false; update.supportsUngrouping=false; update.supportsDTMF=false
+                provider.reportNewIncomingCall(with:uuid,update:update) { [weak self] error in
+                    if error != nil { Task { @MainActor in self?.finishCurrent(status:"failed") } }
                 }
             }
-        } catch {
-            cleanup()
+            activateMediaIfReady()
+        } catch { failCurrent(reason:.failed) }
+    }
+
+    func reportPushedCall(peerID: String, callID: String, completion: @escaping () -> Void) {
+        guard let uuid=UUID(uuidString:callID) else { completion(); return }
+        if session?.id==uuid { completion(); return }
+        let update=CXCallUpdate()
+        update.remoteHandle=CXHandle(type:.generic,value:"VO1D")
+        update.localizedCallerName="VO1D"
+        update.hasVideo=false
+        let rejected=session != nil || allowedPeer?(peerID)==false || peerID.count != 64
+        if !rejected {
+            session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:"VO1D",incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
         }
+        provider.reportNewIncomingCall(with:uuid,update:update) { [weak self] error in
+            completion()
+            Task { @MainActor in
+                guard let self else { return }
+                if rejected || error != nil {
+                    self.provider.reportCall(with:uuid,endedAt:Date(),reason:.failed)
+                    if self.session?.id==uuid { self.cleanup() }
+                } else if let current=self.session { await self.preparePushedMedia(current) }
+            }
+        }
+    }
+
+    private func preparePushedMedia(_ current: VoiceCallSession) async {
+        guard current.incoming,session?.id==current.id else { return }
+        // Wait for the signed ephemeral offer delivered by WSS, never derive from a static peer key.
+        if socket==nil && api != nil { connectSocket() }
     }
 
     private func activateMediaIfReady() {
@@ -570,15 +582,15 @@ final class CallManager: ObservableObject {
               let key = callKey else { return }
 
         do {
-            let aad = Data("VO1D-CALL-AUDIO-1\n\(current.callID)".utf8)
-            let box = try AES.GCM.seal(frame, using: key, authenticating: aad)
-            guard let combined = box.combined else { return }
-
+            guard let callSecrets else { return }
+            let frame=try callSecrets.seal(frame,key:key,callID:current.callID)
+            let combined=frame.0
             try await send([
                 "type": "audio",
                 "to": current.peerID,
                 "callID": current.callID,
                 "payload": combined.base64EncodedString(),
+                "sequence":frame.1,
             ])
         } catch {
             // Individual realtime frames may be dropped; the call itself stays alive.
@@ -594,24 +606,6 @@ final class CallManager: ObservableObject {
             throw MessengerError.invalid("Не удалось сериализовать пакет звонка")
         }
         try await socket.send(.string(string))
-    }
-
-    private func deriveKey(
-        identity: LocalIdentity,
-        peer: ContactCard,
-        callID: String
-    ) throws -> SymmetricKey {
-        try Crypto.validate(peer)
-        let publicKey = try Curve25519.KeyAgreement.PublicKey(
-            rawRepresentation: Crypto.decode(peer.agreementKey, count: 32)
-        )
-        let shared = try identity.agreementPrivate.sharedSecretFromKeyAgreement(with: publicKey)
-        return shared.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
-            salt: Data("VO1D-CALL-1\n\(callID)".utf8),
-            sharedInfo: Data("voice".utf8),
-            outputByteCount: 32
-        )
     }
 
     private func failCurrent(reason: CXCallEndedReason) {
@@ -676,6 +670,7 @@ final class CallManager: ObservableObject {
         session = nil
         peerCard = nil
         callKey = nil
+        callSecrets = nil
         muted = false
         speaker = true
         audioSessionActive = false
@@ -833,3 +828,4 @@ struct CallScreen: View {
         .buttonStyle(.plain)
     }
 }
+

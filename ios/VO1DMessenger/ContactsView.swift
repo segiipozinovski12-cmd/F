@@ -5,12 +5,17 @@ struct ContactsView: View {
     @State private var adding = false
     @State private var search = ""
     @State private var room: Room?
+    @State private var contactFilter = "Все"
 
     private var contacts: [Contact] {
         store.state.contacts.filter {
-            search.isEmpty ||
+            let match = contactFilter=="Все" || (contactFilter=="Избранные" && store.extended.favorites.contains($0.id)) || (contactFilter=="Проверенные" && $0.verified) || (contactFilter=="Блокировки" && $0.blocked)
+            return match && (search.isEmpty ||
             $0.name.localizedCaseInsensitiveContains(search) ||
-            $0.card.shortID.localizedCaseInsensitiveContains(search)
+            $0.card.shortID.localizedCaseInsensitiveContains(search))
+        }.sorted { a,b in
+            let af=store.extended.favorites.contains(a.id), bf=store.extended.favorites.contains(b.id)
+            return af != bf ? af : a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
     }
 
@@ -42,6 +47,9 @@ struct ContactsView: View {
                         }
                         .voidField()
 
+                        Picker("Контакты",selection:$contactFilter) {
+                            ForEach(["Все","Избранные","Проверенные","Блокировки"],id:\.self) { Text($0).tag($0) }
+                        }.pickerStyle(.segmented)
                         NavigationLink {
                             MyIdentityView()
                         } label: {
@@ -133,6 +141,7 @@ struct ContactsView: View {
 struct AddContactView: View {
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
+    var initialValue = ""
     @State private var value = ""
     @State private var scanning = false
     @State private var busy = false
@@ -199,6 +208,7 @@ struct AddContactView: View {
                 }
                 .padding(24)
             }
+            .onAppear { if value.isEmpty { value=initialValue } }
             .sheet(isPresented: $scanning) {
                 QRScanner {
                     value = $0
@@ -304,6 +314,9 @@ struct ContactDetailView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
 
+                        if !store.isBuiltinBot(contactID) {
+                            NavigationLink("ПРИВАТНОСТЬ И ПРОВЕРКА QR") { ContactPrivacyView(contactID:contactID) }
+                        }
                         Button("НАПИСАТЬ СООБЩЕНИЕ", systemImage: "bubble.left.fill") {
                             do { room = try store.direct(contact) }
                             catch { store.error = error.localizedDescription }
@@ -342,6 +355,7 @@ struct ContactDetailView: View {
                                     if let index = store.state.contacts.firstIndex(where: { $0.id == contactID }) {
                                         store.state.contacts[index].verified = value
                                         store.persist()
+                                        Task { try? await store.trustOnServer(contactID,trusted:store.extended.trustedIDs.contains(contactID)) }
                                     }
                                 }
                             ))

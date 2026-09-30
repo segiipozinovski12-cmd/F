@@ -16,10 +16,11 @@ RUN apt-get update \
     && mkdir -p /data \
     && chown relay:relay /data
 
-COPY app.py realtime.py ./
+COPY app.py realtime.py privacy.py push.py ./
 COPY railway-entrypoint.sh /usr/local/bin/railway-entrypoint
 RUN chmod 0755 /usr/local/bin/railway-entrypoint
 
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/railway-entrypoint"]
+

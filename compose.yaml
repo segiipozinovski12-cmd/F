@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     environment:
       VO1D_DB: /data/relay.sqlite3
+      VO1D_BLOB_DIR: /data/blobs
     volumes:
       - relay-data:/data
     expose:

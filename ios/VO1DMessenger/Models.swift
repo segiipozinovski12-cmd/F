@@ -35,6 +35,7 @@ struct Room: Codable, Identifiable, Hashable {
     var isChannel: Bool? = nil
     var topics: [String]? = nil
     var mutedUntil: Date? = nil
+    var privateRoster: Bool? = nil
 }
 
 struct Attachment: Codable, Hashable {
@@ -59,6 +60,8 @@ struct PollOption: Codable, Hashable, Identifiable {
 
 struct PollData: Codable, Hashable {
     var question: String
+    var privateVotes: Bool? = nil
+    var privateCounts: [String: Int]? = nil
     var options: [PollOption]
     var closed: Bool = false
 }
@@ -114,6 +117,7 @@ struct ChatEvent: Codable {
     var target: String?
     var value: String?
     var senderName: String
+    var padding: String? = nil
     var at: Date = Date()
 }
 
@@ -138,6 +142,7 @@ struct PendingDelivery: Codable, Identifiable {
 }
 
 struct VaultState: Codable {
+    var extended: ExtendedState? = nil
     var nickname = "Ghost"
     var server = ""
     var onboarded = false
@@ -188,3 +193,4 @@ enum Wire {
         return d
     }
 }
+

@@ -2,9 +2,11 @@ import SwiftUI
 
 @main
 struct VO1DMessengerApp: App {
+    @UIApplicationDelegateAdaptor(MessengerAppDelegate.self) var appDelegate
     @StateObject private var store = ChatStore()
     @StateObject private var calls = CallManager.shared
     @Environment(\.scenePhase) private var scenePhase
+    @State private var leftAt: Date?
 
     init() {
         NotificationCoordinator.shared.install()
@@ -17,11 +19,24 @@ struct VO1DMessengerApp: App {
                 .environmentObject(calls)
                 .preferredColorScheme(.dark)
                 .tint(.white)
+                .task {
+                    PushCoordinator.shared.wake = {
+                        await store.reloadProtectedData()
+                        await store.connectProductionRelay()
+                        await store.sync()
+                    }
+                    PushCoordinator.shared.openRoom = { id in store.notificationRoomID=id }
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase != .active {
-                        if store.state.appLock { store.locked = true }
+                        leftAt=Date()
+                        store.revealedHiddenRooms=false
+                        if store.state.appLock && store.preferences.autoLockSeconds==0 { store.locked=true }
                         store.persist()
                         MediaFiles.clear()
+                    } else if store.state.appLock, let leftAt,
+                        Date().timeIntervalSince(leftAt)>=Double(store.preferences.autoLockSeconds) {
+                        store.locked=true
                     }
                 }
         }
@@ -33,6 +48,9 @@ struct RootView: View {
     @EnvironmentObject private var calls: CallManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var splash = true
+    @State private var incomingContact: String?
+    @State private var pendingLink: URL?
+    @State private var captured = UIScreen.main.isCaptured
 
     var body: some View {
         ZStack {
@@ -64,7 +82,7 @@ struct RootView: View {
                     .zIndex(20)
             }
 
-            if scenePhase != .active {
+            if scenePhase != .active || (captured && store.preferences.protectRecording) {
                 Color.black.ignoresSafeArea()
                     .overlay {
                         VStack(spacing: 18) {
@@ -74,6 +92,25 @@ struct RootView: View {
                     }
                     .accessibilityLabel("Содержимое скрыто")
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for:UIScreen.capturedDidChangeNotification)) { _ in captured=UIScreen.main.isCaptured }
+        .environment(\.openURL,OpenURLAction { url in
+            guard ["http","https"].contains(url.scheme?.lowercased() ?? ""), url.user==nil, url.password==nil else { return .discarded }
+            let clean=store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url
+            if store.preferences.confirmLinks { pendingLink=clean; return .handled }
+            return .systemAction(clean)
+        })
+        .confirmationDialog("Открыть внешний сайт?",isPresented:Binding(get:{ pendingLink != nil },set:{ if !$0 { pendingLink=nil } }),titleVisibility:.visible) {
+            if let url=pendingLink { Button("Открыть \(url.host ?? "сайт")") { UIApplication.shared.open(url); pendingLink=nil } }
+        } message: { Text("Сайт увидит адрес подключения браузера. Прокси VO1D не распространяется на браузер.") }
+        .onOpenURL { url in
+            if url.scheme=="vo1d", ["contact","invite"].contains(url.host ?? "") { incomingContact=url.absoluteString }
+        }
+        .sheet(isPresented:Binding(get:{ incomingContact != nil && store.sessionUnlocked && !store.locked },set:{ if !$0 { incomingContact=nil } })) {
+            AddContactView(initialValue:incomingContact ?? "")
+        }
+        .sheet(isPresented:Binding(get:{ store.notificationRoomID != nil && store.sessionUnlocked && !store.locked },set:{ if !$0 { store.notificationRoomID=nil } })) {
+            if let id=store.notificationRoomID, !store.extended.hiddenRooms.contains(id) { NavigationStack { ChatView(roomID:id) } }
         }
         .animation(.easeInOut(duration: 0.32), value: splash)
         .task {
@@ -88,6 +125,7 @@ struct RootView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
 
+            store.beginActiveSession()
             NotificationCoordinator.shared.clearDelivered()
 
             if store.state.onboarded {
@@ -96,7 +134,7 @@ struct RootView: View {
 
             while !Task.isCancelled {
                 await store.sync()
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(store.preferences.lowData ? 8 : 2))
             }
         }
     }
@@ -245,3 +283,4 @@ private struct BiometricGateView: View {
         }
     }
 }
+

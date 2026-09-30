@@ -1,21 +1,49 @@
-# Deploy your relay
+# Deploy relay 1.3
 
-1. Point a domain to your server. Install Docker Engine and Compose through the operating system's supported installation route.
-2. Clone this repository and branch. Copy `.env.example` to `.env` and set `VO1D_DOMAIN=chat.your-domain.tld`.
-3. Allow incoming TCP 80/443. Keep 8080 private; Compose does not publish it.
-4. Run `docker compose up -d --build`. Caddy obtains and renews HTTPS certificates.
-5. Open `https://chat.your-domain.tld/health`; expected JSON: `{"status":"ok","protocol":1}`.
-6. Set the same HTTPS URL on two iPhones/simulators, create identities and exchange QR invitations.
-7. Send text, a photo and a voice note both ways. Check queued/sent/delivered/read, force-close one client and reopen it, then test blocking and deletion.
+Use branch `codex/privacy-expansion` for both the client and server. Changes in GitHub do not redeploy an existing service automatically unless the operator has configured that integration. Take a database backup before replacing an existing installation; new privacy tables are created on startup.
 
-The relay runs as UID 10001 with a read-only container filesystem; only `/data` and `/tmp` are writable. SQLite WAL supports the two workers through database locking. Message content remains encrypted; disk encryption on the host is still recommended for metadata. Docker volumes survive container recreation. Do not run `docker compose down -v` unless intending to erase all server data.
+## Docker and HTTPS
 
-Operations: `docker compose ps`, `docker compose logs --tail=80 relay`, `docker compose logs --tail=80 caddy`. Do not enable access logging with authorization headers or request bodies. Configure external health monitoring if required; no monitoring account is included.
+1. Point a domain to the host; install Docker Engine and Compose.
+2. Copy `.env.example` to `.env` and set `VO1D_DOMAIN`.
+3. Allow TCP 80/443. Keep port 8080 private.
+4. Run `docker compose up -d --build`.
+5. Check `https://your-domain/health`, then set this HTTPS URL in the iOS relay settings.
 
-This repository does not provision a paid server, register a domain, buy an Apple membership or publish to the App Store. For a development smoke test on a Mac use the local Python relay described in README; the standard-library development server is not the production entrypoint.
+Caddy provides TLS and WSS. `/data` persists SQLite and ciphertext blobs in `relay-data`. One aiohttp process handles HTTP/WSS calls and maintenance; do not run independent workers without shared call routing. The container drops to UID 10001; root is used only to prepare the mounted data directory. Avoid access logs containing authorization headers, device tokens or bodies.
 
-## Release on your iPhone
+```bash
+docker compose ps
+docker compose logs --tail=80 relay
+```
 
-Open `ios/VO1DMessenger.xcodeproj`, select the application target, configure your Team and bundle identifier. Select a connected iPhone, approve device developer mode if prompted, and Run. For distribution use a Release archive signed by your team. Release API validation rejects HTTP.
+`docker compose down -v` erases volumes. Logical deletions do not erase host backups or SQLite remnants. Blob retention is at most seven days; `VO1D_BLOB_RETENTION` can shorten it (seconds, minimum 60). Maintenance runs every 30 seconds.
 
-The checked-in Info.plist marks use of non-exempt encryption for accurate review rather than assuming export exemption. Complete the appropriate export-compliance process for your distribution. Verify privacy labels against actual relay metadata retention. Add your legal terms and privacy policy before publishing a public service.
+## Optional Apple push
+
+Create an APNs provider key through your Apple developer account. Configure the actual application Bundle Identifier with Push Notifications; Debug uses the sandbox entitlement and Release uses production. Use a provisioning profile containing these capabilities. PushKit uses the same application topic with `.voip` appended.
+
+Set these variables in `.env`:
+
+- `VO1D_APNS_KEY_ID`: provider key ID.
+- `VO1D_APNS_TEAM_ID`: Apple Team ID.
+- `VO1D_APNS_TOPIC`: exact app Bundle Identifier.
+- `VO1D_APNS_KEY_FILE`: host path to your `.p8` file.
+
+Keep the file outside Git. Ensure UID 10001 can read the mounted key with restrictive permissions; do not put the key contents in logs, source, screenshots or this repository.
+
+```bash
+docker compose -f compose.yaml -f compose.push.yaml up -d --build
+```
+
+Without these settings ordinary foreground delivery and WSS calls continue, but server push is disabled. APNs delivery is best effort; background execution and user permissions are controlled by iOS. The implementation uses HTTP/2 and ES256 provider JWTs, handles invalid tokens and sends neutral alert payloads. Disabling notifications deletes registrations on the connected relay.
+
+## Device validation still required
+
+Use two physical iPhones and provisioned builds. Test sandbox and production tokens, app foreground/background/termination, locked phone after reboot and first unlock, immediate CallKit reporting, answer/decline/end, caller cancellation, no network, proxy failure, blocking, verified-only policy, microphone and notification permission refusal. Check that incoming pushes expose no text/name, and that message/vault keys remain unavailable while protected data is locked. The separate background-call signing key is deliberately available after first unlock; disable background calls if that tradeoff is unsuitable.
+
+Test requests, one-use invitation concurrency, QR mismatch, offline queue, corrupted attachment/backup, wrong password, old-vault migration, local/media clearing, inactivity cleanup and receipt settings. Simulator CI does not replace these phone scenarios.
+
+## Signing and release
+
+Open the Xcode project, set your Team and Bundle Identifier, connect an iPhone and Run. Distribution requires an archive signed by your team. No signed IPA or production deployment is included. Keep the app and APNs topic consistent when renaming the identifier. Complete actual privacy disclosures and applicable export review before distribution.

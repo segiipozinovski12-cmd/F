@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
+import privacy
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -64,6 +65,7 @@ def header_bytes(e):
 
 class Relay:
     def __init__(self, path=None):
+        self.rate_secret = secrets.token_bytes(32)
         self.path = str(path or os.environ.get('VO1D_DB', './data/relay.sqlite3'))
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
@@ -94,6 +96,8 @@ class Relay:
                 CREATE TABLE IF NOT EXISTS rates (bucket TEXT PRIMARY KEY, count INTEGER, expires INTEGER);
             ''')
 
+            privacy.install(db)
+
     @contextmanager
     def db(self):
         conn = sqlite3.connect(self.path, timeout=20)
@@ -116,6 +120,7 @@ class Relay:
 
     def clean(self, db):
         now = int(time.time())
+        privacy.clean(db, now)
         for table in ('challenges', 'sessions', 'envelopes', 'seen'):
             db.execute(f'DELETE FROM {table} WHERE expires <= ?', (now,))
 
@@ -127,13 +132,15 @@ class Relay:
         row = db.execute('SELECT identity FROM sessions WHERE digest=? AND expires>?', (digest, int(time.time()))).fetchone()
         if not row:
             raise APIError(401, 'Session expired')
+        db.execute('UPDATE privacy SET last_active=? WHERE identity=?',(int(time.time()),row[0]))
         return row[0]
 
     def dispatch(self, env, body):
         method, path = env['REQUEST_METHOD'], env.get('PATH_INFO', '/')
         now = int(time.time())
         # Only the immediate peer is used; untrusted forwarded headers never bypass limits.
-        ip_hash = hashlib.sha256(env.get('REMOTE_ADDR', '').encode()).hexdigest()
+        import hmac
+        ip_hash = hmac.new(self.rate_secret,env.get('REMOTE_ADDR','').encode(),hashlib.sha256).hexdigest()
         if method == 'GET' and path == '/health':
             return {'status': 'ok', 'protocol': 1}
         if path in ('/v1/register', '/v1/challenge', '/v1/session'):
@@ -144,15 +151,22 @@ class Relay:
         if not public:
             with self.db() as auth_db:
                 user = self.user(env, auth_db)
+            if path.startswith(('/v1/code/','/v1/username/','/v1/invites/redeem')) and '/check/' not in path:
+                self.rate('lookup:' + user, 30)
             self.rate('user:' + user, 240)
         with self.db() as db:
             self.clean(db)
+            if not public:
+                result = privacy.handle(self,db,user,env,body,APIError)
+                if result is not None:
+                    return result
             if method == 'POST' and path == '/v1/register':
                 card = verify_card(body)
                 old = db.execute('SELECT card FROM identities WHERE id=?', (card['id'],)).fetchone()
                 if old and json.loads(old[0]) != card:
                     raise APIError(409, 'Identity already bound to different keys')
                 db.execute('INSERT OR IGNORE INTO identities VALUES (?,?)', (card['id'], json.dumps(card)))
+                db.execute('INSERT OR IGNORE INTO privacy(identity,last_active) VALUES (?,?)',(card['id'],now))
                 return {'ok': True}
             if method == 'POST' and path == '/v1/challenge':
                 identity = body.get('id', '')
@@ -198,7 +212,7 @@ class Relay:
                 if not CODE.fullmatch(code):
                     raise APIError(400, 'Invalid compact ID')
                 row = db.execute('SELECT i.card FROM codes c JOIN identities i ON i.id=c.identity WHERE c.code=?', (code,)).fetchone()
-                if not row:
+                if not row or not privacy.visible(db,json.loads(row[0])['id']):
                     raise APIError(404, 'Compact ID not found')
                 return json.loads(row[0])
             if method == 'GET' and path.startswith('/v1/username/check/'):
@@ -234,7 +248,7 @@ class Relay:
                     'SELECT i.card FROM usernames u JOIN identities i ON i.id=u.identity WHERE u.username=?',
                     (username,)
                 ).fetchone()
-                if not row:
+                if not row or not privacy.visible(db,json.loads(row[0])['id']):
                     raise APIError(404, 'Username not found')
                 return {'username': username, 'card': json.loads(row[0])}
             if method == 'GET' and path.startswith('/v1/identity/'):
@@ -300,6 +314,7 @@ class Relay:
                     db.execute('DELETE FROM blocks WHERE owner=? AND peer=?', (user, peer))
                 return {'ok': True}
             if method == 'DELETE' and path == '/v1/account':
+                privacy.erase(db,user)
                 db.execute('DELETE FROM envelopes WHERE sender=? OR recipient=?', (user, user))
                 db.execute('DELETE FROM seen WHERE recipient=?', (user,))
                 db.execute('DELETE FROM blocks WHERE owner=? OR peer=?', (user, user))
@@ -348,3 +363,4 @@ if __name__ == '__main__':
             pass
     print('VO1D development relay: http://127.0.0.1:8080 (production: use Docker + TLS)')
     make_server('0.0.0.0', 8080, create_app(), handler_class=QuietHandler).serve_forever()
+

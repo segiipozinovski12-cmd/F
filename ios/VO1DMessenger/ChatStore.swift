@@ -14,17 +14,21 @@ final class ChatStore: ObservableObject {
     @Published var fatalError: String?
     @Published var typing: [String: Date] = [:]
     @Published var activeRoomID: String?
-    private(set) var identity: LocalIdentity?
-    private(set) var ownCard: ContactCard?
-    private var vault: Vault?
-    private var api: APIClient?
+    @Published var notificationRoomID: String?
+    var identity: LocalIdentity?
+    var ownCard: ContactCard?
+    var vault: Vault?
+    var api: APIClient?
     private var syncing = false
-    private var generation = 0
+    var generation = 0
+    @Published var revealedHiddenRooms = false
+    @Published var deliveryIssues: [String: DeliveryIssue] = [:]
+    var acceptedPendingIDs = Set<String>()
     private var lastTyping: [String: Date] = [:]
     var myID: String { ownCard?.id ?? "" }
 
     static let builtinBotKey = "XROSB"
-    static let builtinBotID = String(repeating: "b", count: 64)
+    nonisolated static let builtinBotID = String(repeating: "b", count: 64)
     static let builtinBotRoomID = "bot:xrosb"
     static let savedRoomID = "saved:me"
 
@@ -48,6 +52,11 @@ final class ChatStore: ObservableObject {
             let vault = try Vault()
             self.identity = identity; self.vault = vault; ownCard = try identity.card
             state = try vault.read(key: identity.storage)
+            if state.extended == nil {
+                var migrated = ExtendedState()
+                migrated.trustedIDs = state.contacts.filter { !$0.blocked && !isBuiltinBot($0.id) }.map(\.id)
+                state.extended = migrated
+            }
             let credentialsChanged = try ensureCredentials()
             locked = state.appLock
             sessionUnlocked = !state.onboarded
@@ -58,7 +67,7 @@ final class ChatStore: ObservableObject {
                     state.server = AppConfig.productionRelay
                     relayChanged = true
                 }
-                api = try APIClient(server: AppConfig.productionRelay, identity: identity)
+                api = try APIClient(server: AppConfig.productionRelay, identity: identity, privacy: preferences)
                 connection = "Подключение…"
             } else {
                 connection = "Готов к регистрации"
@@ -73,6 +82,7 @@ final class ChatStore: ObservableObject {
     func save() throws {
         guard let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
         try vault.write(state, key: identity.storage)
+        BackgroundCalls.save(self)
     }
     func persist() {
         do { try save() } catch { self.error = error.localizedDescription }
@@ -85,7 +95,7 @@ final class ChatStore: ObservableObject {
         guard state.onboarded, let identity else { return }
         connection = "Подключение…"
         do {
-            let client = try APIClient(server: AppConfig.productionRelay, identity: identity)
+            let client = try APIClient(server: AppConfig.productionRelay, identity: identity, privacy: preferences)
             try await client.authenticate()
             let publicCode = try await client.ensurePublicCode()
             api = client
@@ -102,6 +112,9 @@ final class ChatStore: ObservableObject {
                     self?.recordCall(record)
                 }
             )
+            setupCallPolicy()
+            try? await applyPrivacy()
+            try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
             connection = "Подключён"
         } catch {
             connection = "Нет связи"
@@ -113,7 +126,7 @@ final class ChatStore: ObservableObject {
         busy = true; defer { busy = false }
         do {
             let firstLaunch = !state.onboarded
-            let client = try APIClient(server: server, identity: identity)
+            let client = try APIClient(server: server, identity: identity, privacy: preferences)
             try await client.authenticate()
             let publicCode = try await client.ensurePublicCode()
             api = client
@@ -138,6 +151,9 @@ final class ChatStore: ObservableObject {
                     self?.recordCall(record)
                 }
             )
+            setupCallPolicy()
+            try? await applyPrivacy()
+            try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
             connection = "Подключён"
         } catch { self.error = error.localizedDescription }
     }
@@ -286,7 +302,7 @@ final class ChatStore: ObservableObject {
         return changed
     }
 
-    private func randomToken(length: Int) throws -> String {
+    func randomToken(length: Int) throws -> String {
         let alphabet = Array("23456789ABCDEFGHJKLMNPQRSTUVWXYZ")
         let bytes = try Crypto.random(length)
         return bytes.map { String(alphabet[Int($0) & 31]) }.joined()
@@ -391,7 +407,13 @@ final class ChatStore: ObservableObject {
             return bot
         }
 
-        if input.hasPrefix("vo1d://contact/") {
+        if input.hasPrefix("vo1d://invite/") {
+            guard let api else { throw MessengerError.invalid("Нет соединения") }
+            struct Result: Decodable { var card: ContactCard }
+            let token = String(input.dropFirst("vo1d://invite/".count))
+            let result: Result = try await api.request("v1/invites/redeem",method:"POST",body:Wire.encoder.encode(["token":token]))
+            card = result.card; name = "Ghost \(card.shortID.prefix(6))"
+        } else if input.hasPrefix("vo1d://contact/") {
             input = String(input.dropFirst("vo1d://contact/".count)).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
             input += String(repeating: "=", count: (4 - input.count % 4) % 4)
             let invite = try Wire.decoder.decode(Invite.self, from: Crypto.decode(input))
@@ -426,7 +448,10 @@ final class ChatStore: ObservableObject {
             return existing
         }
         let contact = Contact(card: card, name: name)
-        state.contacts.append(contact); try save()
+        state.contacts.append(contact)
+        changeExtended { if !$0.trustedIDs.contains(card.id) { $0.trustedIDs.append(card.id) } }
+        try? await trustOnServer(card.id,trusted:true)
+        try save()
         return contact
     }
     func startCall(_ roomID: String) {
@@ -536,7 +561,7 @@ final class ChatStore: ObservableObject {
         let targets = cleanContacts.map(\.card)
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
         let pending = try targets.map {
-            PendingDelivery(envelope: try Crypto.seal(event, from: identity, to: $0), messageID: nil)
+            PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
         state.rooms.append(room)
@@ -578,7 +603,7 @@ final class ChatStore: ObservableObject {
         let targets = cleanContacts.map(\.card)
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
         let pending = try targets.map {
-            PendingDelivery(envelope: try Crypto.seal(event, from: identity, to: $0), messageID: nil)
+            PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
         state.rooms.append(room)
@@ -659,7 +684,7 @@ final class ChatStore: ObservableObject {
         room.isGroup && groupAdminIDs(room).contains(myID)
     }
 
-    private func publishRoomUpdate(oldRoom: Room, newRoom: Room) throws {
+    func publishRoomUpdate(oldRoom: Room, newRoom: Room) throws {
         guard oldRoom.isGroup,
               newRoom.isGroup,
               oldRoom.creator == myID,
@@ -677,7 +702,7 @@ final class ChatStore: ObservableObject {
 
         let pending = try recipients.map {
             PendingDelivery(
-                envelope: try Crypto.seal(event, from: identity, to: $0),
+                envelope: try sealEvent(event, from: identity, to: $0),
                 messageID: nil
             )
         }
@@ -722,6 +747,7 @@ final class ChatStore: ObservableObject {
     func toggleGroupAdmin(_ roomID: String, memberID: String) throws {
         guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
         let oldRoom = state.rooms[roomIndex]
+        guard oldRoom.privateRoster != true else { throw MessengerError.invalid("В канале со скрытым составом один администратор") }
         guard isGroupOwner(oldRoom) else {
             throw MessengerError.invalid("Админов назначает создатель группы")
         }
@@ -746,6 +772,7 @@ final class ChatStore: ObservableObject {
     func setGroupAdminsOnly(_ roomID: String, enabled: Bool) throws {
         guard let roomIndex = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
         let oldRoom = state.rooms[roomIndex]
+        guard oldRoom.privateRoster != true || enabled else { throw MessengerError.invalid("В скрытом канале публикует только владелец") }
         guard isGroupOwner(oldRoom) else {
             throw MessengerError.invalid("Это разрешение меняет создатель группы")
         }
@@ -778,7 +805,7 @@ final class ChatStore: ObservableObject {
     func enqueue(_ event: ChatEvent, room: Room, to recipients: [ContactCard]? = nil, messageID: String? = nil) throws {
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
         let targets = recipients ?? room.members.filter { $0.id != myID }
-        let pending = try targets.map { PendingDelivery(envelope: try Crypto.seal(event, from: identity, to: $0), messageID: messageID) }
+        let pending = try targets.map { PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: messageID) }
         state.outbox.append(contentsOf: pending)
     }
     private func validateAttachment(_ attachment: Attachment) throws {
@@ -911,6 +938,7 @@ final class ChatStore: ObservableObject {
         poll: PollData? = nil,
         topic: String? = nil
     ) throws {
+        let text = preferences.cleanLinks ? SafeContent.cleanText(text) : text
         guard let room = state.rooms.first(where: { $0.id == roomID }),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachment != nil || poll != nil else { return }
 
@@ -1009,7 +1037,8 @@ final class ChatStore: ObservableObject {
         guard !room.members.contains(where: { member in state.contacts.contains(where: { $0.id == member.id && $0.blocked }) }) else {
             throw MessengerError.invalid("В чате есть заблокированный контакт")
         }
-        let expiry = room.disappearingSeconds > 0 ? Date().addingTimeInterval(Double(room.disappearingSeconds)) : nil
+        let seconds = room.disappearingSeconds > 0 ? room.disappearingSeconds : preferences.defaultDisappearing
+        let expiry = seconds > 0 ? Date().addingTimeInterval(Double(seconds)) : nil
         let message = ChatMessage(
             id: UUID().uuidString,
             roomID: roomID,
@@ -1043,7 +1072,7 @@ final class ChatStore: ObservableObject {
                 history.append(state.messages[index].text)
                 if history.count > 20 { history.removeFirst(history.count - 20) }
             }
-            state.messages[index].editHistory = history
+            state.messages[index].editHistory = preferences.keepEditHistory ? history : nil
             state.messages[index].text = String((value ?? "").prefix(16000))
             state.messages[index].edited = true
         }
@@ -1066,7 +1095,7 @@ final class ChatStore: ObservableObject {
             text: message.text,
             attachment: message.attachment,
             replyTo: nil,
-            forwardedFrom: source
+            forwardedFrom: preferences.forwardWithoutName ? nil : source
         )
     }
 
@@ -1106,7 +1135,8 @@ final class ChatStore: ObservableObject {
         question: String,
         options: [String],
         scheduledAt: Date? = nil,
-        topic: String? = nil
+        topic: String? = nil,
+        privateVotes: Bool = false
     ) throws {
         let cleanQuestion = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
         let cleanOptions = options
@@ -1122,6 +1152,8 @@ final class ChatStore: ObservableObject {
 
         let poll = PollData(
             question: cleanQuestion,
+            privateVotes: privateVotes,
+            privateCounts: privateVotes ? [:] : nil,
             options: cleanOptions.map {
                 PollOption(id: UUID().uuidString, text: $0, voterIDs: [])
             }
@@ -1146,6 +1178,17 @@ final class ChatStore: ObservableObject {
               !poll.closed,
               poll.options.contains(where: { $0.id == optionID }) else { return }
 
+        if poll.privateVotes==true {
+            let message=state.messages[index]
+            changeExtended { $0.privatePollSelections[messageID]=optionID }
+            if message.sender==myID {
+                try recordPrivateVote(messageID:messageID,voterID:myID,optionID:optionID)
+            } else if let room=state.rooms.first(where: { $0.id==message.roomID }),let author=room.members.first(where: { $0.id==message.sender }) {
+                try enqueue(ChatEvent(kind:"privatePollVote",room:room,target:messageID,value:optionID,senderName:state.nickname),room:room,to:[author])
+                try save()
+            }
+            return
+        }
         for optionIndex in poll.options.indices {
             poll.options[optionIndex].voterIDs.removeAll { $0 == myID }
             if poll.options[optionIndex].id == optionID {
@@ -1192,7 +1235,7 @@ final class ChatStore: ObservableObject {
         let room = state.rooms[roomIndex]
         for index in state.messages.indices where state.messages[index].roomID == roomID && state.messages[index].sender != myID && !state.messages[index].readBy.contains(myID) {
             state.messages[index].readBy.append(myID)
-            if state.readReceipts, let sender = room.members.first(where: { $0.id == state.messages[index].sender }) {
+            if state.readReceipts, !extended.receiptExceptions.contains(roomID), let sender = room.members.first(where: { $0.id == state.messages[index].sender }) {
                 do { try enqueue(ChatEvent(kind: "read", room: room, target: state.messages[index].id, senderName: state.nickname), room: room, to: [sender]) }
                 catch { self.error = error.localizedDescription }
             }
@@ -1200,12 +1243,12 @@ final class ChatStore: ObservableObject {
         persist()
     }
     func sendTyping(_ roomID: String) async {
-        guard !isLocalUtilityRoom(roomID),
+        guard preferences.typingSignals, !extended.hiddenRooms.contains(roomID), !isLocalUtilityRoom(roomID),
               let api, let identity, let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
         lastTyping[roomID] = Date()
         let event = ChatEvent(kind: "typing", room: room, senderName: state.nickname)
         for target in room.members where target.id != myID {
-            do { try await api.send(Crypto.seal(event, from: identity, to: target)) } catch { /* Ephemeral signal is intentionally not retried. */ }
+            do { try await api.send(sealEvent(event, from: identity, to: target)) } catch { /* Ephemeral signal is intentionally not retried. */ }
         }
     }
     private func processScheduledMessages() {
@@ -1249,7 +1292,18 @@ final class ChatStore: ObservableObject {
             expire()
             // Outbox is persisted before any network request. Retries reuse the exact signed envelope.
             for pending in Array(state.outbox.prefix(24)) {
-                try await api.send(pending.envelope)
+                if let issue=deliveryIssues[pending.id], issue.nextAttempt > Date() { continue }
+                do { try await api.send(pending.envelope) }
+                catch {
+                    let attempts=(deliveryIssues[pending.id]?.attempts ?? 0)+1
+                    let permanent=(error as? HTTPFailure).map { [400,403,404,409,413].contains($0.status) } ?? false
+                    let delay=min(300.0,pow(2.0,Double(min(attempts,8))))+Double.random(in:0...1)
+                    deliveryIssues[pending.id]=DeliveryIssue(id:pending.id,detail:error.localizedDescription,attempts:attempts,nextAttempt:permanent ? .distantFuture : Date().addingTimeInterval(delay))
+                    if let id=pending.messageID, let i=state.messages.firstIndex(where: { $0.id==id }) { state.messages[i].state=permanent ? "failed" : "queued" }
+                    try save()
+                    continue
+                }
+                deliveryIssues[pending.id]=nil
                 guard currentGeneration == generation else { return }
                 state.outbox.removeAll { $0.id == pending.id }
                 if let id = pending.messageID, !state.outbox.contains(where: { $0.messageID == id }), let index = state.messages.firstIndex(where: { $0.id == id }) {
@@ -1290,8 +1344,10 @@ final class ChatStore: ObservableObject {
             // The visible status keeps transient network failures from producing alert loops.
         }
     }
+    func applyAccepted(_ event: ChatEvent, sender: ContactCard) throws { try apply(event,sender:sender) }
     private func apply(_ event: ChatEvent, sender: ContactCard) throws {
         let incoming = event.room
+        if extended.declinedRooms.contains(incoming.id) { return }
         let minimumMembers = incoming.isGroup ? 1 : 2
 
         guard !incoming.id.isEmpty,
@@ -1354,9 +1410,11 @@ final class ChatStore: ObservableObject {
                 updated.draft = current.draft
                 updated.disappearingSeconds = current.disappearingSeconds
                 updated.pinnedMessageIDs = current.pinnedMessageIDs
+                updated.mutedUntil = current.mutedUntil
                 state.rooms[roomIndex] = updated
             } else {
-                guard Set(current.members) == Set(incoming.members),
+                let limitedRoster=current.privateRoster==true && current.isChannel==true && sender.id != current.creator && current.creator==myID
+                guard (limitedRoster ? Set(incoming.members).isSubset(of:Set(current.members)) : Set(current.members)==Set(incoming.members)),
                       current.creator == incoming.creator,
                       current.isGroup == incoming.isGroup else {
                     throw MessengerError.invalid("Изменение состава группы требует roomUpdate")
@@ -1368,6 +1426,7 @@ final class ChatStore: ObservableObject {
                     guard currentAdmins == incomingAdmins,
                           current.onlyAdminsCanPost == incoming.onlyAdminsCanPost,
                           current.isChannel == incoming.isChannel,
+                          current.privateRoster == incoming.privateRoster,
                           current.topics == incoming.topics,
                           current.title == incoming.title else {
                         throw MessengerError.invalid("Метаданные группы изменены без roomUpdate")
@@ -1385,6 +1444,17 @@ final class ChatStore: ObservableObject {
                 throw MessengerError.invalid("Сначала нужно приглашение создателя группы")
             }
 
+            let known = extended.trustedIDs.contains(sender.id)
+            let needsConsent = incoming.isGroup ? !preferences.allowGroupInvites : (preferences.requireRequests && !known)
+            if needsConsent && !acceptedPendingIDs.contains(incoming.id) {
+                changeExtended {
+                    let bytes=$0.pendingEvents.reduce(0) { $0 + ($1.event.message?.attachment?.data.count ?? 0) }
+                    if $0.pendingEvents.count < 100 && bytes + (event.message?.attachment?.data.count ?? 0)<=10*1024*1024 && !$0.pendingEvents.contains(where: { $0.id == event.id }) {
+                        $0.pendingEvents.append(PendingRequest(event:event,sender:sender))
+                    }
+                }
+                return
+            }
             var room = incoming
             room.pinned = false
             room.archived = false
@@ -1430,15 +1500,19 @@ final class ChatStore: ObservableObject {
                   message.expiresAt == nil || message.expiresAt! > Date() else {
                 throw MessengerError.invalid("Неверное содержимое сообщения")
             }
-            if let attachment = message.attachment {
-                try validateAttachment(attachment)
+            if let attachment = message.attachment { try validateAttachment(attachment) }
+            if let poll=message.poll {
+                guard (2...10).contains(poll.options.count),poll.question.count<=240,
+                      Set(poll.options.map(\.id)).count==poll.options.count,
+                      poll.options.allSatisfy({ $0.id.count<=64 && $0.text.count<=100 && $0.voterIDs.count<=16 }),
+                      (poll.privateCounts ?? [:]).values.allSatisfy({ $0>=0 && $0<=16 }) else { throw MessengerError.invalid("Неверный опрос") }
             }
             if !state.messages.contains(where: { $0.id == message.id }) {
                 message.state = "delivered"; message.reactions = [:]; message.readBy = []; message.deliveredTo = []; message.edited = false; message.openedAt = nil
                 state.messages.append(message)
                 if let index = state.rooms.firstIndex(where: { $0.id == incoming.id }) { state.rooms[index].unread += 1 }
 
-                if state.notificationsEnabled == true &&
+                if !notificationsQuiet && !extended.hiddenRooms.contains(incoming.id) && state.notificationsEnabled == true &&
                    message.silent != true &&
                    activeRoomID != incoming.id &&
                    !(state.rooms.first(where: { $0.id == incoming.id }).map(isRoomMuted) ?? false) {
@@ -1453,10 +1527,12 @@ final class ChatStore: ObservableObject {
                     } else {
                         body = "Вложение"
                     }
-                    NotificationCoordinator.shared.postMessage(title: title, body: body, roomID: incoming.id)
+                    NotificationCoordinator.shared.postMessage(title: preferences.notificationPreview ? title : "VO1D", body: preferences.notificationPreview ? body : "Новое сообщение", roomID: incoming.id)
                 }
 
-                try enqueue(ChatEvent(kind: "delivered", room: incoming, target: message.id, senderName: state.nickname), room: incoming, to: [sender])
+                if preferences.deliveryReceipts, !extended.receiptExceptions.contains(incoming.id) {
+                    try enqueue(ChatEvent(kind: "delivered", room: incoming, target: message.id, senderName: state.nickname), room: incoming, to: [sender])
+                }
             }
         } else if event.kind == "typing" {
             if abs(event.at.timeIntervalSinceNow) < 8 { typing[incoming.id] = Date().addingTimeInterval(6) }
@@ -1468,13 +1544,24 @@ final class ChatStore: ObservableObject {
                     history.append(state.messages[index].text)
                     if history.count > 20 { history.removeFirst(history.count - 20) }
                 }
-                state.messages[index].editHistory = history
+                state.messages[index].editHistory = preferences.keepEditHistory ? history : nil
                 state.messages[index].text = String((event.value ?? "").prefix(16000))
                 state.messages[index].edited = true
             case "delete" where state.messages[index].sender == sender.id:
                 state.messages.remove(at: index)
             case "reaction":
                 if let value = event.value, ["❤️", "👍", "🔥", "😂", "👀", ""].contains(value) { state.messages[index].reactions[sender.id] = value.isEmpty ? nil : value }
+            case "privatePollVote" where state.messages[index].sender==myID:
+                if let option=event.value { try recordPrivateVote(messageID:target,voterID:sender.id,optionID:option) }
+            case "privatePollResult" where state.messages[index].sender==sender.id:
+                if var poll=state.messages[index].poll, poll.privateVotes==true,
+                   let text=event.value, let data=text.data(using:.utf8),
+                   let counts=try? JSONDecoder().decode([String:Int].self,from:data),
+                   Set(counts.keys).isSubset(of:Set(poll.options.map(\.id))),
+                   counts.values.allSatisfy({ $0>=0 && $0<=16 }), counts.values.reduce(0,+)<=16 {
+                    poll.privateCounts=counts
+                    state.messages[index].poll=poll
+                }
             case "pollVote":
                 if var poll = state.messages[index].poll,
                    let optionID = event.value,
@@ -1516,8 +1603,18 @@ final class ChatStore: ObservableObject {
     }
     func expire() {
         let now = Date()
-        state.messages.removeAll { $0.expiresAt.map { $0 <= now } ?? false }
+        state.messages.removeAll { message in
+            let days = extended.roomRetention[message.roomID] ?? preferences.localRetentionDays
+            return (message.expiresAt.map { $0 <= now } ?? false) ||
+                (days > 0 && message.state != "scheduled" && message.createdAt < now.addingTimeInterval(-Double(days)*86400))
+        }
+        let expiredIDs=Set(state.outbox.filter { $0.envelope.expiresAt <= Int(now.timeIntervalSince1970) }.compactMap(\.messageID))
+        for i in state.messages.indices where expiredIDs.contains(state.messages[i].id) { state.messages[i].state="expired" }
         state.outbox.removeAll { $0.envelope.expiresAt <= Int(now.timeIntervalSince1970) }
+        if var extra=state.extended {
+            extra.pendingEvents.removeAll { ($0.event.message?.expiresAt ?? $0.event.at.addingTimeInterval(7*86400))<=now }
+            state.extended=extra
+        }
         // Keep a bounded replay cache. Relay also retains envelope tombstones until expiry.
         if state.processed.count > 50000 { state.processed.removeFirst(state.processed.count - 50000) }
         typing = typing.filter { $0.value > now }
@@ -1549,9 +1646,12 @@ final class ChatStore: ObservableObject {
             if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Открыть приватные чаты VO1D") { locked = false }
         } catch { self.error = error.localizedDescription }
     }
-    private func resetLocalIdentity() throws {
+    func resetLocalIdentity() throws {
         CallManager.shared.disconnect()
         try vault?.delete()
+        BackgroundCalls.clear()
+        ResumableDownload.clear()
+        NotificationCoordinator.shared.clearAll()
         try Keychain.delete()
         let fresh = try Keychain.load()
         identity = fresh
@@ -1579,7 +1679,7 @@ final class ChatStore: ObservableObject {
         return state.contacts.first(where: { $0.id == id })?.name ?? "Ghost"
     }
     func messages(_ roomID: String, search: String = "") -> [ChatMessage] {
-        state.messages.filter { $0.roomID == roomID && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search)) }.sorted { $0.createdAt < $1.createdAt }
+        state.messages.filter { $0.roomID == roomID && (search.isEmpty || ($0.text.localizedCaseInsensitiveContains(search) || (extended.ocrText[$0.id] ?? "").localizedCaseInsensitiveContains(search))) }.sorted { $0.createdAt < $1.createdAt }
     }
     func openEphemeral(_ messageID: String) {
         guard let index = state.messages.firstIndex(where: { $0.id == messageID }),
@@ -1607,6 +1707,7 @@ final class ChatStore: ObservableObject {
             state.notificationsEnabled = false
             NotificationCoordinator.shared.clearDelivered()
         }
+        if let api { try? await PushCoordinator.shared.register(api:api,enabled:state.notificationsEnabled==true) }
         persist()
     }
 
@@ -1673,3 +1774,4 @@ final class ChatStore: ObservableObject {
         if let index = state.rooms.firstIndex(where: { $0.id == id }) { update(&state.rooms[index]); persist() }
     }
 }
+

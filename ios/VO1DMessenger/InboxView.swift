@@ -8,6 +8,8 @@ struct InboxView: View {
 
     private var rooms: [Room] {
         store.state.rooms.filter { room in
+            guard !store.extended.hiddenRooms.contains(room.id) else { return false }
+            if let folder=store.extended.folders.first(where: { $0.id==filter }), !folder.roomIDs.contains(room.id) { return false }
             let archiveMatch = filter == "Архив" ? room.archived : !room.archived
             let typeMatch: Bool
 
@@ -34,6 +36,8 @@ struct InboxView: View {
         }
         .sorted { a, b in
             if a.pinned != b.pinned { return a.pinned }
+            if store.preferences.sortOrder=="name" { return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending }
+            if store.preferences.sortOrder=="unread", a.unread != b.unread { return a.unread>b.unread }
             return (store.messages(a.id).last?.createdAt ?? a.createdAt) >
                    (store.messages(b.id).last?.createdAt ?? b.createdAt)
         }
@@ -49,6 +53,11 @@ struct InboxView: View {
                         statusStrip
                         searchBar
                         filters
+                        if !store.requestRooms.isEmpty {
+                            NavigationLink { MessageRequestsView() } label: {
+                                Label("Запросы на переписку · \(store.requestRooms.count)",systemImage:"person.badge.clock").panel()
+                            }.buttonStyle(.plain)
+                        }
 
                         if rooms.isEmpty {
                             emptyState
@@ -89,6 +98,13 @@ struct InboxView: View {
                                         .tint(.white)
                                     }
                                     .contextMenu {
+                                        Button("Скрыть с Face ID",systemImage:"eye.slash") { Task { await store.toggleHidden(room.id) } }
+                                        Menu("В папку") {
+                                            ForEach(store.extended.folders) { folder in
+                                                Button(folder.name) { store.folderToggle(folder.id,roomID:room.id) }
+                                            }
+                                        }
+
                                         Button(room.pinned ? "Открепить" : "Закрепить", systemImage: "pin") {
                                             store.updateRoom(room.id) { $0.pinned.toggle() }
                                         }
@@ -197,11 +213,11 @@ struct InboxView: View {
     private var filters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(["Все", "Личные", "Группы", "Архив"], id: \.self) { item in
+                ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы", "Архив"] + store.extended.folders.map(\.id), id: \.self) { item in
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { filter = item }
                     } label: {
-                        Text(item.uppercased())
+                        Text((store.extended.folders.first { $0.id==item }?.name ?? item).uppercased())
                             .font(.caption2.monospaced())
                             .tracking(1.5)
                             .padding(.horizontal, 16)
@@ -241,7 +257,7 @@ struct InboxView: View {
     private func roomRow(_ room: Room) -> some View {
         let last = store.messages(room.id).last
         return HStack(spacing: 14) {
-            Avatar(name: room.title, group: room.isGroup, size: 56)
+            Avatar(name: room.title, group: room.isGroup, size: store.preferences.compactRows ? 42 : 56)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 7) {
@@ -512,3 +528,4 @@ struct ComposeView: View {
         .presentationDragIndicator(.visible)
     }
 }
+

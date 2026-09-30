@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import uuid
 
 from aiohttp.test_utils import TestClient, TestServer
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -48,7 +49,7 @@ class RealtimeBlobTests(unittest.IsolatedAsyncioTestCase):
         os.environ.pop("VO1D_BLOB_DIR", None)
         self.temp.cleanup()
 
-    async def login(self):
+    async def login(self, full=False):
         private, card = identity()
         response = await self.client.post("/v1/register", json=card)
         self.assertEqual(response.status, 200)
@@ -68,7 +69,74 @@ class RealtimeBlobTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status, 200)
         session = await response.json()
-        return session["token"]
+        return (private, card, session["token"]) if full else session["token"]
+
+    async def test_range_resume_and_foreign_owner_delete(self):
+        token = await self.login()
+        other = await self.login()
+        ciphertext = os.urandom(4096)
+        response = await self.client.put('/v1/blob', data=ciphertext,
+            headers={'Authorization':'Bearer '+token,'Content-Type':'application/octet-stream'})
+        receipt = await response.json()
+        path = '/v1/blob/'+receipt['id']
+        response = await self.client.get(path, headers={'Authorization':'Bearer '+other,'Range':'bytes=1024-'})
+        self.assertEqual(response.status,206)
+        self.assertEqual(response.headers['Content-Range'],'bytes 1024-4095/4096')
+        self.assertEqual(await response.read(),ciphertext[1024:])
+        response = await self.client.delete(path,headers={'Authorization':'Bearer '+other})
+        self.assertEqual(response.status,403)
+        response = await self.client.get(path,headers={'Authorization':'Bearer '+token,'Range':'bytes=5000-'})
+        self.assertEqual(response.status,416)
+
+    async def test_call_routes_signed_offers_and_rejects_third_identity(self):
+        ap, ac, at = await self.login(full=True)
+        bp, bc, bt = await self.login(full=True)
+        _, cc, ct = await self.login(full=True)
+        a = await self.client.ws_connect('/v1/call/socket',headers={'Authorization':'Bearer '+at})
+        b = await self.client.ws_connect('/v1/call/socket',headers={'Authorization':'Bearer '+bt})
+        c = await self.client.ws_connect('/v1/call/socket',headers={'Authorization':'Bearer '+ct})
+        for ws in (a,b,c):
+            self.assertEqual((await ws.receive_json(timeout=2))['type'],'ready')
+        call = str(uuid.uuid4())
+        key = encode(os.urandom(32))
+        signed = f"VO1D-CALL-KEY-2\n{call}\n{ac['id']}\n{bc['id']}\n{key}".encode()
+        offer = {'type':'invite','to':bc['id'],'callID':call,'key':key,'keySignature':encode(ap.sign(signed))}
+        await a.send_json(offer)
+        received = await b.receive_json(timeout=2)
+        self.assertEqual(received['from'],ac['id'])
+        self.assertEqual(received['keySignature'],offer['keySignature'])
+        answer_key = encode(os.urandom(32))
+        answer_signature = encode(bp.sign(f"VO1D-CALL-KEY-2\n{call}\n{bc['id']}\n{ac['id']}\n{answer_key}".encode()))
+        await b.send_json({'type':'answer','to':ac['id'],'callID':call,'key':answer_key,'keySignature':answer_signature})
+        self.assertEqual((await a.receive_json(timeout=2))['key'],answer_key)
+        payload = encode(os.urandom(64))
+        await c.send_json({'type':'audio','to':bc['id'],'callID':call,'sequence':'1','payload':payload})
+        self.assertEqual((await c.receive_json(timeout=2))['code'],'call_mismatch')
+        await a.send_json({'type':'audio','to':bc['id'],'callID':call,'sequence':'1','payload':payload})
+        frame = await b.receive_json(timeout=2)
+        self.assertEqual(frame['payload'],payload)
+        self.assertEqual(frame['sequence'],'1')
+        self.assertEqual(frame['from'],ac['id'])
+        await a.send_json({'type':'end','to':bc['id'],'callID':call})
+        self.assertEqual((await b.receive_json(timeout=2))['type'],'end')
+        for ws in (a,b,c):
+            await ws.close()
+
+    async def test_untrusted_call_and_missing_key_are_rejected(self):
+        _, ac, at = await self.login(full=True)
+        _, bc, bt = await self.login(full=True)
+        response = await self.client.post('/v1/privacy',json={'discoverable':True,'inactivityDays':0,'trustedCalls':True},
+            headers={'Authorization':'Bearer '+bt})
+        self.assertEqual(response.status,200)
+        a = await self.client.ws_connect('/v1/call/socket',headers={'Authorization':'Bearer '+at})
+        await a.receive_json(timeout=2)
+        packet = {'type':'invite','to':bc['id'],'callID':str(uuid.uuid4())}
+        await a.send_json(packet)
+        self.assertEqual((await a.receive_json(timeout=2))['code'],'invalid_call_key')
+        packet.update(key=encode(os.urandom(32)),keySignature=encode(os.urandom(64)))
+        await a.send_json(packet)
+        self.assertEqual((await a.receive_json(timeout=2))['code'],'peer_unavailable')
+        await a.close()
 
     async def test_blob_roundtrip_and_owner_delete(self):
         token = await self.login()

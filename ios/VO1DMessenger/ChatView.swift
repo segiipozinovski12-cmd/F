@@ -5,8 +5,20 @@ import QuickLook
 
 struct ChatView: View {
     let roomID: String
+    var initialMessageID: String? = nil
     @EnvironmentObject var store: ChatStore
     @State private var text = ""
+    @State private var messageLimit = 80
+    @State private var authorFilter = ""
+    @State private var dateFilter = false
+    @State private var filterSheet = false
+    @State private var fromDate = Date().addingTimeInterval(-7*86400)
+    @State private var toDate = Date()
+    @State private var photoDraft: PhotoDraft?
+    @State private var reviewFile: FileReview?
+    @State private var detailsMessage: ChatMessage?
+    @State private var revealedMedia = Set<String>()
+    @State private var ocrStatus = ""
     @State private var search = ""
     @State private var reply: ChatMessage?
     @State private var editing: ChatMessage?
@@ -27,13 +39,18 @@ struct ChatView: View {
     @StateObject private var audio = VoiceRecorder()
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
     var messages: [ChatMessage] {
-        let all = store.messages(roomID, search: search)
-        guard let selectedTopic else { return all }
-        return all.filter { $0.topic == selectedTopic }
+        let all = store.messages(roomID,search:search).filter {
+            (authorFilter.isEmpty || $0.sender==authorFilter) &&
+            (!dateFilter || ($0.createdAt>=fromDate && $0.createdAt<=toDate.addingTimeInterval(86400))) &&
+            (selectedTopic==nil || $0.topic==selectedTopic)
+        }
+        return search.isEmpty && initialMessageID==nil ? Array(all.suffix(messageLimit)) : all
     }
     var body: some View {
         VStack(spacing: 0) {
-            if let room {
+            if store.extended.hiddenRooms.contains(roomID) && !store.revealedHiddenRooms {
+                Button("Открыть скрытый чат") { Task { await store.revealHidden() } }
+            } else if let room {
                 ScrollViewReader { proxy in
                     VStack(spacing: 0) {
                         if let pinned = store.pinnedMessages(roomID).last {
@@ -128,6 +145,9 @@ struct ChatView: View {
                                 .foregroundStyle(Theme.secondary)
                                 .padding(.vertical, 18)
 
+                                if search.isEmpty && store.messages(roomID).count>messageLimit {
+                                    Button("Загрузить ещё 80 сообщений") { messageLimit += 80 }
+                                }
                                 ForEach(messages) { message in
                                     bubble(message, group: room.isGroup).id(message.id)
                                 }
@@ -138,11 +158,12 @@ struct ChatView: View {
                         }
                         .scrollDismissesKeyboard(.interactively)
                         .onChange(of: messages.count) { _, _ in
+                            guard initialMessageID==nil && search.isEmpty else { return }
                             withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
                             store.markRead(roomID)
                         }
                         .onAppear {
-                            proxy.scrollTo("bottom", anchor: .bottom)
+                            proxy.scrollTo(initialMessageID ?? "bottom", anchor: initialMessageID==nil ? .bottom : .center)
                             store.markRead(roomID)
                         }
                     }
@@ -195,6 +216,15 @@ struct ChatView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Фильтр по автору и дате") { filterSheet=true }
+                        NavigationLink("Ссылки чата") { ChatLinksView(roomID:roomID) }
+                        NavigationLink("Настройки чата") { RoomToolsView(roomID:roomID) }
+                        Menu("Вставить шаблон") {
+                            ForEach(store.extended.snippets,id:\.self) { snippet in Button(String(snippet.prefix(40))) { text += (text.isEmpty ? "" : "\n")+snippet } }
+                        }
+                    } label: { Image(systemName:"ellipsis.circle") }
+
                     if room?.isGroup == false && !selectionMode && !store.isLocalUtilityRoom(roomID) {
                         Button {
                             store.startCall(roomID)
@@ -220,7 +250,27 @@ struct ChatView: View {
                 }
             }
             .searchable(text: $search, prompt: "Поиск в переписке")
+            .sheet(isPresented:$filterSheet) {
+                NavigationStack {
+                    Form {
+                        Picker("Автор",selection:$authorFilter) {
+                            Text("Все").tag("")
+                            ForEach(room?.members ?? []) { member in Text(store.name(member.id)).tag(member.id) }
+                        }
+                        Toggle("Ограничить даты",isOn:$dateFilter)
+                        DatePicker("С",selection:$fromDate,displayedComponents:.date)
+                        DatePicker("По",selection:$toDate,displayedComponents:.date)
+                        Button("Сбросить") { authorFilter=""; dateFilter=false; search="" }
+                        Button("Применить") { filterSheet=false }
+                    }.navigationTitle("Поиск сообщений")
+                }
+            }
             .sheet(isPresented: $info) { RoomInfoView(roomID: roomID) }
+            .sheet(item:$photoDraft) { draft in PhotoPrivacyEditor(draft:draft) { attachment in send(attachment) } }
+            .sheet(item:$reviewFile) { review in FileReviewView(review:review) { data,mime,name in
+                Task { await processFileData(data,mime:mime,name:name) }
+            } }
+            .sheet(item:$detailsMessage) { message in NavigationStack { MessageDetailsView(message:message) } }
             .sheet(item: $forwarding) { message in
                 ForwardPickerView(message: message, sourceRoomID: roomID)
             }
@@ -429,6 +479,204 @@ struct ChatView: View {
         let mine = message.sender == store.myID
         return HStack(alignment: .bottom) {
             if mine { Spacer(minLength: 42) }
+            messageContents(message,group:group,mine:mine).padding(13).foregroundStyle(mine ? Color.black : Color.white)
+                .background(mine ? Color(red: 0.88, green: 0.88, blue: 0.92) : Theme.panel, in: RoundedRectangle(cornerRadius: 21))
+                .overlay(alignment: mine ? .topLeading : .topTrailing) {
+                    if selectionMode {
+                        Button {
+                            if selectedIDs.contains(message.id) {
+                                selectedIDs.remove(message.id)
+                            } else {
+                                selectedIDs.insert(message.id)
+                            }
+                        } label: {
+                            Image(systemName: selectedIDs.contains(message.id) ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(mine ? .black : .white)
+                                .padding(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+                .onTapGesture {
+                    guard selectionMode else { return }
+                    if selectedIDs.contains(message.id) {
+                        selectedIDs.remove(message.id)
+                    } else {
+                        selectedIDs.insert(message.id)
+                    }
+                }
+                .simultaneousGesture(
+                    TapGesture(count: 2)
+                        .onEnded {
+                            guard !selectionMode else { return }
+                            perform { try store.action("reaction", message: message, value: "❤️") }
+                            Haptics.light()
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 25)
+                        .onEnded { value in
+                            guard !selectionMode,
+                                  value.translation.width > 65,
+                                  abs(value.translation.height) < 55 else { return }
+                            reply = message
+                            editing = nil
+                            Haptics.light()
+                        }
+                )
+                .contextMenu { messageActions(message,mine:mine) }
+            if !mine { Spacer(minLength: 42) }
+        }
+    }
+    @ViewBuilder
+    func messageActions(_ message: ChatMessage,mine: Bool) -> some View {
+
+                    Button(store.extended.bookmarks.contains(message.id) ? "Убрать закладку" : "В закладки",systemImage:"bookmark") { store.toggleBookmark(message.id) }
+                    Button("Статусы участников",systemImage:"checkmark.circle") { detailsMessage=message }
+                    Menu("Напомнить") {
+                        Button("Через час") { store.localReminder(message,seconds:3600) }
+                        Button("Завтра") { store.localReminder(message,seconds:86400) }
+                    }
+                    if message.state=="scheduled" || message.state=="queued" || message.state=="failed" {
+                        Button("Отменить отправку") { store.cancelMessage(message.id) }
+                        if message.state != "scheduled" { Button("Повторить отправку") { store.retryDelivery(message.id) } }
+                    }
+                    if let attachment=message.attachment, attachment.mime.hasPrefix("image/"), !attachment.data.isEmpty {
+                        Button("Найти текст на фото") {
+                            Task {
+                                do {
+                                    let recognized=try await Task.detached { try SafeContent.recognizeText(attachment.data) }.value
+                                    store.changeExtended { $0.ocrText[message.id]=recognized }
+                                    store.error=recognized.isEmpty ? "Текст не найден" : recognized
+                                } catch { store.error=error.localizedDescription }
+                            }
+                        }
+                    }
+                    Button("Выбрать", systemImage: "checkmark.circle") {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                            selectionMode = true
+                            selectedIDs.insert(message.id)
+                        }
+                    }
+                    Button("Ответить", systemImage: "arrowshape.turn.up.left") { reply = message; editing = nil }
+                    Button("Переслать", systemImage: "arrowshape.turn.up.right") {
+                        forwarding = message
+                    }
+                    Button(
+                        (room?.pinnedMessageIDs ?? []).contains(message.id) ? "Открепить" : "Закрепить",
+                        systemImage: "pin"
+                    ) {
+                        perform { try store.togglePinnedMessage(message) }
+                    }
+                    if !(message.editHistory ?? []).isEmpty {
+                        Button("История изменений", systemImage: "clock.arrow.circlepath") {
+                            historyMessage = message
+                        }
+                    }
+                    if mine, message.poll != nil, message.poll?.closed != true {
+                        Button("Закрыть опрос", systemImage: "lock.fill") {
+                            perform { try store.closePoll(messageID: message.id) }
+                        }
+                    }
+                    if !message.text.isEmpty {
+                        Button("Копировать", systemImage: "doc.on.doc") {
+                            SafeContent.copy(message.text,seconds:store.preferences.clipboardSeconds)
+                        }
+                    }
+                    Menu("Реакция") { ForEach(["❤️", "👍", "🔥", "😂", "👀"], id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
+                    if mine && message.call == nil {
+                        Button("Редактировать", systemImage: "pencil") { editing = message; reply = nil; text = message.text }
+                        Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
+                    }
+                
+    }
+
+    @ViewBuilder
+    func messageAttachment(_ message: ChatMessage,mine: Bool) -> some View {
+                if let attachment = message.attachment {
+                    if store.preferences.hideMedia && attachment.mime.hasPrefix("image/") && !revealedMedia.contains(message.id) {
+                        Button("Показать фото",systemImage:"eye") { revealedMedia.insert(message.id) }
+                            .padding(16)
+                    } else if attachment.blobID != nil {
+                        RemoteAttachmentCard(
+                            attachment: attachment,
+                            mine: mine
+                        ) { clear in
+                            do {
+                                preview = try MediaFiles.export(data: clear, name: attachment.name)
+                            } catch {
+                                store.error = error.localizedDescription
+                            }
+                        }
+                    } else if attachment.mime.hasPrefix("image/"), let image = UIImage(data: attachment.data) {
+                        if let seconds = attachment.viewSeconds, seconds > 0 {
+                            EphemeralPhotoView(
+                                messageID: message.id,
+                                mine: mine,
+                                image: image,
+                                seconds: seconds
+                            )
+                        } else {
+                            Button {
+                                do { preview = try MediaFiles.export(attachment) }
+                                catch { store.error = error.localizedDescription }
+                            } label: {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxHeight: 260)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else if attachment.mime.hasPrefix("audio/") {
+                        VoiceMessagePlayer(
+                            attachment: attachment,
+                            tint: mine ? .black : .white
+                        )
+                    } else {
+                        Button {
+                            do { preview = try MediaFiles.export(attachment) }
+                            catch { store.error = error.localizedDescription }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "doc.fill")
+                                    .font(.title)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(attachment.name)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(2)
+                                    Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
+                                        .font(.caption2)
+                                }
+                            }
+                            .padding(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+    }
+
+    @ViewBuilder
+    func messageText(_ message: ChatMessage,mine: Bool) -> some View {
+                if let poll = message.poll {
+                    PollMessageView(message: message, poll: poll, mine: mine)
+                } else if !message.text.isEmpty {
+                    Text(AttributedString(message.text))
+                        .font(.system(size: store.extended.roomFontSize[roomID] ?? store.preferences.fontSize)).textSelection(.enabled)
+                    if !SafeContent.links(in:message.text).isEmpty {
+                        ForEach(SafeContent.links(in:message.text),id:\.absoluteString) { url in
+                            Link(destination:url) { Label(url.host ?? "Ссылка",systemImage:"link").font(.caption).lineLimit(1) }
+                            if store.preferences.linkPreviews { Text(url.path.isEmpty ? "/" : url.path).font(.caption2).lineLimit(2) }
+                        }
+                    }
+                }
+
+    }
+
+    func messageContents(_ message: ChatMessage,group: Bool,mine: Bool) -> some View {
             VStack(alignment: .leading, spacing: 8) {
                 if let call = message.call {
                     HStack(spacing: 10) {
@@ -496,72 +744,8 @@ struct ChatView: View {
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                     )
                 }
-                if let attachment = message.attachment {
-                    if attachment.blobID != nil {
-                        RemoteAttachmentCard(
-                            attachment: attachment,
-                            mine: mine
-                        ) { clear in
-                            do {
-                                preview = try MediaFiles.export(data: clear, name: attachment.name)
-                            } catch {
-                                store.error = error.localizedDescription
-                            }
-                        }
-                    } else if attachment.mime.hasPrefix("image/"), let image = UIImage(data: attachment.data) {
-                        if let seconds = attachment.viewSeconds, seconds > 0 {
-                            EphemeralPhotoView(
-                                messageID: message.id,
-                                mine: mine,
-                                image: image,
-                                seconds: seconds
-                            )
-                        } else {
-                            Button {
-                                do { preview = try MediaFiles.export(attachment) }
-                                catch { store.error = error.localizedDescription }
-                            } label: {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(maxHeight: 260)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } else if attachment.mime.hasPrefix("audio/") {
-                        VoiceMessagePlayer(
-                            attachment: attachment,
-                            tint: mine ? .black : .white
-                        )
-                    } else {
-                        Button {
-                            do { preview = try MediaFiles.export(attachment) }
-                            catch { store.error = error.localizedDescription }
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "doc.fill")
-                                    .font(.title)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(attachment.name)
-                                        .font(.subheadline.weight(.medium))
-                                        .lineLimit(2)
-                                    Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
-                                        .font(.caption2)
-                                }
-                            }
-                            .padding(6)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                if let poll = message.poll {
-                    PollMessageView(message: message, poll: poll, mine: mine)
-                } else if !message.text.isEmpty {
-                    Text(message.text)
-                        .font(.system(size: 16))
-                        .textSelection(.enabled)
-                }
+                messageAttachment(message,mine:mine)
+                messageText(message,mine:mine)
                 HStack(spacing: 5) {
                     if message.edited { Text("изменено") }
                     if message.silent == true { Image(systemName: "bell.slash.fill") }
@@ -580,96 +764,7 @@ struct ChatView: View {
                 if !message.reactions.isEmpty {
                     Text(message.reactions.values.sorted().joined(separator: " ")).font(.subheadline).padding(.horizontal, 8).padding(.vertical, 4).background(.black.opacity(0.08), in: Capsule())
                 }
-            }.padding(13).foregroundStyle(mine ? Color.black : Color.white)
-                .background(mine ? Color(red: 0.88, green: 0.88, blue: 0.92) : Theme.panel, in: RoundedRectangle(cornerRadius: 21))
-                .overlay(alignment: mine ? .topLeading : .topTrailing) {
-                    if selectionMode {
-                        Button {
-                            if selectedIDs.contains(message.id) {
-                                selectedIDs.remove(message.id)
-                            } else {
-                                selectedIDs.insert(message.id)
-                            }
-                        } label: {
-                            Image(systemName: selectedIDs.contains(message.id) ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(mine ? .black : .white)
-                                .padding(6)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
-                .onTapGesture {
-                    guard selectionMode else { return }
-                    if selectedIDs.contains(message.id) {
-                        selectedIDs.remove(message.id)
-                    } else {
-                        selectedIDs.insert(message.id)
-                    }
-                }
-                .simultaneousGesture(
-                    TapGesture(count: 2)
-                        .onEnded {
-                            guard !selectionMode else { return }
-                            perform { try store.action("reaction", message: message, value: "❤️") }
-                            Haptics.light()
-                        }
-                )
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 25)
-                        .onEnded { value in
-                            guard !selectionMode,
-                                  value.translation.width > 65,
-                                  abs(value.translation.height) < 55 else { return }
-                            reply = message
-                            editing = nil
-                            Haptics.light()
-                        }
-                )
-                .contextMenu {
-                    Button("Выбрать", systemImage: "checkmark.circle") {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
-                            selectionMode = true
-                            selectedIDs.insert(message.id)
-                        }
-                    }
-                    Button("Ответить", systemImage: "arrowshape.turn.up.left") { reply = message; editing = nil }
-                    Button("Переслать", systemImage: "arrowshape.turn.up.right") {
-                        forwarding = message
-                    }
-                    Button(
-                        (room?.pinnedMessageIDs ?? []).contains(message.id) ? "Открепить" : "Закрепить",
-                        systemImage: "pin"
-                    ) {
-                        perform { try store.togglePinnedMessage(message) }
-                    }
-                    if !(message.editHistory ?? []).isEmpty {
-                        Button("История изменений", systemImage: "clock.arrow.circlepath") {
-                            historyMessage = message
-                        }
-                    }
-                    if mine, message.poll != nil, message.poll?.closed != true {
-                        Button("Закрыть опрос", systemImage: "lock.fill") {
-                            perform { try store.closePoll(messageID: message.id) }
-                        }
-                    }
-                    if !message.text.isEmpty {
-                        Button("Копировать", systemImage: "doc.on.doc") {
-                            UIPasteboard.general.setItems(
-                                [["public.utf8-plain-text": message.text]],
-                                options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)]
-                            )
-                        }
-                    }
-                    Menu("Реакция") { ForEach(["❤️", "👍", "🔥", "😂", "👀"], id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
-                    if mine && message.call == nil {
-                        Button("Редактировать", systemImage: "pencil") { editing = message; reply = nil; text = message.text }
-                        Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
-                    }
-                }
-            if !mine { Spacer(minLength: 42) }
-        }
+            }
     }
     func callTitle(_ call: CallMessageData) -> String {
         switch call.status {
@@ -719,6 +814,21 @@ struct ChatView: View {
             let mime = values.contentType?.preferredMIMEType ?? "application/octet-stream"
             let name = String(url.lastPathComponent.prefix(180))
 
+            let warnings=SafeContent.metadataWarnings(data:data,mime:mime)
+            if !warnings.isEmpty { reviewFile=FileReview(data:data,mime:mime,name:name,warnings:warnings); return }
+            await processFileData(data,mime:mime,name:name)
+        } catch {
+            Haptics.warning()
+            store.error = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    func processFileData(_ data: Data,mime: String,name: String) async {
+        do {
+            guard data.count<=store.preferences.maxUploadMB*1024*1024 else { throw MessengerError.invalid("Файл превышает выбранный лимит") }
+            if data.count>3*1024*1024 && store.preferences.wifiOnlyUploads && !NetworkState.shared.wifi { throw MessengerError.invalid("Для загрузки включи Wi-Fi или отключи ограничение в приватности") }
+            let name=store.preferences.anonymizeFilenames ? "File." + (URL(fileURLWithPath:name).pathExtension.isEmpty ? "bin" : URL(fileURLWithPath:name).pathExtension) : name
             if data.count <= 3 * 1024 * 1024 {
                 send(Attachment(name: name, mime: mime, data: data))
                 return
@@ -747,10 +857,7 @@ struct ChatView: View {
             )
             send(attachment)
             Haptics.success()
-        } catch {
-            Haptics.warning()
-            store.error = error.localizedDescription
-        }
+        } catch { store.error=error.localizedDescription }
     }
 
     @MainActor
@@ -772,13 +879,7 @@ struct ChatView: View {
                 throw MessengerError.invalid("Фото получилось слишком большим")
             }
 
-            send(Attachment(
-                name: "Photo.jpg",
-                mime: "image/jpeg",
-                data: jpeg,
-                viewSeconds: viewSeconds,
-                voiceEffect: nil
-            ))
+            photoDraft=PhotoDraft(data:jpeg,seconds:viewSeconds)
         } catch {
             store.error = error.localizedDescription
         }
@@ -834,7 +935,7 @@ private struct PollMessageView: View {
     @EnvironmentObject private var store: ChatStore
 
     private var totalVotes: Int {
-        poll.options.reduce(0) { $0 + $1.voterIDs.count }
+        poll.privateVotes==true ? (poll.privateCounts ?? [:]).values.reduce(0,+) : poll.options.reduce(0) { $0 + $1.voterIDs.count }
     }
 
     var body: some View {
@@ -857,8 +958,9 @@ private struct PollMessageView: View {
                 .font(.system(size: 16, weight: .bold))
 
             ForEach(poll.options) { option in
-                let selected = option.voterIDs.contains(store.myID)
-                let ratio = totalVotes > 0 ? Double(option.voterIDs.count) / Double(totalVotes) : 0
+                let selected = poll.privateVotes==true ? store.extended.privatePollSelections[message.id]==option.id : option.voterIDs.contains(store.myID)
+                let count=poll.privateVotes==true ? poll.privateCounts?[option.id] ?? 0 : option.voterIDs.count
+                let ratio = totalVotes > 0 ? Double(count) / Double(totalVotes) : 0
 
                 Button {
                     guard !poll.closed else { return }
@@ -875,7 +977,7 @@ private struct PollMessageView: View {
                             Text(option.text)
                                 .lineLimit(2)
                             Spacer()
-                            Text("\(option.voterIDs.count)")
+                            Text("\(count)")
                                 .font(.caption.monospacedDigit())
                         }
 
@@ -914,6 +1016,7 @@ private struct PollComposerView: View {
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
     @State private var question = ""
+    @State private var privateVotes = true
     @State private var options = ["", ""]
 
     var body: some View {
@@ -926,6 +1029,9 @@ private struct PollComposerView: View {
                         Text("Новый опрос")
                             .font(.system(size: 32, weight: .black, design: .rounded))
 
+                        Toggle("Скрыть голоса от участников",isOn:$privateVotes)
+                        Text("Создатель опроса получает индивидуальные голоса; остальные участники получают только итог. Это не анонимность от создателя или защита от анализа времени голосования.")
+                            .font(.caption).foregroundStyle(Theme.secondary)
                         TextField("Вопрос", text: $question, axis: .vertical)
                             .lineLimit(2...5)
                             .voidField()
@@ -963,7 +1069,8 @@ private struct PollComposerView: View {
                                     roomID: roomID,
                                     question: question,
                                     options: options,
-                                    topic: topic
+                                    topic: topic,
+                                    privateVotes: privateVotes
                                 )
                                 Haptics.success()
                                 dismiss()
@@ -1053,7 +1160,7 @@ private struct ForwardPickerView: View {
     private var rooms: [Room] {
         store.state.rooms
             .filter {
-                !$0.archived &&
+                !$0.archived && !store.extended.hiddenRooms.contains($0.id) &&
                 ($0.title.localizedCaseInsensitiveContains(search) || search.isEmpty)
             }
             .sorted { a, b in
@@ -1126,21 +1233,26 @@ private struct RemoteAttachmentCard: View {
 
     @EnvironmentObject private var store: ChatStore
     @State private var downloading = false
+    @State private var downloadTask: Task<Void,Never>?
 
     var body: some View {
         Button {
-            guard !downloading else { return }
+            if downloading { downloadTask?.cancel(); return }
             downloading = true
-            Task {
+            downloadTask = Task {
                 do {
                     let clear = try await store.downloadRemoteAttachment(attachment)
+                    try Task.checkCancellation()
                     onOpen(clear)
                     Haptics.success()
                 } catch {
-                    Haptics.warning()
-                    store.error = error.localizedDescription
+                    if !Task.isCancelled {
+                        Haptics.warning()
+                        store.error = error.localizedDescription
+                    }
                 }
                 downloading = false
+                downloadTask = nil
             }
         } label: {
             VStack(alignment: .leading, spacing: 10) {
@@ -1186,7 +1298,7 @@ private struct RemoteAttachmentCard: View {
 
                     Spacer()
 
-                    Image(systemName: downloading ? "hourglass" : "arrow.down.circle.fill")
+                    Image(systemName: downloading ? "xmark.circle.fill" : "arrow.down.circle.fill")
                         .font(.title3)
                         .opacity(0.72)
                 }
@@ -1200,7 +1312,8 @@ private struct RemoteAttachmentCard: View {
             .padding(4)
         }
         .buttonStyle(.plain)
-        .disabled(downloading)
+        .accessibilityLabel(downloading ? "Отменить загрузку" : "Загрузить файл")
+        .onDisappear { downloadTask?.cancel() }
     }
 
     private var icon: String {
@@ -1214,6 +1327,7 @@ private struct RemoteAttachmentCard: View {
 
 struct RoomInfoView: View {
     let roomID: String
+    @State private var newTopic = ""
     @EnvironmentObject var store: ChatStore
     @Environment(\.dismiss) var dismiss
     @State private var clearing = false
@@ -1264,6 +1378,7 @@ struct RoomInfoView: View {
                         }
                     }
 
+                    Section("Инструменты") { NavigationLink("Приватность, папки и вид") { RoomToolsView(roomID:roomID) } }
                     Section("Переписка") {
                         Toggle("Закрепить", isOn: Binding(get: { room.pinned }, set: { value in store.updateRoom(roomID) { $0.pinned = value } }))
                         Toggle("Архивировать", isOn: Binding(get: { room.archived }, set: { value in store.updateRoom(roomID) { $0.archived = value } }))

@@ -1,45 +1,11 @@
-# Railway deployment
+# Railway relay 1.3
 
-VO1D Relay is ready to run as a Railway service.
+1. Select repository `segiipozinovski12-cmd/F`, branch `codex/privacy-expansion`.
+2. Set Root Directory to `/server`; use its Dockerfile.
+3. Mount a persistent volume at `/data`, set healthcheck `/health`, generate an HTTPS domain.
+4. The entrypoint uses injected `PORT`, prepares the data directory and starts aiohttp as UID 10001. There is one process; obsolete Gunicorn worker/thread variables have no effect.
+5. Set the HTTPS domain in the client. Existing production deployments are not changed merely by creating this branch.
 
-## Service settings
+Defaults: `VO1D_DB=/data/relay.sqlite3`, blobs `/data/blobs`, maximum seven-day blob retention. `VO1D_BLOB_RETENTION` can shorten it in seconds. Keep `/data` persistent across deployments.
 
-1. Create a Railway project from this GitHub repository.
-2. Use branch `codex/vo1d-monochrome-v2`.
-3. Set **Root Directory** to `/server`.
-4. Railway will detect `server/Dockerfile`.
-5. Add a persistent Volume mounted at `/data`.
-6. Set the Healthcheck Path to `/health`.
-7. Under Networking choose **Generate Domain**.
-
-No fixed port is required: the container listens on Railway's injected `PORT`.
-
-## Runtime variables
-
-Optional:
-
-- `VO1D_DB=/data/relay.sqlite3` (already the image default)
-- `WEB_CONCURRENCY=2`
-- `GUNICORN_THREADS=4`
-
-The entrypoint starts as root only long enough to make the mounted `/data`
-directory writable, then runs Gunicorn as the unprivileged `relay` user.
-
-## Connect the iOS app
-
-Once Railway provides a public HTTPS domain, use:
-
-`https://<your-railway-domain>`
-
-in **Settings → RELAY**.
-
-Check:
-
-`https://<your-railway-domain>/health`
-
-It should return JSON containing `"status":"ok"`.
-
-## Important
-
-The SQLite database must live on the Railway volume. Without the `/data`
-volume, identities and queued messages can disappear after a redeploy.
+APNs is optional. Configure `VO1D_APNS_KEY_ID`, `VO1D_APNS_TEAM_ID`, `VO1D_APNS_TOPIC` and `VO1D_APNS_KEY_PATH` pointing to a securely provisioned, readable `.p8` file. Do not commit provider keys or bake them into a public image. See `../docs/DEPLOYMENT.md` for client entitlements and physical testing. No Apple credentials or paid infrastructure are provisioned by this change.

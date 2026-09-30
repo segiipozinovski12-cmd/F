@@ -36,6 +36,26 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         UNUserNotificationCenter.current().add(request)
     }
 
+    func scheduleReminder(_ reminder: LocalReminder) {
+        let content=UNMutableNotificationContent()
+        content.title="VO1D"; content.body="Напоминание о сообщении"; content.sound = .default
+        content.userInfo=["roomID":reminder.roomID]
+        let trigger=UNTimeIntervalNotificationTrigger(timeInterval:max(1,reminder.at.timeIntervalSinceNow),repeats:false)
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier:reminder.id,content:content,trigger:trigger))
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void) {
+        let roomID=response.notification.request.content.userInfo["roomID"] as? String
+        Task { @MainActor in PushCoordinator.shared.openRoom?(roomID) }
+        completionHandler()
+    }
+
+    func clearAll() {
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        clearDelivered()
+    }
+
     func clearDelivered() {
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }
@@ -48,3 +68,4 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         completionHandler([.banner, .sound])
     }
 }
+

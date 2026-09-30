@@ -15,19 +15,21 @@ import time
 from pathlib import Path
 from aiohttp import WSMsgType, web
 
+from push import PushService
 from app import APIError, ID, MAX_BODY, UUID, Relay
 
 CALL_MAX_AUDIO = 96 * 1024
 CALL_MAX_TEXT = 140 * 1024
 BLOB_MAX_BYTES = 50 * 1024 * 1024 + 64
 BLOB_OWNER_QUOTA = 500 * 1024 * 1024
-BLOB_RETENTION = 30 * 86400
+BLOB_RETENTION = max(60,min(7*86400,int(os.environ.get("VO1D_BLOB_RETENTION",str(7*86400)))))
 BLOB_ID = re.compile(r"^[A-Za-z0-9_-]{40,64}$")
 
 
 class RealtimeGateway:
     def __init__(self):
         self.relay = Relay()
+        self.push = PushService(self.relay)
         self.clients = {}
         self.calls = {}
         self.lock = asyncio.Lock()
@@ -74,7 +76,7 @@ class RealtimeGateway:
         if include_orphans:
             try:
                 for item in self.blob_dir.iterdir():
-                    if item.is_file() and item.name not in live:
+                    if item.is_file() and item.name not in live and (".tmp-" not in item.name or time.time()-item.stat().st_mtime>3600):
                         item.unlink(missing_ok=True)
             except OSError:
                 pass
@@ -226,6 +228,12 @@ class RealtimeGateway:
                 raise APIError(400, "JSON object required")
             result = self.relay.dispatch(self._env(request), body)
             status = 200
+            if request.method == "POST" and request.path == "/v1/envelopes":
+                target=body.get("recipient")
+                with self.relay.db() as db:
+                    stored=db.execute("SELECT 1 FROM envelopes WHERE id=? AND recipient=?",(body.get("id"),target)).fetchone()
+                if stored:
+                    await self.push.send(target)
             if request.method == "DELETE" and request.path == "/v1/account":
                 self._cleanup_blobs(include_orphans=True)
         except APIError as exc:
@@ -292,6 +300,9 @@ class RealtimeGateway:
             await old.close(code=4001, message=b"replaced")
 
         await ws.send_json({"type": "ready"})
+        for call_id, route in list(self.calls.items()):
+            if route["b"] == user and not route["accepted"]:
+                await ws.send_json({"type":"invite","from":route["a"],"callID":call_id,"key":route["key"],"keySignature":route["keySignature"]})
 
         try:
             async for message in ws:
@@ -327,23 +338,43 @@ class RealtimeGateway:
                     await self._send_error(ws, "invalid_call")
                     continue
 
+                if kind in ("invite","answer"):
+                    key,signature=packet.get("key"),packet.get("keySignature")
+                    try:
+                        if not isinstance(key,str) or not isinstance(signature,str) or len(base64.b64decode(key,validate=True))!=32 or len(base64.b64decode(signature,validate=True))!=64:
+                            raise ValueError()
+                    except (ValueError,TypeError):
+                        await self._send_error(ws,"invalid_call_key")
+                        continue
                 if kind == "invite":
+                    try:
+                        self.relay.rate("call-invite:"+user,12)
+                    except APIError:
+                        await self._send_error(ws,"call_rate_limit")
+                        continue
                     with self.relay.db() as db:
                         known = db.execute("SELECT 1 FROM identities WHERE id=?", (target,)).fetchone()
                         blocked = db.execute(
                             "SELECT 1 FROM blocks WHERE owner=? AND peer=?",
                             (target, user),
                         ).fetchone()
+                        settings=db.execute("SELECT trusted_calls FROM privacy WHERE identity=?",(target,)).fetchone()
+                        trusted=db.execute("SELECT 1 FROM trusted WHERE owner=? AND peer=?",(target,user)).fetchone()
+                        if settings and settings[0] and not trusted:
+                            blocked=True
                     if not known:
                         await self._send_error(ws, "unknown_peer")
                         continue
                     async with self.lock:
                         peer_ws = self.clients.get(target)
+                        if call_id in self.calls:
+                            await self._send_error(ws,"call_id_in_use")
+                            continue
                         busy = self._busy(user) or self._busy(target)
                         if peer_ws is None or peer_ws.closed:
                             peer_ws = None
-                        if not busy and not blocked and peer_ws is not None:
-                            self.calls[call_id] = {"a": user, "b": target, "accepted": False}
+                        if not busy and not blocked:
+                            self.calls[call_id] = {"a": user, "b": target, "accepted": False,"created":time.monotonic(),"key":key,"keySignature":signature}
                     if blocked:
                         await self._send_error(ws, "peer_unavailable")
                         continue
@@ -351,9 +382,13 @@ class RealtimeGateway:
                         await self._send_error(ws, "peer_busy")
                         continue
                     if peer_ws is None:
-                        await self._send_error(ws, "peer_offline")
+                        delivered=await self.push.send(target,"voip",{"id":call_id,"from":user})
+                        if not delivered:
+                            async with self.lock:
+                                self.calls.pop(call_id,None)
+                            await self._send_error(ws,"peer_offline")
                         continue
-                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id})
+                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature})
                     continue
 
                 async with self.lock:
@@ -373,11 +408,14 @@ class RealtimeGateway:
                     async with self.lock:
                         if call_id in self.calls:
                             self.calls[call_id]["accepted"] = True
-                    await self._forward(peer, {"type": "answer", "from": user, "callID": call_id})
+                    await self._forward(peer, {"type": "answer", "from": user, "callID": call_id,"key":key,"keySignature":signature})
                     continue
 
                 if kind == "audio":
                     if not route["accepted"]:
+                        continue
+                    sequence=packet.get("sequence","")
+                    if not isinstance(sequence,str) or not sequence.isdigit() or len(sequence)>20:
                         continue
                     payload = packet.get("payload")
                     if not isinstance(payload, str):
@@ -395,6 +433,7 @@ class RealtimeGateway:
                             "from": user,
                             "callID": call_id,
                             "payload": payload,
+                            "sequence":sequence,
                         },
                     )
                     continue
@@ -434,6 +473,27 @@ def create_app():
     app.router.add_get("/v1/blob/{blob_id}", gateway.blob_download)
     app.router.add_delete("/v1/blob/{blob_id}", gateway.blob_delete)
     app.router.add_route("*", "/{tail:.*}", gateway.http)
+    async def maintenance(app):
+        async def loop():
+            while True:
+                await asyncio.sleep(30)
+                with gateway.relay.db() as db:
+                    gateway.relay.clean(db)
+                gateway._cleanup_blobs(include_orphans=True)
+                for call_id,route in list(gateway.calls.items()):
+                    if not route["accepted"] and time.monotonic()-route.get("created",0)>60:
+                        gateway.calls.pop(call_id,None)
+                        for user in (route["a"],route["b"]):
+                            await gateway._forward(user,{"type":"end","from":gateway._peer_for(route,user),"callID":call_id,"reason":"timeout"})
+        task=asyncio.create_task(loop())
+        yield
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await gateway.push.close()
+    app.cleanup_ctx.append(maintenance)
     return app
 
 
@@ -446,3 +506,4 @@ if __name__ == "__main__":
         access_log=None,
         print=lambda *args, **kwargs: None,
     )
+
