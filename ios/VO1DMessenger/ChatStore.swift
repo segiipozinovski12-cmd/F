@@ -103,8 +103,9 @@ final class ChatStore: ObservableObject {
             try await prepareNetworkRoute()
             guard expected == generation else { return }
             let client = try APIClient(server: server, identity: identity, privacy: preferences)
-            _ = try await client.publicWorkBits()
             try await client.authenticate()
+            guard expected == generation else { return }
+            _ = try await client.publicWorkBits()
             guard expected == generation else { return }
             try await BackgroundCalls.prepare(self, api: client)
             guard expected == generation else { return }
@@ -143,8 +144,9 @@ final class ChatStore: ObservableObject {
             try await prepareNetworkRoute()
             guard expected == generation else { return }
             let client = try APIClient(server: server, identity: identity, privacy: preferences)
-            _ = try await client.publicWorkBits()
             try await client.authenticate()
+            guard expected == generation else { return }
+            _ = try await client.publicWorkBits()
             let publicCode = try await client.ensurePublicCode()
             guard expected == generation else { return }
             api = client
