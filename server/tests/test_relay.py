@@ -120,10 +120,14 @@ class RelayTests(unittest.TestCase):
         token = self.login(self.alice,card)
         self.assertEqual(self.request('/v1/inbox',token=token)[0],200)
 
-    def test_valid_signature_cannot_replace_registered_agreement_key(self):
+    def test_valid_signing_key_can_rotate_registered_agreement_key(self):
         card = dict(self.alice_card); card['agreementKey'] = self.bob_card['agreementKey']
         card['binding'] = encode(self.alice.sign(card_bytes(card)))
-        self.assertEqual(self.request('/v1/register','POST',card)[0],409)
+        self.assertEqual(self.request('/v1/register','POST',card)[0],200)
+        token = self.login(self.alice,card)
+        status, stored = self.request('/v1/identity/'+card['id'],token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(stored['agreementKey'],card['agreementKey'])
 
     def test_auth_replay_is_rejected(self):
         _, challenge = self.request('/v1/challenge', 'POST', {'id':self.alice_card['id']})
