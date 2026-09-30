@@ -187,11 +187,21 @@ class Relay:
             if method == 'POST' and path == '/v1/register':
                 card = verify_card(body)
                 old = db.execute('SELECT card FROM identities WHERE id=?', (card['id'],)).fetchone()
+                encoded_card = json.dumps(card)
                 if old:
                     previous = json.loads(old[0])
-                    if any(b64(previous[key],32) != b64(card[key],32) for key in ('signingKey','agreementKey')):
-                        raise APIError(409, 'Identity already bound to different keys')
-                db.execute('INSERT OR IGNORE INTO identities VALUES (?,?)', (card['id'], json.dumps(card)))
+                    # The identity ID is derived from the signing key. A valid new card
+                    # with the same signing key proves continuity, so an agreement-key
+                    # rotation from old prerelease clients can be recovered safely.
+                    if b64(previous['signingKey'],32) != b64(card['signingKey'],32):
+                        raise APIError(409, 'Identity already bound to different signing key')
+                    if b64(previous['agreementKey'],32) != b64(card['agreementKey'],32):
+                        db.execute('UPDATE identities SET card=? WHERE id=?', (encoded_card, card['id']))
+                        # Signal prekeys are bound to the account identity and must be
+                        # republished after the card's agreement key changes.
+                        prekeys.erase(db, card['id'])
+                else:
+                    db.execute('INSERT INTO identities VALUES (?,?)', (card['id'], encoded_card))
                 db.execute('INSERT OR IGNORE INTO privacy(identity,last_active) VALUES (?,?)',(card['id'],now))
                 return {'ok': True}
             if method == 'POST' and path == '/v1/challenge':
