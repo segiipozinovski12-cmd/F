@@ -12,28 +12,97 @@ enum Theme {
 struct VoidBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drift = false
+    @State private var scan = false
+
     var body: some View {
-        ZStack {
-            Color.black
-            RadialGradient(colors: [.white.opacity(0.085), .clear], center: drift ? .topTrailing : .bottomLeading, startRadius: 10, endRadius: 430)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 8).repeatForever(autoreverses: true), value: drift)
-            Canvas { context, size in
-                let spacing: CGFloat = 32
-                var path = Path()
-                var x: CGFloat = 0
-                while x < size.width {
-                    path.move(to: CGPoint(x: x, y: 0)); path.addLine(to: CGPoint(x: x, y: size.height)); x += spacing
+        GeometryReader { proxy in
+            ZStack {
+                Color.black
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [.white.opacity(0.11), .white.opacity(0.025), .clear],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 220
+                        )
+                    )
+                    .frame(width: 440, height: 440)
+                    .blur(radius: 22)
+                    .offset(
+                        x: drift ? proxy.size.width * 0.34 : -proxy.size.width * 0.28,
+                        y: drift ? -proxy.size.height * 0.20 : proxy.size.height * 0.26
+                    )
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [.white.opacity(0.065), .clear],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 180
+                        )
+                    )
+                    .frame(width: 360, height: 360)
+                    .blur(radius: 38)
+                    .offset(
+                        x: drift ? -proxy.size.width * 0.38 : proxy.size.width * 0.38,
+                        y: drift ? proxy.size.height * 0.34 : -proxy.size.height * 0.24
+                    )
+
+                Canvas { context, size in
+                    let spacing: CGFloat = 30
+                    var path = Path()
+                    var x: CGFloat = 0
+                    while x < size.width {
+                        path.move(to: CGPoint(x: x, y: 0))
+                        path.addLine(to: CGPoint(x: x, y: size.height))
+                        x += spacing
+                    }
+                    var y: CGFloat = 0
+                    while y < size.height {
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addLine(to: CGPoint(x: size.width, y: y))
+                        y += spacing
+                    }
+                    context.stroke(path, with: .color(.white.opacity(0.024)), lineWidth: 0.5)
                 }
-                var y: CGFloat = 0
-                while y < size.height {
-                    path.move(to: CGPoint(x: 0, y: y)); path.addLine(to: CGPoint(x: size.width, y: y)); y += spacing
-                }
-                context.stroke(path, with: .color(.white.opacity(0.025)), lineWidth: 0.5)
+                .mask(
+                    RadialGradient(
+                        colors: [.white, .white.opacity(0.5), .clear],
+                        center: .center,
+                        startRadius: 20,
+                        endRadius: max(proxy.size.width, proxy.size.height) * 0.75
+                    )
+                )
+
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.clear, .white.opacity(0.045), .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(height: 150)
+                    .blur(radius: 18)
+                    .offset(y: scan ? proxy.size.height * 0.62 : -proxy.size.height * 0.62)
             }
-            .mask(LinearGradient(colors: [.clear, .white, .clear], startPoint: .top, endPoint: .bottom))
+            .animation(
+                reduceMotion ? nil : .easeInOut(duration: 8.5).repeatForever(autoreverses: true),
+                value: drift
+            )
+            .animation(
+                reduceMotion ? nil : .linear(duration: 7.0).repeatForever(autoreverses: false),
+                value: scan
+            )
         }
         .ignoresSafeArea()
-        .onAppear { drift = true }
+        .onAppear {
+            drift = true
+            scan = true
+        }
     }
 }
 
@@ -129,6 +198,7 @@ struct PrimaryButton: ButtonStyle {
             .allowsTightening(true)
             .foregroundStyle(.black)
             .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
             .padding(.vertical, 17)
             .background(.white.opacity(configuration.isPressed ? 0.72 : 1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .scaleEffect(configuration.isPressed ? 0.975 : 1)
@@ -145,6 +215,7 @@ struct GhostButton: ButtonStyle {
             .allowsTightening(true)
             .foregroundStyle(.white.opacity(configuration.isPressed ? 0.56 : 0.92))
             .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
             .padding(.vertical, 15)
             .background(.white.opacity(configuration.isPressed ? 0.035 : 0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.1)))
@@ -157,7 +228,18 @@ struct Panel: ViewModifier {
             .padding(18)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.085), lineWidth: 1))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [.white.opacity(0.17), .white.opacity(0.035), .white.opacity(0.09)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            }
+            .shadow(color: .black.opacity(0.26), radius: 18, y: 10)
     }
 }
 
@@ -209,26 +291,55 @@ struct SplashView: View {
 struct WelcomeView: View {
     @EnvironmentObject var store: ChatStore
     @State private var name = ""
-    @State private var server = ""
-    @State private var advanced = false
+    @State private var appeared = false
+
     var body: some View {
         ZStack {
             VoidBackground()
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 26) {
                     HStack {
                         Wordmark(compact: true)
                         Spacer()
-                        Text("E2EE").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)
-                    }.padding(.top, 20)
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 6, height: 6)
+                                .scaleEffect(appeared ? 1 : 0.55)
+                            Text("PRODUCTION")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .tracking(1.5)
+                        }
+                        .foregroundStyle(Theme.secondary)
+                    }
+                    .padding(.top, 18)
 
-                    HStack { Spacer(); BrandMark(size: 154).padding(.vertical, 18); Spacer() }
+                    ZStack {
+                        Circle()
+                            .stroke(.white.opacity(0.055), lineWidth: 1)
+                            .frame(width: 196, height: 196)
+                            .scaleEffect(appeared ? 1.12 : 0.82)
+                            .opacity(appeared ? 0 : 0.75)
 
-                    VStack(alignment: .leading, spacing: 12) {
+                        Circle()
+                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                            .frame(width: 174, height: 174)
+                            .rotationEffect(.degrees(appeared ? 18 : -12))
+
+                        BrandMark(size: 142)
+                            .scaleEffect(appeared ? 1 : 0.88)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+
+                    VStack(alignment: .leading, spacing: 11) {
                         Text("Тише сети.\nБлиже к своим.")
-                            .font(.system(size: 43, weight: .black, design: .rounded))
-                            .tracking(-2)
-                        Text("Никакого телефона и почты. Только ник, твой VO1D ID и ключ доступа.")
+                            .font(.system(size: 42, weight: .black, design: .rounded))
+                            .tracking(-1.9)
+                            .minimumScaleFactor(0.82)
+
+                        Text("Никакого телефона и почты. Ник, VO1D ID и локальные криптографические ключи. Production relay подключается автоматически.")
                             .font(.subheadline)
                             .foregroundStyle(Theme.secondary)
                             .lineSpacing(5)
@@ -237,44 +348,75 @@ struct WelcomeView: View {
                     VStack(spacing: 12) {
                         TextField("Твой ник", text: $name)
                             .textContentType(.nickname)
+                            .submitLabel(.go)
                             .voidField()
-
-                        if advanced {
-                            TextField("https://твой-relay-сервер", text: $server)
-                                .keyboardType(.URL)
-                                .textInputAutocapitalization(.never)
-                                .voidField()
-                        }
+                            .onSubmit {
+                                let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !clean.isEmpty, !store.busy else { return }
+                                Task { await store.onboardProduction(name: clean) }
+                            }
 
                         Button {
-                            if server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                store.finishLocalOnboarding(name: name)
-                            } else {
-                                Task { await store.configure(name: name, server: server) }
-                            }
+                            let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task { await store.onboardProduction(name: clean) }
                         } label: {
-                            HStack {
-                                Text(store.busy ? "СОЗДАЁМ ЛИЧНОСТЬ" : "ВОЙТИ В VO1D")
-                                Spacer()
-                                if store.busy { ProgressView().tint(.black) } else { Image(systemName: "arrow.up.right") }
+                            HStack(spacing: 10) {
+                                Text(store.busy ? "ПОДКЛЮЧАЕМ VO1D…" : "ВОЙТИ В VO1D")
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.62)
+                                    .allowsTightening(true)
+                                    .layoutPriority(1)
+
+                                Spacer(minLength: 8)
+
+                                if store.busy {
+                                    ProgressView()
+                                        .tint(.black)
+                                        .scaleEffect(0.85)
+                                } else {
+                                    Image(systemName: "arrow.up.right")
+                                        .font(.subheadline.bold())
+                                }
                             }
+                            .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(PrimaryButton())
                         .disabled(store.busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                        Button(advanced ? "Скрыть сервер" : "Свой relay-сервер") { withAnimation(.spring) { advanced.toggle() } }
-                            .buttonStyle(GhostButton())
                     }
 
                     HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("OFFICIAL RELAY")
+                                .font(.caption2.monospaced())
+                                .tracking(1.7)
+                            Text(AppConfig.productionRelayHost)
+                                .font(.caption)
+                                .foregroundStyle(Theme.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(.white.opacity(0.72))
+                    }
+                    .panel()
+
+                    HStack(alignment: .top, spacing: 12) {
                         Image(systemName: "key.fill")
-                        Text("После создания мы покажем 4-символьный VO1D ID и 9-символьный ключ доступа. Потом они будут доступны только в настройках.")
-                            .font(.caption).foregroundStyle(Theme.secondary).lineSpacing(4)
+                        Text("После создания покажем 4-символьный VO1D ID и 9-символьный ключ доступа. Сохрани их.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.secondary)
+                            .lineSpacing(4)
                     }
                 }
-                .padding(26)
+                .padding(24)
             }
             .scrollDismissesKeyboard(.interactively)
         }
+        .onAppear {
+            withAnimation(.spring(response: 0.72, dampingFraction: 0.78)) {
+                appeared = true
+            }
+        }
     }
 }
+

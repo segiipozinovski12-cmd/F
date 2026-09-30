@@ -7,12 +7,13 @@ import CryptoKit
 final class ChatStore: ObservableObject {
     @Published var state = VaultState()
     @Published var error: String?
-    @Published var connection = "Не подключён"
+    @Published var connection = "Подключение…"
     @Published var busy = false
     @Published var locked = false
     @Published var sessionUnlocked = false
     @Published var fatalError: String?
     @Published var typing: [String: Date] = [:]
+    @Published var activeRoomID: String?
     private(set) var identity: LocalIdentity?
     private(set) var ownCard: ContactCard?
     private var vault: Vault?
@@ -31,9 +32,21 @@ final class ChatStore: ObservableObject {
             let credentialsChanged = try ensureCredentials()
             locked = state.appLock
             sessionUnlocked = !state.onboarded
-            if !state.server.isEmpty { api = try APIClient(server: state.server, identity: identity) }
+
+            var relayChanged = false
+            if state.onboarded {
+                if state.server != AppConfig.productionRelay {
+                    state.server = AppConfig.productionRelay
+                    relayChanged = true
+                }
+                api = try APIClient(server: AppConfig.productionRelay, identity: identity)
+                connection = "Подключение…"
+            } else {
+                connection = "Готов к регистрации"
+            }
+
             expire()
-            if credentialsChanged { try save() }
+            if credentialsChanged || relayChanged { try save() }
         } catch { fatalError = error.localizedDescription }
     }
     func save() throws {
@@ -43,6 +56,27 @@ final class ChatStore: ObservableObject {
     func persist() {
         do { try save() } catch { self.error = error.localizedDescription }
     }
+    func onboardProduction(name: String) async {
+        await configure(name: name, server: AppConfig.productionRelay)
+    }
+
+    func connectProductionRelay() async {
+        guard state.onboarded, let identity else { return }
+        connection = "Подключение…"
+        do {
+            let client = try APIClient(server: AppConfig.productionRelay, identity: identity)
+            try await client.authenticate()
+            let publicCode = try await client.ensurePublicCode()
+            api = client
+            state.server = AppConfig.productionRelay
+            state.publicCode = publicCode
+            try save()
+            connection = "Подключён"
+        } catch {
+            connection = "Нет связи"
+        }
+    }
+
     func configure(name: String, server: String) async {
         guard let identity else { return }
         busy = true; defer { busy = false }
@@ -87,18 +121,6 @@ final class ChatStore: ObservableObject {
         let alphabet = Array("23456789ABCDEFGHJKLMNPQRSTUVWXYZ")
         let bytes = try Crypto.random(length)
         return bytes.map { String(alphabet[Int($0) & 31]) }.joined()
-    }
-
-    func finishLocalOnboarding(name: String) {
-        do {
-            state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
-            if state.nickname.isEmpty { state.nickname = "Ghost" }
-            _ = try ensureCredentials()
-            state.onboarded = true
-            state.credentialsAcknowledged = false
-            sessionUnlocked = true
-            try save()
-        } catch { self.error = error.localizedDescription }
     }
 
     func acknowledgeCredentials() {
@@ -345,6 +367,24 @@ final class ChatStore: ObservableObject {
                 message.state = "delivered"; message.reactions = [:]; message.readBy = []; message.deliveredTo = []; message.edited = false; message.openedAt = nil
                 state.messages.append(message)
                 if let index = state.rooms.firstIndex(where: { $0.id == incoming.id }) { state.rooms[index].unread += 1 }
+
+                if state.notificationsEnabled == true &&
+                   activeRoomID != incoming.id &&
+                   !(state.rooms.first(where: { $0.id == incoming.id })?.muted ?? false) {
+                    let title = state.rooms.first(where: { $0.id == incoming.id })?.title ?? String(event.senderName.prefix(40))
+                    let body: String
+                    if !message.text.isEmpty {
+                        body = String(message.text.prefix(120))
+                    } else if message.attachment?.mime.hasPrefix("audio/") == true {
+                        body = "Голосовое сообщение"
+                    } else if message.attachment?.mime.hasPrefix("image/") == true {
+                        body = message.attachment?.viewSeconds == nil ? "Фото" : "Фото с таймером"
+                    } else {
+                        body = "Вложение"
+                    }
+                    NotificationCoordinator.shared.postMessage(title: title, body: body, roomID: incoming.id)
+                }
+
                 try enqueue(ChatEvent(kind: "delivered", room: incoming, target: message.id, senderName: state.nickname), room: incoming, to: [sender])
             }
         } else if event.kind == "typing" {
@@ -408,7 +448,7 @@ final class ChatStore: ObservableObject {
         state = VaultState()
         locked = false
         sessionUnlocked = false
-        connection = "Не подключён"
+        connection = "Готов к регистрации"
         try save()
     }
 
@@ -440,6 +480,38 @@ final class ChatStore: ObservableObject {
     func destroyEphemeralImmediately(_ messageID: String) {
         state.messages.removeAll { $0.id == messageID }
         persist()
+    }
+
+    func setNotifications(_ enabled: Bool) async {
+        if enabled {
+            let granted = await NotificationCoordinator.shared.requestPermission()
+            state.notificationsEnabled = granted
+            if !granted { error = "Разрешение на уведомления не выдано в iOS" }
+        } else {
+            state.notificationsEnabled = false
+            NotificationCoordinator.shared.clearDelivered()
+        }
+        persist()
+    }
+
+    func deleteMessages(_ ids: Set<String>, roomID: String) throws {
+        guard !ids.isEmpty,
+              let room = state.rooms.first(where: { $0.id == roomID }) else { return }
+
+        let selected = state.messages.filter { ids.contains($0.id) && $0.roomID == roomID }
+        for message in selected where message.sender == myID {
+            try enqueue(
+                ChatEvent(kind: "delete", room: room, target: message.id, senderName: state.nickname),
+                room: room
+            )
+        }
+
+        state.messages.removeAll { ids.contains($0.id) && $0.roomID == roomID }
+        state.outbox.removeAll { pending in
+            guard let messageID = pending.messageID else { return false }
+            return ids.contains(messageID)
+        }
+        try save()
     }
 
     func selectedVoiceEffect() -> VoiceEffect {

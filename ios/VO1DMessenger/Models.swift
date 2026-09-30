@@ -37,6 +37,7 @@ struct Attachment: Codable, Hashable {
     var data: Data
     var viewSeconds: Int? = nil
     var voiceEffect: String? = nil
+    var notificationsEnabled: Bool? = nil
 }
 
 struct ChatMessage: Codable, Identifiable, Hashable {

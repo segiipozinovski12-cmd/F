@@ -3,7 +3,6 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var name = ""
-    @State private var server = ""
     @State private var setupCode = ""
     @State private var resetCode = ""
     @State private var showDelete = false
@@ -38,7 +37,7 @@ struct SettingsView: View {
                             Spacer()
                             VStack(spacing: 5) {
                                 Wordmark(compact: true)
-                                Text("PRIVATE MESSAGING LAYER · 1.1").font(.system(size: 8, design: .monospaced)).tracking(1.6).foregroundStyle(Theme.secondary)
+                                Text("PRIVATE MESSAGING LAYER · 1.2").font(.system(size: 8, design: .monospaced)).tracking(1.6).foregroundStyle(Theme.secondary)
                             }
                             Spacer()
                         }
@@ -50,7 +49,6 @@ struct SettingsView: View {
             .navigationBarHidden(true)
             .onAppear {
                 name = store.state.nickname
-                server = store.state.server
             }
             .confirmationDialog("Удалить аккаунт?", isPresented: $showDelete, titleVisibility: .visible) {
                 Button("Удалить аккаунт и локальные ключи", role: .destructive) {
@@ -123,6 +121,17 @@ struct SettingsView: View {
             ))
             .tint(.white)
 
+            Toggle("Уведомления о новых сообщениях", isOn: Binding(
+                get: { store.state.notificationsEnabled == true },
+                set: { value in Task { await store.setNotifications(value) } }
+            ))
+            .tint(.white)
+
+            Text("Пока приложение открыто, уведомления работают сразу. Полноценные push при полностью закрытом приложении требуют APNs и подписанного production-сборочного профиля.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
+
             NavigationLink("КАК ЗАЩИЩЕНЫ СООБЩЕНИЯ") { PrivacyView() }
                 .buttonStyle(GhostButton())
         }
@@ -171,29 +180,47 @@ struct SettingsView: View {
 
     private var relayCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("RELAY", icon: "point.3.connected.trianglepath.dotted")
-            TextField("https://chat.example.com", text: $server)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .voidField()
+            sectionTitle("PRODUCTION RELAY", icon: "point.3.connected.trianglepath.dotted")
 
-            Button(store.busy ? "ПОДКЛЮЧЕНИЕ…" : "ПОДКЛЮЧИТЬ RELAY") {
-                Task { await store.configure(name: name, server: server) }
-            }
-            .buttonStyle(GhostButton())
-            .disabled(store.busy || server.isEmpty)
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(.white.opacity(0.08))
+                        .frame(width: 42, height: 42)
+                    Circle()
+                        .fill(store.connection == "Подключён" ? .white : .white.opacity(0.28))
+                        .frame(width: 9, height: 9)
+                }
 
-            HStack {
-                Text("Состояние").foregroundStyle(Theme.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(AppConfig.productionRelayHost)
+                        .font(.subheadline.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(store.connection.uppercased())
+                        .font(.caption2.monospaced())
+                        .tracking(1.4)
+                        .foregroundStyle(Theme.secondary)
+                }
                 Spacer()
-                Text(store.connection).font(.caption.monospaced())
             }
+
             HStack {
                 Text("Очередь").foregroundStyle(Theme.secondary)
                 Spacer()
                 Text("\(store.state.outbox.count)").font(.caption.monospaced())
             }
+
+            Button(store.busy ? "ПОДКЛЮЧЕНИЕ…" : "ПЕРЕПОДКЛЮЧИТЬ") {
+                Task { await store.connectProductionRelay() }
+            }
+            .buttonStyle(GhostButton())
+            .disabled(store.busy)
+
+            Text("Relay зашит в production-конфигурацию VO1D. Пользователю больше не нужно вводить адрес сервера вручную.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
         }
         .panel()
     }

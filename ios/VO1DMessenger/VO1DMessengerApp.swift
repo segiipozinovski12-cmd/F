@@ -5,6 +5,10 @@ struct VO1DMessengerApp: App {
     @StateObject private var store = ChatStore()
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        NotificationCoordinator.shared.install()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -73,6 +77,13 @@ struct RootView: View {
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
+
+            NotificationCoordinator.shared.clearDelivered()
+
+            if store.state.onboarded {
+                await store.connectProductionRelay()
+            }
+
             while !Task.isCancelled {
                 await store.sync()
                 try? await Task.sleep(for: .seconds(2))

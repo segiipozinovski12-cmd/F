@@ -17,6 +17,9 @@ struct ChatView: View {
     @State private var importing = false
     @State private var info = false
     @State private var preview: URL?
+    @State private var selectionMode = false
+    @State private var selectedIDs: Set<String> = []
+    @State private var showDeleteSelection = false
     @StateObject private var audio = VoiceRecorder()
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
     var messages: [ChatMessage] { store.messages(roomID, search: search) }
@@ -40,14 +43,48 @@ struct ChatView: View {
                         .onAppear { proxy.scrollTo("bottom", anchor: .bottom); store.markRead(roomID) }
                 }
                 if let until = store.typing[roomID], until > Date() {
-                    Text("Собеседник печатает…").font(.caption2).foregroundStyle(Theme.secondary).padding(.bottom, 8)
+                    Text("Собеседник печатает…")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.bottom, 8)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                composer
+
+                if selectionMode {
+                    selectionBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    composer
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             } else { ContentUnavailableView("Чат недоступен", systemImage: "bubble.left") }
         }.background(Theme.background)
             .navigationTitle(room?.title ?? "Чат").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button { info = true } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("Настройки чата") }
+                ToolbarItem(placement: .topBarLeading) {
+                    if selectionMode {
+                        Button("Готово") {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                                selectionMode = false
+                                selectedIDs.removeAll()
+                            }
+                        }
+                    }
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                            selectionMode.toggle()
+                            if !selectionMode { selectedIDs.removeAll() }
+                        }
+                    } label: {
+                        Image(systemName: selectionMode ? "checkmark.circle.fill" : "checkmark.circle")
+                    }
+                    .accessibilityLabel(selectionMode ? "Закончить выбор" : "Выбрать сообщения")
+
+                    Button { info = true } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel("Настройки чата")
+                }
             }
             .searchable(text: $search, prompt: "Поиск в переписке")
             .sheet(isPresented: $info) { RoomInfoView(roomID: roomID) }
@@ -81,10 +118,62 @@ struct ChatView: View {
             }
             .quickLookPreview($preview)
             .onChange(of: preview) { _, value in if value == nil { MediaFiles.clear() } }
-            .onAppear { text = room?.draft ?? "" }
-            .onDisappear { audio.cancel(); store.updateRoom(roomID) { $0.draft = text }; MediaFiles.clear() }
+            .onAppear {
+                text = room?.draft ?? ""
+                store.activeRoomID = roomID
+            }
+            .onDisappear {
+                audio.cancel()
+                store.activeRoomID = nil
+                store.updateRoom(roomID) { $0.draft = text }
+                MediaFiles.clear()
+            }
             .onChange(of: text) { _, _ in Task { await store.sendTyping(roomID) } }
+            .confirmationDialog("Удалить выбранные сообщения?", isPresented: $showDeleteSelection, titleVisibility: .visible) {
+                Button("Удалить", role: .destructive) {
+                    perform {
+                        try store.deleteMessages(selectedIDs, roomID: roomID)
+                        selectedIDs.removeAll()
+                        selectionMode = false
+                    }
+                }
+            } message: {
+                Text("Твои сообщения будут удалены у участников при следующей доставке события удаления. Чужие выбранные сообщения удаляются только локально.")
+            }
     }
+
+    var selectionBar: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("ВЫБРАНО")
+                    .font(.caption2.monospaced())
+                    .tracking(1.6)
+                    .foregroundStyle(Theme.secondary)
+                Text("\(selectedIDs.count)")
+                    .font(.title3.bold().monospacedDigit())
+            }
+
+            Spacer()
+
+            Button {
+                guard !selectedIDs.isEmpty else { return }
+                showDeleteSelection = true
+            } label: {
+                Label("Удалить", systemImage: "trash")
+                    .lineLimit(1)
+            }
+            .buttonStyle(GhostButton())
+            .frame(maxWidth: 160)
+            .disabled(selectedIDs.isEmpty)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle().fill(.white.opacity(0.07)).frame(height: 0.5)
+        }
+    }
+
     var composer: some View {
         VStack(spacing: 8) {
             if reply != nil || editing != nil {
@@ -154,9 +243,33 @@ struct ChatView: View {
             if mine { Spacer(minLength: 42) }
             VStack(alignment: .leading, spacing: 8) {
                 if group && !mine { Text(store.name(message.sender)).font(.caption.bold()).foregroundStyle(Theme.accent) }
-                if let replyID = message.replyTo, let source = store.state.messages.first(where: { $0.id == replyID }) {
-                    Text("↳ \(source.text.isEmpty ? "Вложение" : source.text)").font(.caption).lineLimit(2).foregroundStyle(mine ? .black.opacity(0.6) : Theme.secondary)
-                        .padding(8).frame(maxWidth: .infinity, alignment: .leading).background(.black.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                if let replyID = message.replyTo,
+                   let source = store.state.messages.first(where: { $0.id == replyID }) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Capsule()
+                            .fill(mine ? .black.opacity(0.45) : .white.opacity(0.55))
+                            .frame(width: 2.5)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(store.name(source.sender))
+                                .font(.caption2.bold())
+                            HStack(spacing: 5) {
+                                if source.attachment != nil {
+                                    Image(systemName: source.attachment?.mime.hasPrefix("image/") == true ? "photo" : source.attachment?.mime.hasPrefix("audio/") == true ? "waveform" : "doc")
+                                }
+                                Text(source.text.isEmpty ? "Вложение" : source.text)
+                                    .lineLimit(2)
+                            }
+                            .font(.caption)
+                            .opacity(0.66)
+                        }
+                    }
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        (mine ? Color.black.opacity(0.065) : Color.white.opacity(0.055)),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
                 }
                 if let attachment = message.attachment {
                     if attachment.mime.hasPrefix("image/"), let image = UIImage(data: attachment.data) {
@@ -180,24 +293,23 @@ struct ChatView: View {
                             }
                             .buttonStyle(.plain)
                         }
+                    } else if attachment.mime.hasPrefix("audio/") {
+                        VoiceMessagePlayer(
+                            attachment: attachment,
+                            tint: mine ? .black : .white
+                        )
                     } else {
                         Button {
                             do { preview = try MediaFiles.export(attachment) }
                             catch { store.error = error.localizedDescription }
                         } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: attachment.mime.hasPrefix("audio/") ? "play.circle.fill" : "doc.fill")
+                                Image(systemName: "doc.fill")
                                     .font(.title)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(attachment.mime.hasPrefix("audio/") ? "Голосовое сообщение" : attachment.name)
+                                    Text(attachment.name)
                                         .font(.subheadline.weight(.medium))
                                         .lineLimit(2)
-                                    if let raw = attachment.voiceEffect,
-                                       let effect = VoiceEffect(rawValue: raw),
-                                       effect != .natural {
-                                        Text("Эффект · \(effect.title)")
-                                            .font(.caption2)
-                                    }
                                     Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
                                         .font(.caption2)
                                 }
@@ -222,7 +334,39 @@ struct ChatView: View {
                 }
             }.padding(13).foregroundStyle(mine ? Color.black : Color.white)
                 .background(mine ? Color(red: 0.88, green: 0.88, blue: 0.92) : Theme.panel, in: RoundedRectangle(cornerRadius: 21))
+                .overlay(alignment: mine ? .topLeading : .topTrailing) {
+                    if selectionMode {
+                        Button {
+                            if selectedIDs.contains(message.id) {
+                                selectedIDs.remove(message.id)
+                            } else {
+                                selectedIDs.insert(message.id)
+                            }
+                        } label: {
+                            Image(systemName: selectedIDs.contains(message.id) ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(mine ? .black : .white)
+                                .padding(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+                .onTapGesture {
+                    guard selectionMode else { return }
+                    if selectedIDs.contains(message.id) {
+                        selectedIDs.remove(message.id)
+                    } else {
+                        selectedIDs.insert(message.id)
+                    }
+                }
                 .contextMenu {
+                    Button("Выбрать", systemImage: "checkmark.circle") {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                            selectionMode = true
+                            selectedIDs.insert(message.id)
+                        }
+                    }
                     Button("Ответить", systemImage: "arrowshape.turn.up.left") { reply = message; editing = nil }
                     Button("Копировать", systemImage: "doc.on.doc") { UIPasteboard.general.setItems([["public.utf8-plain-text": message.text]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)]) }
                     Menu("Реакция") { ForEach(["❤️", "👍", "🔥", "😂", "👀"], id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
@@ -291,6 +435,12 @@ struct RoomInfoView: View {
                     Section("Переписка") {
                         Toggle("Закрепить", isOn: Binding(get: { room.pinned }, set: { value in store.updateRoom(roomID) { $0.pinned = value } }))
                         Toggle("Архивировать", isOn: Binding(get: { room.archived }, set: { value in store.updateRoom(roomID) { $0.archived = value } }))
+                        Toggle("Без звука", isOn: Binding(get: { room.muted }, set: { value in store.updateRoom(roomID) { $0.muted = value } }))
+                        NavigationLink {
+                            SharedMediaView(roomID: roomID)
+                        } label: {
+                            Label("Медиа и файлы", systemImage: "square.grid.2x2")
+                        }
                         Button("Отметить непрочитанным", systemImage: "circlebadge") {
                             store.markRoomUnread(roomID)
                         }
