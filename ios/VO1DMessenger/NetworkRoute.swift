@@ -64,7 +64,7 @@ struct NetworkRouteView: View {
     var body: some View {
         Form {
             Section("Маршрут сейчас") {
-                Label(store.configuredRoute,systemImage:store.preferences.embeddedTor ? "network" : "point.3.connected.trianglepath.dotted")
+                Label(store.activeNetworkRoute,systemImage:store.api?.privacy.embeddedTor == true ? "network" : "point.3.connected.trianglepath.dotted")
                 if store.preferences.embeddedTor { ProgressView(value:Double(tor.progress),total:100); Text(tor.status).font(.caption) }
                 Text(store.api == nil ? "Запросы к relay не выполняются" : "Авторизация, сообщения, файлы и звонки используют одну конфигурацию маршрута. Внешний браузер и APNs используют сеть iOS.")
                     .font(.caption).foregroundStyle(.secondary)

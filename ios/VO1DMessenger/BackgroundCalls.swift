@@ -17,23 +17,37 @@ enum BackgroundCalls {
         var enabled: Bool
     }
     @MainActor static func prepare(_ store: ChatStore, api: APIClient) async throws {
+        let expectedGeneration = store.generation, expectedProfile = store.profileID
         guard store.preferences.backgroundCalls, store.state.notificationsEnabled == true,
               let identity = store.identity, let card = store.ownCard else {
             clear()
             let _: APIClient.OK = try await api.request("v2/call-authority", method: "DELETE")
             return
         }
-        if let existing = try? load(), existing.card == card, existing.server == store.state.server,
-           existing.certificate.expiresAt > Int(Date().timeIntervalSince1970) + 3600 { save(store); return }
+        if var existing = try? load(), existing.card == card, existing.server == api.base.absoluteString,
+           existing.certificate.expiresAt > Int(Date().timeIntervalSince1970) + 3600 {
+            existing.preferences = permissions(store.preferences,route:api.privacy)
+            existing.allowedIDs = allowed(store); existing.blockedIDs = store.state.contacts.filter { $0.blocked }.map(\.id)
+            try write(existing); return
+        }
         let delegate = Curve25519.Signing.PrivateKey()
         var certificate = CallAuthority(owner: card.id, key: delegate.publicKey.rawRepresentation.base64EncodedString(), expiresAt: Int(Date().timeIntervalSince1970) + 23 * 3600)
         certificate.signature = try identity.signingPrivate.signature(for: certificate.bytes).base64EncodedString()
         struct Issued: Decodable { var token: String }
         let issued: Issued = try await api.request("v2/call-authority", method: "POST", body: Wire.encoder.encode(certificate))
-        guard store.ownCard == card else { throw CancellationError() }
+        guard expectedGeneration == store.generation, expectedProfile == store.profileID,
+              store.ownCard == card, store.preferences.backgroundCalls, store.state.notificationsEnabled == true else { throw CancellationError() }
         let descriptor = Descriptor(delegatedSigning: delegate.rawRepresentation, certificate: certificate, token: issued.token, card: card,
-            server: store.state.server, preferences: store.preferences, allowedIDs: allowed(store), blockedIDs: store.state.contacts.filter { $0.blocked }.map(\.id), enabled: true)
+            server: api.base.absoluteString, preferences: permissions(store.preferences,route:api.privacy), allowedIDs: allowed(store), blockedIDs: store.state.contacts.filter { $0.blocked }.map(\.id), enabled: true)
         try write(descriptor)
+    }
+    private static func permissions(_ current: PrivacyPreferences, route: PrivacyPreferences) -> PrivacyPreferences {
+        var result = current
+        result.proxyEnabled = route.proxyEnabled; result.proxyUsesTor = route.proxyUsesTor
+        result.proxyHost = route.proxyHost; result.proxyPort = route.proxyPort
+        result.embeddedTor = route.embeddedTor; result.torBridges = route.torBridges
+        result.streamIsolation = route.streamIsolation
+        return result
     }
     @MainActor private static func allowed(_ store: ChatStore) -> [String] {
         store.extended.trustedIDs.filter { id in
@@ -46,7 +60,9 @@ enum BackgroundCalls {
         SecItemDelete([kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"io.vo1d.messenger.calls.v2"] as CFDictionary)
         guard store.preferences.backgroundCalls, store.state.notificationsEnabled == true,
               var descriptor = try? load(), descriptor.card == store.ownCard else { clear(); return }
-        descriptor.preferences = store.preferences; descriptor.allowedIDs = allowed(store)
+        // Editing a route is not applying it. Background requests retain the last
+        // authenticated route until prepare binds a successfully connected client.
+        descriptor.preferences = permissions(store.preferences,route:descriptor.preferences); descriptor.allowedIDs = allowed(store)
         descriptor.blockedIDs = store.state.contacts.filter { $0.blocked }.map(\.id)
         try? write(descriptor)
     }
