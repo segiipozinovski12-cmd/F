@@ -19,7 +19,7 @@ final class APIClient {
     }
 
     var base: URL
-    private var token: String?
+    private(set) var token: String?
     let session: URLSession
     let privacy: PrivacyPreferences
     private let identity: LocalIdentity
