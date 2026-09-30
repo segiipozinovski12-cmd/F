@@ -136,7 +136,7 @@ struct Panel: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(18)
-            .background(.ultraThinMaterial.opacity(0.18), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.085), lineWidth: 1))
     }
