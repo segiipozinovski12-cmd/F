@@ -451,6 +451,28 @@ final class ChatStore: ObservableObject {
         persist()
     }
 
+    func markRoomUnread(_ roomID: String) {
+        if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
+            state.rooms[index].unread = max(1, state.rooms[index].unread)
+            persist()
+        }
+    }
+
+    func clearLocalHistory(_ roomID: String) {
+        let messageIDs = Set(state.messages.filter { $0.roomID == roomID }.map(\.id))
+        state.messages.removeAll { $0.roomID == roomID }
+        state.outbox.removeAll { pending in
+            guard let messageID = pending.messageID else { return false }
+            return messageIDs.contains(messageID)
+        }
+        if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
+            state.rooms[index].unread = 0
+            state.rooms[index].draft = ""
+        }
+        typing[roomID] = nil
+        persist()
+    }
+
     func updateRoom(_ id: String, _ update: (inout Room) -> Void) {
         if let index = state.rooms.firstIndex(where: { $0.id == id }) { update(&state.rooms[index]); persist() }
     }

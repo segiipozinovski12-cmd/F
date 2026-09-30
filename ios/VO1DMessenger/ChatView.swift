@@ -279,6 +279,7 @@ struct RoomInfoView: View {
     let roomID: String
     @EnvironmentObject var store: ChatStore
     @Environment(\.dismiss) var dismiss
+    @State private var clearing = false
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
     var body: some View {
         NavigationStack {
@@ -290,10 +291,22 @@ struct RoomInfoView: View {
                     Section("Переписка") {
                         Toggle("Закрепить", isOn: Binding(get: { room.pinned }, set: { value in store.updateRoom(roomID) { $0.pinned = value } }))
                         Toggle("Архивировать", isOn: Binding(get: { room.archived }, set: { value in store.updateRoom(roomID) { $0.archived = value } }))
-                        Picker("Мои сообщения исчезают", selection: Binding(get: { room.disappearingSeconds }, set: { value in store.updateRoom(roomID) { $0.disappearingSeconds = value } })) {
-                            Text("Никогда").tag(0); Text("Через 1 час").tag(3600); Text("Через 24 часа").tag(86400); Text("Через 7 дней").tag(604800)
+                        Button("Отметить непрочитанным", systemImage: "circlebadge") {
+                            store.markRoomUnread(roomID)
                         }
-                        Text("Таймер идёт с момента отправки. Получатель всё равно может сохранить содержимое.").font(.caption).foregroundStyle(Theme.secondary)
+                        Picker("Мои сообщения исчезают", selection: Binding(get: { room.disappearingSeconds }, set: { value in store.updateRoom(roomID) { $0.disappearingSeconds = value } })) {
+                            Text("Никогда").tag(0)
+                            Text("Через 10 секунд").tag(10)
+                            Text("Через 1 минуту").tag(60)
+                            Text("Через 5 минут").tag(300)
+                            Text("Через 1 час").tag(3600)
+                            Text("Через 24 часа").tag(86400)
+                            Text("Через 7 дней").tag(604800)
+                        }
+                        Text("Таймер идёт с момента отправки. Получатель всё равно может сохранить содержимое вне VO1D.").font(.caption).foregroundStyle(Theme.secondary)
+                        Button("Очистить локальную историю", systemImage: "trash", role: .destructive) {
+                            clearing = true
+                        }
                     }
                     Section("Участники") {
                         ForEach(room.members) { member in
@@ -304,7 +317,17 @@ struct RoomInfoView: View {
                         }
                     }
                 }
-            }.navigationTitle("О чате").navigationBarTitleDisplayMode(.inline).toolbar { Button("Готово") { dismiss() } }
+            }
+            .navigationTitle("О чате")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("Готово") { dismiss() } }
+            .confirmationDialog("Очистить историю на этом устройстве?", isPresented: $clearing, titleVisibility: .visible) {
+                Button("Очистить локально", role: .destructive) {
+                    store.clearLocalHistory(roomID)
+                }
+            } message: {
+                Text("Это удалит локальные сообщения этого чата на текущем устройстве. Копии у других участников не изменятся.")
+            }
         }
     }
 }

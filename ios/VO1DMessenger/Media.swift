@@ -106,7 +106,7 @@ enum VoiceProcessor {
             switch status {
             case .success:
                 try destination.write(from: buffer)
-            case .insufficientDataFromInput:
+            case .insufficientDataFromInputNode:
                 if !player.isPlaying { engine.stop(); return output }
             case .cannotDoInCurrentContext:
                 continue
