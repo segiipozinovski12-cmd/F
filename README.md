@@ -64,13 +64,15 @@ docker compose up -d --build
 python3 -m unittest discover -s server/tests -v
 python3 scripts/generate_project.py
 xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger \
-  -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
+  CODE_SIGN_ENTITLEMENTS="$(pwd)/scripts/Simulator.entitlements" \
   ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
   LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug" \
   OTHER_LDFLAGS='-lsignal_ffi -lc++ -lresolv'
 ```
 
-Выбери имя установленного симулятора. CI проверяет generated project, Debug/XCTest/unsigned device Release, сервер и Docker. Python pins проходят dependency audit; build manifest и device archive публикуются как artifacts. Provenance не означает аудит безопасности или Apple подпись. Native/системные зависимости и Tor binary не дают полной bit-reproducibility.
+Выбери имя установленного симулятора. CI проверяет generated project, Debug/XCTest/unsigned device Release, сервер и Docker. Simulator использует отдельную локальную ad-hoc подпись для доступа к Keychain: `scripts/Simulator.entitlements` предназначен только для симулятора и не даёт Apple provisioning или APNs. Проверяется запуск хранилища и повторное чтение Keychain, а не только операции на созданных в памяти ключах. Python pins проходят dependency audit; build manifest и device archive публикуются как artifacts. Provenance не означает аудит безопасности или Apple подпись. Native/системные зависимости и Tor binary не дают полной bit-reproducibility.
 
 ## Ограничения
 
