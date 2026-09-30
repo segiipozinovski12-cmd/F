@@ -8,6 +8,14 @@ TARGET="${1:-aarch64-apple-ios-sim}"
 MODE="${2:-debug}"
 case "$TARGET" in aarch64-apple-ios|aarch64-apple-ios-sim) ;; *) exit 2 ;; esac
 rustup target add --toolchain nightly-2025-02-25 "$TARGET"
+# Rust calls the simulator target "ios-sim"; LLVM accepts "ios-simulator".
+# bindgen appends these flags after its inferred target and needs the SDK headers.
+SDK=iphoneos
+if [ "$TARGET" = aarch64-apple-ios-sim ]; then
+  SDK=iphonesimulator
+  export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios_sim="--target=arm64-apple-ios-simulator -isysroot $(xcrun --sdk "$SDK" --show-sdk-path)"
+fi
+export SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
 cd "$SIGNAL_ROOT"
 if [ "$MODE" = release ]; then
   CARGO_BUILD_TARGET="$TARGET" bash swift/build_ffi.sh -r

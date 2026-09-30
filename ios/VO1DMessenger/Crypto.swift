@@ -53,7 +53,7 @@ enum Crypto {
             throw MessengerError.invalid("Отпечаток контакта или подпись не совпадают")
         }
     }
-    static func seal(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
+    static func sanitized(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> ChatEvent {
         var event = input
         let own = try identity.card
         event.room = input.room.wireCopy
@@ -65,24 +65,35 @@ enum Crypto {
             message.reactions = [:]; message.openedAt = nil
             event.message = message
         }
+        return event
+    }
+    static func seal(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
+        let event = try sanitized(input, from: identity, to: recipient)
+        return try sealPayload(Wire.encoder.encode(event), from: identity, to: recipient, expiry: event.message?.expiresAt)
+    }
+    static func sealPayload(_ payload: Data, from identity: LocalIdentity, to recipient: ContactCard, expiry: Date? = nil, id: String = UUID().uuidString) throws -> Envelope {
+        let own = try identity.card
         try validate(recipient)
         let ephemeral = Curve25519.KeyAgreement.PrivateKey()
         let salt = try random(32)
-        var envelope = Envelope(id: UUID().uuidString, sender: own.id, recipient: recipient.id,
+        var envelope = Envelope(id: id, sender: own.id, recipient: recipient.id,
                                 ephemeralKey: ephemeral.publicKey.rawRepresentation.base64EncodedString(), salt: salt.base64EncodedString(),
                                 expiresAt: Int(Date().timeIntervalSince1970) + 7 * 86400, ciphertext: "", signature: "")
-        if let expiry = event.message?.expiresAt {
+        if let expiry {
             envelope.expiresAt = min(envelope.expiresAt, Int(expiry.timeIntervalSince1970))
         }
         let shared = try ephemeral.sharedSecretFromKeyAgreement(with: Curve25519.KeyAgreement.PublicKey(rawRepresentation: decode(recipient.agreementKey, count: 32)))
         let key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt, sharedInfo: envelope.header, outputByteCount: 32)
-        let sealed = try AES.GCM.seal(Wire.encoder.encode(event), using: key, authenticating: envelope.header)
+        let sealed = try AES.GCM.seal(payload, using: key, authenticating: envelope.header)
         guard let combined = sealed.combined else { throw MessengerError.invalid("Ошибка шифрования") }
         envelope.ciphertext = combined.base64EncodedString()
         envelope.signature = try identity.signingPrivate.signature(for: envelope.header + Data([10]) + combined).base64EncodedString()
         return envelope
     }
     static func open(_ envelope: Envelope, identity: LocalIdentity, sender: ContactCard) throws -> ChatEvent {
+        try Wire.decoder.decode(ChatEvent.self, from: openPayload(envelope, identity: identity, sender: sender))
+    }
+    static func openPayload(_ envelope: Envelope, identity: LocalIdentity, sender: ContactCard) throws -> Data {
         try validate(sender)
         guard envelope.sender == sender.id, envelope.recipient == (try identity.card.id), envelope.expiresAt > Int(Date().timeIntervalSince1970) else {
             throw MessengerError.invalid("Сообщение не адресовано этому устройству или истекло")
@@ -96,7 +107,7 @@ enum Crypto {
         let shared = try identity.agreementPrivate.sharedSecretFromKeyAgreement(with: ephemeral)
         let key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: try decode(envelope.salt, count: 32), sharedInfo: envelope.header, outputByteCount: 32)
         let clear = try AES.GCM.open(AES.GCM.SealedBox(combined: ciphertext), using: key, authenticating: envelope.header)
-        return try Wire.decoder.decode(ChatEvent.self, from: clear)
+        return clear
     }
 }
 
@@ -148,4 +159,3 @@ struct Vault {
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 }
-

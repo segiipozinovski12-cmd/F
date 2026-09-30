@@ -1245,12 +1245,11 @@ final class ChatStore: ObservableObject {
     }
     func sendTyping(_ roomID: String) async {
         guard preferences.typingSignals, !extended.hiddenRooms.contains(roomID), !isLocalUtilityRoom(roomID),
-              let api, let identity, let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
+              let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
         lastTyping[roomID] = Date()
         let event = ChatEvent(kind: "typing", room: room, senderName: state.nickname)
-        for target in room.members where target.id != myID {
-            do { try await api.send(sealEvent(event, from: identity, to: target)) } catch { /* Ephemeral signal is intentionally not retried. */ }
-        }
+        do { try enqueue(event, room: room); try save(); await sync() }
+        catch { self.error = error.localizedDescription }
     }
     private func processScheduledMessages() {
         let now = Date()
@@ -1291,10 +1290,15 @@ final class ChatStore: ObservableObject {
         do {
             processScheduledMessages()
             expire()
+            try await maintainSignalPrekeys(api: api, identity: identity, generation: currentGeneration)
             // Outbox is persisted before any network request. Retries reuse the exact signed envelope.
             for pending in Array(state.outbox.prefix(24)) {
                 if let issue=deliveryIssues[pending.id], issue.nextAttempt > Date() { continue }
-                do { try await api.send(pending.envelope) }
+                do {
+                    let envelope = try await prepareSignalDelivery(pending, api: api, identity: identity, generation: currentGeneration)
+                    guard currentGeneration == generation else { return }
+                    try await api.send(envelope)
+                }
                 catch {
                     let attempts=(deliveryIssues[pending.id]?.attempts ?? 0)+1
                     let permanent=(error as? HTTPFailure).map { [400,403,404,409,413].contains($0.status) } ?? false
@@ -1328,7 +1332,7 @@ final class ChatStore: ObservableObject {
                 else { sender = try await api.card(envelope.sender) }
                 guard currentGeneration == generation else { return }
                 do {
-                    let event = try Crypto.open(envelope, identity: identity, sender: sender)
+                    let event = try openSignalEvent(envelope, identity: identity, sender: sender)
                     try apply(event, sender: sender)
                 } catch {
                     self.error = "Отклонено сообщение: \(error.localizedDescription)"

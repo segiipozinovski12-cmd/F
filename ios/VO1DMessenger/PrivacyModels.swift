@@ -94,6 +94,7 @@ struct LocalReminder: Codable, Identifiable, Hashable {
 }
 
 struct ExtendedState: Codable {
+    var signal: SignalSnapshot? = nil
     var lastOpenedAt: Date? = nil
     var privatePollVotes: [String: [String: String]] = [:]
     var privatePollSelections: [String: String] = [:]
@@ -117,12 +118,14 @@ struct ExtendedState: Codable {
     var roomNotes: [String: String] = [:]
     init() {}
     enum CodingKeys: String, CodingKey {
+        case signal
         case lastOpenedAt, privatePollVotes, privatePollSelections, privacy, folders, bookmarks, notes, aliases, favorites, hiddenRooms, trustedIDs, pendingEvents, declinedRooms, reminders, snippets, roomRetention, roomFontSize, receiptExceptions, protectedMessages, ocrText, roomNotes
     }
     init(from decoder: Decoder) throws {
         self.init()
         let container=try decoder.container(keyedBy:CodingKeys.self)
         lastOpenedAt=try container.decodeIfPresent(Date.self,forKey:.lastOpenedAt)
+        signal=try container.decodeIfPresent(SignalSnapshot.self,forKey:.signal)
         privatePollVotes=try container.decodeIfPresent([String: [String: String]].self,forKey:.privatePollVotes) ?? privatePollVotes
         privatePollSelections=try container.decodeIfPresent([String: String].self,forKey:.privatePollSelections) ?? privatePollSelections
         privacy=try container.decodeIfPresent(PrivacyPreferences.self,forKey:.privacy) ?? privacy

@@ -253,7 +253,10 @@ extension ChatStore {
         var event=input
         if !event.room.isGroup, let alias=extended.aliases[target.id], !alias.isEmpty { event.senderName=alias }
         if preferences.padding { event.padding=try Crypto.random(128).base64EncodedString() }
-        return try Crypto.seal(event,from:identity,to:target)
+        event = try Crypto.sanitized(event, from: identity, to: target)
+        return Envelope(id: UUID().uuidString, sender: try identity.card.id, recipient: target.id,
+            ephemeralKey: "", salt: "", expiresAt: Int(Date().timeIntervalSince1970) + 7 * 86400,
+            ciphertext: "", signature: "", deferredEvent: try Wire.encoder.encode(event))
     }
 
     func retryDelivery(_ messageID: String) {

@@ -130,6 +130,8 @@ struct Envelope: Codable, Identifiable {
     var expiresAt: Int
     var ciphertext: String
     var signature: String
+    // Present only in the encrypted local outbox. APIClient refuses to send it.
+    var deferredEvent: Data? = nil
     var header: Data {
         Data("VO1D-ENVELOPE-1\n\(id)\n\(sender)\n\(recipient)\n\(ephemeralKey)\n\(salt)\n\(expiresAt)".utf8)
     }
@@ -193,4 +195,3 @@ enum Wire {
         return d
     }
 }
-

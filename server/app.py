@@ -10,6 +10,7 @@ import threading
 import time
 from contextlib import contextmanager
 import privacy
+import prekeys
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -97,6 +98,7 @@ class Relay:
             ''')
 
             privacy.install(db)
+            prekeys.install(db)
 
     @contextmanager
     def db(self):
@@ -121,6 +123,7 @@ class Relay:
     def clean(self, db):
         now = int(time.time())
         privacy.clean(db, now)
+        prekeys.clean(db, now)
         for table in ('challenges', 'sessions', 'envelopes', 'seen'):
             db.execute(f'DELETE FROM {table} WHERE expires <= ?', (now,))
 
@@ -157,6 +160,9 @@ class Relay:
         with self.db() as db:
             self.clean(db)
             if not public:
+                result = prekeys.handle(db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
                 result = privacy.handle(self,db,user,env,body,APIError)
                 if result is not None:
                     return result
@@ -363,4 +369,3 @@ if __name__ == '__main__':
             pass
     print('VO1D development relay: http://127.0.0.1:8080 (production: use Docker + TLS)')
     make_server('0.0.0.0', 8080, create_app(), handler_class=QuietHandler).serve_forever()
-
