@@ -136,46 +136,85 @@ final class ChatStore: ObservableObject {
     }
 
     func configure(name: String, server: String) async {
-        guard let identity else { return }
-        let expected = generation
-        busy = true; defer { busy = false }
+        busy = true
+        defer { busy = false }
+
         do {
-            let firstLaunch = !state.onboarded
-            try await prepareNetworkRoute()
-            guard expected == generation else { return }
-            let client = try APIClient(server: server, identity: identity, privacy: preferences)
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: true)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func configureAttempt(name: String, server: String, allowIdentityRecovery: Bool) async throws {
+        guard let identity else { throw MessengerError.invalid("Ключи устройства недоступны") }
+        let expected = generation
+        let firstLaunch = !state.onboarded
+
+        try await prepareNetworkRoute()
+        guard expected == generation else { throw CancellationError() }
+
+        let client = try APIClient(server: server, identity: identity, privacy: preferences)
+
+        do {
             try await client.authenticate()
-            guard expected == generation else { return }
-            _ = try await client.publicWorkBits()
-            let publicCode = try await client.ensurePublicCode()
-            guard expected == generation else { return }
-            api = client
-            state.server = client.base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
-            if state.nickname.isEmpty { state.nickname = "Ghost" }
+        } catch let failure as HTTPFailure where
+            allowIdentityRecovery && !state.onboarded && failure.status == 409 {
+            // iOS keeps Keychain items after deleting/reinstalling an app. A very old
+            // pre-release build could therefore leave a signing identity whose server
+            // record points at a different agreement key. For an account that has never
+            // completed onboarding, rotate the whole local identity once and retry.
+            let selectedPrivacy = preferences
+            let selectedServer = state.server
+            generation += 1
+            try resetLocalIdentity()
+
+            var freshExtended = ExtendedState()
+            freshExtended.privacy = selectedPrivacy
+            state.extended = freshExtended
+            state.server = selectedServer
             _ = try ensureCredentials()
-            state.publicCode = publicCode
-            state.onboarded = true
-            if firstLaunch { state.credentialsAcknowledged = false }
-            sessionUnlocked = true
-            _ = ensureBuiltinBot()
-            _ = ensureSavedMessages()
             try save()
-            CallManager.shared.configure(
-                api: client,
-                identity: identity,
-                nameResolver: { [weak self] id in
-                    self?.name(id) ?? "VO1D"
-                },
-                recordSink: { [weak self] record in
-                    self?.recordCall(record)
-                }
-            )
-            setupCallPolicy()
-            try? await applyPrivacy()
-            try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
-            connection = "Подключён"
-        } catch { self.error = error.localizedDescription }
+
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: false)
+            return
+        }
+
+        guard expected == generation else { throw CancellationError() }
+        _ = try await client.publicWorkBits()
+        let publicCode = try await client.ensurePublicCode()
+        guard expected == generation else { throw CancellationError() }
+
+        api = client
+        state.server = client.base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        if state.nickname.isEmpty { state.nickname = "Ghost" }
+        _ = try ensureCredentials()
+        state.publicCode = publicCode
+        state.onboarded = true
+        if firstLaunch { state.credentialsAcknowledged = false }
+        sessionUnlocked = true
+        _ = ensureBuiltinBot()
+        _ = ensureSavedMessages()
+        try save()
+
+        guard let currentIdentity = self.identity else {
+            throw MessengerError.invalid("Ключи устройства недоступны")
+        }
+        CallManager.shared.configure(
+            api: client,
+            identity: currentIdentity,
+            nameResolver: { [weak self] id in
+                self?.name(id) ?? "VO1D"
+            },
+            recordSink: { [weak self] record in
+                self?.recordCall(record)
+            }
+        )
+        setupCallPolicy()
+        try? await applyPrivacy()
+        try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
+        connection = "Подключён"
     }
 
     @discardableResult
