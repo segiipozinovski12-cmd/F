@@ -11,6 +11,7 @@ import time
 from contextlib import contextmanager
 import privacy
 import prekeys
+import mailboxes
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -99,6 +100,7 @@ class Relay:
 
             privacy.install(db)
             prekeys.install(db)
+            mailboxes.install(db)
 
     @contextmanager
     def db(self):
@@ -124,6 +126,7 @@ class Relay:
         now = int(time.time())
         privacy.clean(db, now)
         prekeys.clean(db, now)
+        mailboxes.clean(db, now)
         for table in ('challenges', 'sessions', 'envelopes', 'seen'):
             db.execute(f'DELETE FROM {table} WHERE expires <= ?', (now,))
 
@@ -144,6 +147,8 @@ class Relay:
         # Only the immediate peer is used; untrusted forwarded headers never bypass limits.
         import hmac
         ip_hash = hmac.new(self.rate_secret,env.get('REMOTE_ADDR','').encode(),hashlib.sha256).hexdigest()
+        if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
+            return mailboxes.handle(self,env,body,ip_hash,APIError,b64)
         if method == 'GET' and path == '/health':
             return {'status': 'ok', 'protocol': 1}
         if path in ('/v1/register', '/v1/challenge', '/v1/session'):

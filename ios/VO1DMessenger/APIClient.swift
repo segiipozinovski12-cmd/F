@@ -222,7 +222,9 @@ final class APIClient {
     }
 
     func send(_ envelope: Envelope) async throws {
-        guard envelope.deferredEvent == nil, !envelope.ciphertext.isEmpty else { throw MessengerError.invalid("Локальное сообщение ещё не зашифровано протоколом v2") }
+        guard envelope.deferredEvent == nil else { throw MessengerError.invalid("Локальное сообщение ещё не зашифровано протоколом v2") }
+        if let opaque = envelope.opaque { try await sendOpaque(opaque); return }
+        guard !envelope.ciphertext.isEmpty else { throw MessengerError.invalid("Пустой шифротекст") }
         let _: OK = try await request("v1/envelopes", method: "POST", body: Wire.encoder.encode(envelope))
     }
     func publishPrekeys(_ publication: SignalPublication) async throws {

@@ -7,6 +7,10 @@ struct PrivacyCenterView: View {
     @State private var saving = false
     var body: some View {
         Form {
+            Section("Доставка") {
+                Toggle("Только приватные адреса",isOn:store.preferenceBinding(\.requirePrivateDelivery))
+                Text("Приватное приглашение скрывает ID отправителя от очереди доставки. При добавлении по коду первая передача адреса использует обычную очередь.").font(.caption).foregroundStyle(.secondary)
+            }
             Section("Общение") {
                 Toggle("Запросы от незнакомцев",isOn:store.preferenceBinding(\.requireRequests))
                 Toggle("Принимать группы без приглашения",isOn:store.preferenceBinding(\.allowGroupInvites))

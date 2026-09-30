@@ -390,6 +390,7 @@ final class ChatStore: ObservableObject {
 
     func invite() throws -> String {
         guard let ownCard else { throw MessengerError.invalid("Нет ключей") }
+        if let link = extended.privateInviteLink { return link }
         let data = try Wire.encoder.encode(Invite(server: state.server, name: state.nickname, card: ownCard))
         let code = data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         return "vo1d://contact/\(code)"
@@ -408,7 +409,11 @@ final class ChatStore: ObservableObject {
             return bot
         }
 
-        if input.hasPrefix("vo1d://invite/") {
+        if input.hasPrefix("vo1d://private/") {
+            let invite = try await decodePrivateLink(input)
+            try importPrivateInvite(invite)
+            card = invite.card; name = String(invite.name.prefix(40))
+        } else if input.hasPrefix("vo1d://invite/") {
             guard let api else { throw MessengerError.invalid("Нет соединения") }
             struct Result: Decodable { var card: ContactCard }
             let token = String(input.dropFirst("vo1d://invite/".count))
@@ -418,12 +423,13 @@ final class ChatStore: ObservableObject {
             input = String(input.dropFirst("vo1d://contact/".count)).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
             input += String(repeating: "=", count: (4 - input.count % 4) % 4)
             let invite = try Wire.decoder.decode(Invite.self, from: Crypto.decode(input))
-            guard invite.version == 1 else { throw MessengerError.invalid("Неподдерживаемое приглашение") }
+            guard [1,2].contains(invite.version) else { throw MessengerError.invalid("Неподдерживаемое приглашение") }
             let server = try APIClient.validateURL(invite.server)
             guard server.host == api?.base.host, server.port == api?.base.port, server.scheme == api?.base.scheme else {
                 throw MessengerError.invalid("Контакт использует другой сервер. Оба устройства должны подключаться к одному серверу.")
             }
             card = invite.card; name = String(invite.name.prefix(40))
+            if invite.version == 2 { try importPrivateInvite(invite) }
         } else {
             guard let api else { throw MessengerError.invalid("Нет соединения с VO1D") }
             let normalized = input.uppercased()
@@ -1291,6 +1297,7 @@ final class ChatStore: ObservableObject {
             processScheduledMessages()
             expire()
             try await maintainSignalPrekeys(api: api, identity: identity, generation: currentGeneration)
+            try await collectPrivateInbox(api: api, identity: identity, generation: currentGeneration)
             // Outbox is persisted before any network request. Retries reuse the exact signed envelope.
             for pending in Array(state.outbox.prefix(24)) {
                 if let issue=deliveryIssues[pending.id], issue.nextAttempt > Date() { continue }

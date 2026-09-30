@@ -35,17 +35,29 @@ extension ChatStore {
         guard let target, let initial = extended.signal else { throw MessengerError.invalid("Ключи контакта недоступны") }
         let probe = SignalVaultStore(initial), address = try SignalProtocol.address(target)
         let bundle: SignalBundle?
-        if try probe.loadSession(for: address, context: NullContext())?.hasCurrentState != true { bundle = try await api.prekey(target) }
+        if try probe.loadSession(for: address, context: NullContext())?.hasCurrentState != true {
+            if let invited = extended.invitationBundles[target.id] { bundle = invited }
+            else { bundle = try await api.prekey(target) }
+        }
         else { bundle = nil }
+        let receiving = try await ensurePrivateMailbox(peerID: target.id, api: api, generation: expected)
         guard expected == generation, let current = extended.signal,
               let index = state.outbox.firstIndex(where: { $0.id == pending.id }) else { throw CancellationError() }
         // A send/retry can have completed while a prekey request was in flight.
         if state.outbox[index].envelope.deferredEvent == nil { return state.outbox[index].envelope }
-        let result = try SignalProtocol.encrypt(clear, to: target, identity: identity, state: current, bundle: bundle)
-        let event = try Wire.decoder.decode(ChatEvent.self, from: clear)
-        let envelope = try Crypto.sealPayload(result.1, from: identity, to: target, expiry: event.message?.expiresAt, id: pending.envelope.id)
+        var event = try Wire.decoder.decode(ChatEvent.self, from: clear)
+        event.replyMailbox = receiving.address
+        let result = try SignalProtocol.encrypt(Wire.encoder.encode(event), to: target, identity: identity, state: current, bundle: bundle)
+        let envelope: Envelope
+        if let route = extended.peerMailboxes[target.id] {
+            let opaque = try PrivateMailboxCrypto.seal(result.1, from: identity, to: target, route: route, id: pending.envelope.id, expiry: event.message?.expiresAt)
+            envelope = Envelope(id: opaque.id, sender: try identity.card.id, recipient: target.id, ephemeralKey: "", salt: "", expiresAt: opaque.expiresAt, ciphertext: "", signature: "", opaque: opaque)
+        } else {
+            guard !preferences.requirePrivateDelivery else { throw MessengerError.invalid("Нужен приватный адрес контакта") }
+            envelope = try Crypto.sealPayload(result.1, from: identity, to: target, expiry: event.message?.expiresAt, id: pending.envelope.id)
+        }
         let previous = state
-        var local = extended; local.signal = result.0; state.extended = local
+        var local = extended; local.signal = result.0; local.invitationBundles[target.id] = nil; state.extended = local
         state.outbox[index].envelope = envelope
         do { try save() } catch { state = previous; throw error }
         return envelope
@@ -58,6 +70,7 @@ extension ChatStore {
             let result = try SignalProtocol.decrypt(packet, from: sender, state: current)
             let event = try Wire.decoder.decode(ChatEvent.self, from: result.1)
             var local = extended; local.signal = result.0; state.extended = local
+            try acceptReplyMailbox(event.replyMailbox, sender: sender)
             return event
         }
         if extended.signal?.trusted["\(sender.id):1"] != nil {

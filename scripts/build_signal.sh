@@ -17,11 +17,19 @@ if [ "$TARGET" = aarch64-apple-ios-sim ]; then
 fi
 export SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
 cd "$SIGNAL_ROOT"
+export IPHONEOS_DEPLOYMENT_TARGET=13
+export RUSTFLAGS="--cfg aes_armv8 ${RUSTFLAGS:-}"
+# Native C LTO can discard ring's C symbols before the Rust archive is linked.
+# Keep native objects intact; Rust release LTO remains enabled.
+export CFLAGS="-DOPENSSL_SMALL -fno-lto ${CFLAGS:-}"
+ARGS=(build --locked -p libsignal-ffi --target "$TARGET")
+FEATURES=log/release_max_level_info
+if [ "$TARGET" = aarch64-apple-ios-sim ]; then FEATURES="$FEATURES,libsignal-bridge-testing"; fi
 if [ "$MODE" = release ]; then
-  CARGO_BUILD_TARGET="$TARGET" bash swift/build_ffi.sh -r
-else
-  CARGO_BUILD_TARGET="$TARGET" bash swift/build_ffi.sh -d
+  export CARGO_PROFILE_RELEASE_LTO=fat
+  ARGS+=(--release)
 fi
+cargo "${ARGS[@]}" --features "$FEATURES"
 PLATFORM=iphonesimulator
 CONFIGURATION=Debug
 if [ "$TARGET" = aarch64-apple-ios ]; then PLATFORM=iphoneos; fi

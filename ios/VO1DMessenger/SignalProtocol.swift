@@ -10,6 +10,7 @@ struct SignalSnapshot: Codable {
     var registration: UInt32
     var nextKey: UInt32 = 1
     var prekeys: [String: Data] = [:]
+    var prekeyExpirations: [String: Int] = [:]
     var signedKeys: [String: Data] = [:]
     var kyberKeys: [String: Data] = [:]
     var sessions: [String: Data] = [:]
@@ -48,7 +49,7 @@ final class SignalVaultStore: IdentityKeyStore, PreKeyStore, SignedPreKeyStore, 
         return try PreKeyRecord(bytes: bytes)
     }
     func storePreKey(_ record: PreKeyRecord, id: UInt32, context: StoreContext) throws { state.prekeys[String(id)] = Data(record.serialize()) }
-    func removePreKey(id: UInt32, context: StoreContext) throws { state.prekeys[String(id)] = nil }
+    func removePreKey(id: UInt32, context: StoreContext) throws { state.prekeys[String(id)] = nil; state.prekeyExpirations[String(id)] = nil }
     func loadSignedPreKey(id: UInt32, context: StoreContext) throws -> SignedPreKeyRecord {
         guard let bytes = state.signedKeys[String(id)] else { throw MessengerError.invalid("Подписанный ключ отсутствует") }
         return try SignedPreKeyRecord(bytes: bytes)
@@ -129,6 +130,12 @@ enum SignalProtocol {
     static func publication(state: SignalSnapshot, identity: LocalIdentity, count: Int = 24) throws -> (SignalSnapshot, SignalPublication) {
         guard (1...48).contains(count) else { throw MessengerError.invalid("Неверное число ключей") }
         let store = SignalVaultStore(state), pair = try store.identityKeyPair(context: NullContext()), owner = try identity.card.id
+        for (id, expiry) in store.state.prekeyExpirations where expiry <= Int(Date().timeIntervalSince1970) {
+            store.state.prekeys[id] = nil; store.state.prekeyExpirations[id] = nil
+        }
+        for (id, bytes) in store.state.kyberKeys {
+            if try KyberPreKeyRecord(bytes: bytes).timestamp + UInt64(8 * 86400 * 1000) < UInt64(Date().timeIntervalSince1970 * 1000) { store.state.kyberKeys[id] = nil }
+        }
         let publicIdentity = Data(pair.identityKey.serialize()).base64EncodedString()
         let binding = try identity.signingPrivate.signature(for: bindingBytes(publicIdentity, owner: owner)).base64EncodedString()
         let signedID = store.state.nextKey
@@ -145,6 +152,7 @@ enum SignalProtocol {
             let kyberSignature = try pair.privateKey.generateSignature(message: Data(kyberPair.publicKey.serialize()))
             let kyber = try KyberPreKeyRecord(id: kyberID, timestamp: UInt64(Date().timeIntervalSince1970 * 1000), keyPair: kyberPair, signature: Data(kyberSignature))
             try store.storePreKey(pre, id: preID, context: NullContext())
+            store.state.prekeyExpirations[String(preID)] = Int(Date().timeIntervalSince1970) + 8 * 86400
             try store.storeKyberPreKey(kyber, id: kyberID, context: NullContext())
             var bundle = SignalBundle(owner: owner, identityKey: publicIdentity, identityBinding: binding, registrationId: state.registration,
                 signedPrekeyId: signedID, signedPrekey: Data(signedPrivate.publicKey.serialize()).base64EncodedString(), signedPrekeySignature: Data(signedSignature).base64EncodedString(),

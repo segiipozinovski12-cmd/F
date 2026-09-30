@@ -110,6 +110,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
 
 /// All event content, including group membership and attachments, lives inside AEAD.
 struct ChatEvent: Codable {
+    var replyMailbox: MailboxAddress? = nil
     var id: String = UUID().uuidString
     var kind: String
     var room: Room
@@ -132,6 +133,7 @@ struct Envelope: Codable, Identifiable {
     var signature: String
     // Present only in the encrypted local outbox. APIClient refuses to send it.
     var deferredEvent: Data? = nil
+    var opaque: OpaqueEnvelope? = nil
     var header: Data {
         Data("VO1D-ENVELOPE-1\n\(id)\n\(sender)\n\(recipient)\n\(ephemeralKey)\n\(salt)\n\(expiresAt)".utf8)
     }
@@ -172,6 +174,8 @@ struct Invite: Codable {
     var server: String
     var name: String
     var card: ContactCard
+    var mailbox: MailboxAddress? = nil
+    var prekey: SignalBundle? = nil
 }
 
 enum MessengerError: LocalizedError {

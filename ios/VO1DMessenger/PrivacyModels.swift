@@ -17,6 +17,7 @@ struct PrivacyPreferences: Codable {
     var proxyHost = ""
     var proxyPort = 9050
     var proxyEnabled = false
+    var requirePrivateDelivery = false
     var padding = true
     var quietHours = false
     var quietStart = 22
@@ -37,6 +38,7 @@ struct PrivacyPreferences: Codable {
     var anonymizeFilenames = true
     init() {}
     enum CodingKeys: String, CodingKey {
+        case requirePrivateDelivery
         case backgroundCalls, requireRequests, allowGroupInvites, discoverable, typingSignals, deliveryReceipts, notificationPreview, cleanLinks, confirmLinks, clipboardSeconds, inactivityDays, localRetentionDays, defaultDisappearing, proxyHost, proxyPort, proxyEnabled, padding, quietHours, quietStart, quietEnd, compactRows, sortOrder, fontSize, lowData, maxUploadMB, hideMedia, forwardWithoutName, verifiedOnlyCalls, autoLockSeconds, keepEditHistory, protectRecording, linkPreviews, wifiOnlyUploads, anonymizeFilenames
     }
     init(from decoder: Decoder) throws {
@@ -58,6 +60,7 @@ struct PrivacyPreferences: Codable {
         proxyHost=try container.decodeIfPresent(String.self,forKey:.proxyHost) ?? proxyHost
         proxyPort=try container.decodeIfPresent(Int.self,forKey:.proxyPort) ?? proxyPort
         proxyEnabled=try container.decodeIfPresent(Bool.self,forKey:.proxyEnabled) ?? proxyEnabled
+        requirePrivateDelivery=try container.decodeIfPresent(Bool.self,forKey:.requirePrivateDelivery) ?? requirePrivateDelivery
         padding=try container.decodeIfPresent(Bool.self,forKey:.padding) ?? padding
         quietHours=try container.decodeIfPresent(Bool.self,forKey:.quietHours) ?? quietHours
         quietStart=try container.decodeIfPresent(Int.self,forKey:.quietStart) ?? quietStart
@@ -95,6 +98,11 @@ struct LocalReminder: Codable, Identifiable, Hashable {
 
 struct ExtendedState: Codable {
     var signal: SignalSnapshot? = nil
+    var ownMailboxes: [LocalMailbox] = []
+    var peerMailboxes: [String: MailboxAddress] = [:]
+    var invitationBundles: [String: SignalBundle] = [:]
+    var privateInvite: Invite? = nil
+    var privateInviteLink: String? = nil
     var lastOpenedAt: Date? = nil
     var privatePollVotes: [String: [String: String]] = [:]
     var privatePollSelections: [String: String] = [:]
@@ -119,6 +127,8 @@ struct ExtendedState: Codable {
     init() {}
     enum CodingKeys: String, CodingKey {
         case signal
+        case ownMailboxes, peerMailboxes, invitationBundles, privateInvite
+        case privateInviteLink
         case lastOpenedAt, privatePollVotes, privatePollSelections, privacy, folders, bookmarks, notes, aliases, favorites, hiddenRooms, trustedIDs, pendingEvents, declinedRooms, reminders, snippets, roomRetention, roomFontSize, receiptExceptions, protectedMessages, ocrText, roomNotes
     }
     init(from decoder: Decoder) throws {
@@ -126,6 +136,11 @@ struct ExtendedState: Codable {
         let container=try decoder.container(keyedBy:CodingKeys.self)
         lastOpenedAt=try container.decodeIfPresent(Date.self,forKey:.lastOpenedAt)
         signal=try container.decodeIfPresent(SignalSnapshot.self,forKey:.signal)
+        ownMailboxes=try container.decodeIfPresent([LocalMailbox].self,forKey:.ownMailboxes) ?? []
+        peerMailboxes=try container.decodeIfPresent([String: MailboxAddress].self,forKey:.peerMailboxes) ?? [:]
+        invitationBundles=try container.decodeIfPresent([String: SignalBundle].self,forKey:.invitationBundles) ?? [:]
+        privateInvite=try container.decodeIfPresent(Invite.self,forKey:.privateInvite)
+        privateInviteLink=try container.decodeIfPresent(String.self,forKey:.privateInviteLink)
         privatePollVotes=try container.decodeIfPresent([String: [String: String]].self,forKey:.privatePollVotes) ?? privatePollVotes
         privatePollSelections=try container.decodeIfPresent([String: String].self,forKey:.privatePollSelections) ?? privatePollSelections
         privacy=try container.decodeIfPresent(PrivacyPreferences.self,forKey:.privacy) ?? privacy

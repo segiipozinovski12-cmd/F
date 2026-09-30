@@ -250,6 +250,9 @@ extension ChatStore {
     }
 
     func sealEvent(_ input: ChatEvent, from identity: LocalIdentity, to target: ContactCard) throws -> Envelope {
+        if preferences.requirePrivateDelivery, extended.peerMailboxes[target.id] == nil {
+            throw MessengerError.invalid("Нужен приватный QR контакта: строгий режим скрывает отправителя при доставке")
+        }
         var event=input
         if !event.room.isGroup, let alias=extended.aliases[target.id], !alias.isEmpty { event.senderName=alias }
         if preferences.padding { event.padding=try Crypto.random(128).base64EncodedString() }

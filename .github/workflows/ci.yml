@@ -27,13 +27,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2025-02-25
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: signal-cache
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             Vendor/libsignal/target
-          key: signal-ios-${{ runner.os }}-efe13e9b-v1
+          key: signal-ios-${{ runner.os }}-efe13e9b-v2
       - name: Prepare native protocol dependencies
         run: brew install protobuf cmake ninja
       - name: Build pinned Signal protocol for simulator
@@ -42,6 +43,14 @@ jobs:
         run: |
           python3 scripts/generate_project.py
           git diff --exit-code ios/VO1DMessenger.xcodeproj
+      - uses: actions/cache/save@v4
+        if: steps.signal-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Vendor/libsignal/target
+          key: signal-ios-${{ runner.os }}-efe13e9b-v2
       - name: Build Debug for iPhone Simulator
         run: |
           set -o pipefail
