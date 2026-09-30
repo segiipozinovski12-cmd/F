@@ -64,10 +64,10 @@ enum SecureBackup {
 }
 
 extension Keychain {
-    static func replace(_ identity: LocalIdentity) throws {
+    static func replace(_ identity: LocalIdentity, profileID: String = "default") throws {
         try Crypto.validate(identity.card)
         let query: [String:Any] = [kSecClass as String:kSecClassGenericPassword,
-            kSecAttrService as String:service,kSecAttrAccount as String:"identity"]
+            kSecAttrService as String:service,kSecAttrAccount as String:account(profileID)]
         let data=try Wire.encoder.encode(identity)
         let status=SecItemUpdate(query as CFDictionary,[kSecValueData as String:data] as CFDictionary)
         if status==errSecItemNotFound {
@@ -154,13 +154,13 @@ extension ChatStore {
         generation += 1
         CallManager.shared.disconnect()
         do {
-            try Keychain.replace(payload.identity)
+            try Keychain.replace(payload.identity, profileID: profileID)
             try vault?.write(payload.state,key:payload.identity.storage)
             identity=payload.identity; ownCard=try payload.identity.card; state=payload.state
             api=nil; locked=state.appLock; sessionUnlocked=false; revealedHiddenRooms=false
             deliveryIssues=[:]
         } catch {
-            try? Keychain.replace(oldIdentity)
+            try? Keychain.replace(oldIdentity, profileID: profileID)
             try? vault?.write(oldState,key:oldIdentity.storage)
             throw error
         }

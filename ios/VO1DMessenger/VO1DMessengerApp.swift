@@ -9,6 +9,7 @@ struct VO1DMessengerApp: App {
     @State private var leftAt: Date?
 
     init() {
+        MediaFiles.clear()
         NotificationCoordinator.shared.install()
     }
 
@@ -104,7 +105,7 @@ struct RootView: View {
             if let url=pendingLink { Button("Открыть \(url.host ?? "сайт")") { UIApplication.shared.open(url); pendingLink=nil } }
         } message: { Text("Сайт увидит адрес подключения браузера. Прокси VO1D не распространяется на браузер.") }
         .onOpenURL { url in
-            if url.scheme=="vo1d", ["contact","invite"].contains(url.host ?? "") { incomingContact=url.absoluteString }
+            if url.scheme=="vo1d", ["contact","invite","private"].contains(url.host ?? "") { incomingContact=url.absoluteString }
         }
         .sheet(isPresented:Binding(get:{ incomingContact != nil && store.sessionUnlocked && !store.locked },set:{ if !$0 { incomingContact=nil } })) {
             AddContactView(initialValue:incomingContact ?? "")
@@ -283,4 +284,3 @@ private struct BiometricGateView: View {
         }
     }
 }
-

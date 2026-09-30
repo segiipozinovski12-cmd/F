@@ -75,3 +75,22 @@ final class PrivacyTests: XCTestCase {
         XCTAssertThrowsError(try SecureBackup.open(Wire.encoder.encode(envelope),password:"correct horse battery"))
     }
 }
+
+extension PrivacyTests {
+    func testDelegatedCallKeyCannotImpersonateAccountAndCertificateBindsCall() throws {
+        let owner = try LocalIdentity.create(), peer = try LocalIdentity.create(), delegate = try LocalIdentity.create()
+        var authority = CallAuthority(owner: try owner.card.id, key: try delegate.signingPrivate.publicKey.rawRepresentation.base64EncodedString(), expiresAt: Int(Date().timeIntervalSince1970) + 3600)
+        authority.signature = try owner.signingPrivate.signature(for: authority.bytes).base64EncodedString()
+        let packed = try Wire.encoder.encode(authority).base64EncodedString()
+        let a = CallSecrets(), b = CallSecrets(), id = UUID().uuidString
+        let offer = try a.offer(identity: delegate, callID: id, to: peer.card.id, ownerID: owner.card.id)
+        XCTAssertThrowsError(try b.accept(key: offer["key"]!, signature: offer["keySignature"]!, identity: peer, peer: owner.card, callID: id))
+        let bk = try b.accept(key: offer["key"]!, signature: offer["keySignature"]!, identity: peer, peer: owner.card, callID: id, certificate: packed)
+        let reply = try b.offer(identity: peer, callID: id, to: owner.card.id)
+        let ak = try a.accept(key: reply["key"]!, signature: reply["keySignature"]!, identity: delegate, peer: peer.card, callID: id, ownerID: owner.card.id)
+        let encrypted = try a.seal(Data("delegated audio".utf8), key: ak, callID: id)
+        XCTAssertEqual(try b.open(encrypted.0, sequence: encrypted.1, key: bk, callID: id), Data("delegated audio".utf8))
+        authority.expiresAt = 0
+        XCTAssertThrowsError(try authority.validate(for: owner.card))
+    }
+}

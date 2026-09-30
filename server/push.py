@@ -71,7 +71,7 @@ class PushService:
                 if kind=='voip':
                     if not call:
                         continue
-                    payload={'aps':{'content-available':1},'callID':call['id'],'from':call['from']}
+                    payload={'aps':{'content-available':1},'eventToken':call['id']}
                     expiration=int(time.time())+45
                 response=await self._client.post(f'https://{host}/3/device/{row["token"]}',
                     json=payload,headers={

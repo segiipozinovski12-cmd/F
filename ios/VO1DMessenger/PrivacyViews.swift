@@ -18,7 +18,7 @@ struct PrivacyCenterView: View {
                 Toggle("Показывать, что я печатаю",isOn:store.preferenceBinding(\.typingSignals))
                 Toggle("Отправлять доставку",isOn:store.preferenceBinding(\.deliveryReceipts))
                 Toggle("Звонки на заблокированном iPhone",isOn:store.preferenceBinding(\.backgroundCalls))
-                Text("Работает после первого разблокирования после перезагрузки. Для авторизации звонков сохраняется ключ подписи; ключи расшифровки переписки и истории остаются доступны только при разблокированном устройстве.").font(.caption).foregroundStyle(.secondary)
+                Text("Отдельное разрешение только на звонки действует до 23 часов и обновляется при открытии приложения. Ключ аккаунта и ключи переписки остаются доступны при разблокировании.").font(.caption).foregroundStyle(.secondary)
                 Toggle("Звонки только от проверенных",isOn:store.preferenceBinding(\.verifiedOnlyCalls))
                 Text("Время последней активности не публикуется. Поиск и разрешения звонков нужно сохранить на сервере.")
                     .font(.caption).foregroundStyle(.secondary)

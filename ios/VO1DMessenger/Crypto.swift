@@ -113,32 +113,35 @@ enum Crypto {
 
 enum Keychain {
     static let service = "io.vo1d.messenger.identity.v1"
-    static func load() throws -> LocalIdentity {
+    static func account(_ profileID: String) -> String { profileID == "default" ? "identity" : "identity:\(profileID)" }
+    static func load(profileID: String = "default") throws -> LocalIdentity {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                   kSecAttrAccount as String: "identity", kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+                                   kSecAttrAccount as String: account(profileID), kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecSuccess, let data = item as? Data { return try Wire.decoder.decode(LocalIdentity.self, from: data) }
         guard status == errSecItemNotFound else { throw MessengerError.invalid("Keychain недоступен (\(status))") }
         let identity = try LocalIdentity.create()
         let insert: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: "identity", kSecValueData as String: try Wire.encoder.encode(identity),
+                                    kSecAttrAccount as String: account(profileID), kSecValueData as String: try Wire.encoder.encode(identity),
                                     kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         let result = SecItemAdd(insert as CFDictionary, nil)
         guard result == errSecSuccess else { throw MessengerError.invalid("Не удалось сохранить ключи (\(result))") }
         return identity
     }
-    static func delete() throws {
-        let status = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
+    static func delete(profileID: String = "default") throws {
+        let status = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account(profileID)] as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw MessengerError.invalid("Не удалось удалить ключи") }
     }
 }
 
 struct Vault {
     let url: URL
-    init() throws {
-        let dir = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    init(profileID: String = "default") throws {
+        guard profileID == "default" || UUID(uuidString: profileID) != nil else { throw MessengerError.invalid("Неверный профиль хранилища") }
+        var dir = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("VO1D", isDirectory: true)
+        if profileID != "default" { dir = dir.appendingPathComponent("profiles", isDirectory: true).appendingPathComponent(profileID, isDirectory: true) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var excluded = dir
         var values = URLResourceValues(); values.isExcludedFromBackup = true

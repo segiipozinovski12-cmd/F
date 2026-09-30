@@ -68,8 +68,8 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
                       for type: PKPushType, completion: @escaping () -> Void) {
         guard type == .voIP else { completion(); return }
         // CallKit is notified in this callback, before fetching keys or opening the network.
-        let callID=payload.dictionaryPayload["callID"] as? String ?? UUID().uuidString
-        let peer=payload.dictionaryPayload["from"] as? String ?? ""
+        let callID=payload.dictionaryPayload["eventToken"] as? String ?? UUID().uuidString
+        let peer=""
         CallManager.shared.reportPushedCall(peerID:peer,callID:callID,completion:completion)
         Task { await BackgroundCalls.resume(peerID:peer); await wake?() }
     }

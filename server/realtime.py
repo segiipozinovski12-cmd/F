@@ -16,6 +16,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from push import PushService
+import call_authority
 from app import APIError, ID, MAX_BODY, UUID, Relay
 
 CALL_MAX_AUDIO = 96 * 1024
@@ -281,7 +282,19 @@ class RealtimeGateway:
 
     async def websocket(self, request):
         try:
-            user = self._user(request)
+            auth=request.headers.get('Authorization','')
+            delegated=None
+            if auth.startswith('CallCapability '):
+                with self.relay.db() as db:
+                    user,delegated=call_authority.authorize(db,auth,APIError)
+            else:
+                user = self._user(request)
+            with self.relay.db() as db:
+                own_card=db.execute('SELECT card FROM identities WHERE id=?',(user,)).fetchone()
+            if own_card is None: raise APIError(401,'Identity unavailable')
+            extra={'card':base64.b64encode(own_card[0].encode()).decode()}
+            if delegated is not None:
+                extra['certificate']=base64.b64encode(json.dumps(delegated).encode()).decode()
         except APIError as exc:
             raise web.HTTPUnauthorized(text=exc.message)
 
@@ -302,10 +315,16 @@ class RealtimeGateway:
         await ws.send_json({"type": "ready"})
         for call_id, route in list(self.calls.items()):
             if route["b"] == user and not route["accepted"]:
-                await ws.send_json({"type":"invite","from":route["a"],"callID":call_id,"key":route["key"],"keySignature":route["keySignature"]})
+                await ws.send_json({"type":"invite","from":route["a"],"callID":call_id,"key":route["key"],"keySignature":route["keySignature"],**route.get('extra',{})})
 
         try:
             async for message in ws:
+                if delegated is not None:
+                    try:
+                        with self.relay.db() as db: call_authority.authorize(db,auth,APIError)
+                    except APIError:
+                        await ws.close(code=4003,message=b'authority revoked')
+                        break
                 if message.type != WSMsgType.TEXT:
                     if message.type in (WSMsgType.ERROR, WSMsgType.CLOSE, WSMsgType.CLOSING):
                         break
@@ -374,7 +393,7 @@ class RealtimeGateway:
                         if peer_ws is None or peer_ws.closed:
                             peer_ws = None
                         if not busy and not blocked:
-                            self.calls[call_id] = {"a": user, "b": target, "accepted": False,"created":time.monotonic(),"key":key,"keySignature":signature}
+                            self.calls[call_id] = {"a": user, "b": target, "accepted": False,"created":time.monotonic(),"key":key,"keySignature":signature,"extra":extra}
                     if blocked:
                         await self._send_error(ws, "peer_unavailable")
                         continue
@@ -388,7 +407,7 @@ class RealtimeGateway:
                                 self.calls.pop(call_id,None)
                             await self._send_error(ws,"peer_offline")
                         continue
-                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature})
+                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature,**extra})
                     continue
 
                 async with self.lock:
@@ -408,7 +427,7 @@ class RealtimeGateway:
                     async with self.lock:
                         if call_id in self.calls:
                             self.calls[call_id]["accepted"] = True
-                    await self._forward(peer, {"type": "answer", "from": user, "callID": call_id,"key":key,"keySignature":signature})
+                    await self._forward(peer, {"type": "answer", "from": user, "callID": call_id,"key":key,"keySignature":signature,**extra})
                     continue
 
                 if kind == "audio":
@@ -506,4 +525,3 @@ if __name__ == "__main__":
         access_log=None,
         print=lambda *args, **kwargs: None,
     )
-

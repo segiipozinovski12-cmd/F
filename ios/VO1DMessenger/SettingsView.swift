@@ -32,6 +32,10 @@ struct SettingsView: View {
                         .padding(.bottom, 4)
 
                         profileCard
+                        NavigationLink { ProfilesView() } label: {
+                            Label("НЕЗАВИСИМЫЕ ЛИЧНОСТИ",systemImage:"person.crop.rectangle.stack")
+                                .frame(maxWidth:.infinity,alignment:.leading).panel()
+                        }.buttonStyle(.plain)
                         keysCard
                         NavigationLink {
                             ToolsCenterView()
@@ -52,7 +56,7 @@ struct SettingsView: View {
                             Spacer()
                             VStack(spacing: 5) {
                                 Wordmark(compact: true)
-                                Text("PRIVATE MESSAGING LAYER · 1.2").font(.system(size: 8, design: .monospaced)).tracking(1.6).foregroundStyle(Theme.secondary)
+                                Text("PRIVATE MESSAGING LAYER · 2.0").font(.system(size: 8, design: .monospaced)).tracking(1.6).foregroundStyle(Theme.secondary)
                             }
                             Spacer()
                         }
@@ -730,4 +734,3 @@ private struct DocumentScreen: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 }
-

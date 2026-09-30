@@ -29,6 +29,7 @@ def install(db):
 def erase(db, identity):
     import prekeys
     prekeys.erase(db, identity)
+    db.execute('DELETE FROM call_authorities WHERE owner=?',(identity,))
     db.execute('DELETE FROM envelopes WHERE sender=? OR recipient=?', (identity, identity))
     db.execute('DELETE FROM seen WHERE recipient=?', (identity,))
     for table, column in [('identities','id'),('privacy','identity'),('codes','identity'),

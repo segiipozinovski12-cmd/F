@@ -13,18 +13,20 @@ final class CallSecrets {
         Data("VO1D-CALL-KEY-2\n\(callID)\n\(from)\n\(to)\n\(key)".utf8)
     }
 
-    func offer(identity: LocalIdentity,callID: String,to peerID: String) throws -> [String:String] {
-        let ownID=try identity.card.id
+    func offer(identity: LocalIdentity,callID: String,to peerID: String,ownerID: String? = nil) throws -> [String:String] {
+        let ownID=try ownerID ?? identity.card.id
         let key=ephemeral.publicKey.rawRepresentation.base64EncodedString()
         let bytes=Self.offerBytes(callID:callID,from:ownID,to:peerID,key:key)
         return ["key":key,"keySignature":try identity.signingPrivate.signature(for:bytes).base64EncodedString()]
     }
 
-    func accept(key: String,signature: String,identity: LocalIdentity,peer: ContactCard,callID: String) throws -> SymmetricKey {
+    func accept(key: String,signature: String,identity: LocalIdentity,peer: ContactCard,callID: String,ownerID: String? = nil,certificate: String? = nil) throws -> SymmetricKey {
         try Crypto.validate(peer)
-        let ownID=try identity.card.id
+        let ownID=try ownerID ?? identity.card.id
         let bytes=Self.offerBytes(callID:callID,from:peer.id,to:ownID,key:key)
-        let signing=try Curve25519.Signing.PublicKey(rawRepresentation:Crypto.decode(peer.signingKey,count:32))
+        let signing: Curve25519.Signing.PublicKey
+        if let certificate { signing = try Wire.decoder.decode(CallAuthority.self, from: Crypto.decode(certificate)).validate(for: peer) }
+        else { signing=try Curve25519.Signing.PublicKey(rawRepresentation:Crypto.decode(peer.signingKey,count:32)) }
         guard try signing.isValidSignature(Crypto.decode(signature,count:64),for:bytes) else {
             throw MessengerError.invalid("Подпись ключа звонка не совпала")
         }

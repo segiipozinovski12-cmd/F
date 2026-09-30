@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import privacy
 import prekeys
 import mailboxes
+import call_authority
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -101,6 +102,7 @@ class Relay:
             privacy.install(db)
             prekeys.install(db)
             mailboxes.install(db)
+            call_authority.install(db)
 
     @contextmanager
     def db(self):
@@ -127,6 +129,7 @@ class Relay:
         privacy.clean(db, now)
         prekeys.clean(db, now)
         mailboxes.clean(db, now)
+        db.execute('DELETE FROM call_authorities WHERE expires<=?',(now,))
         for table in ('challenges', 'sessions', 'envelopes', 'seen'):
             db.execute(f'DELETE FROM {table} WHERE expires <= ?', (now,))
 
@@ -165,6 +168,9 @@ class Relay:
         with self.db() as db:
             self.clean(db)
             if not public:
+                result = call_authority.handle(db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
                 result = prekeys.handle(db,user,env,body,APIError,b64)
                 if result is not None:
                     return result

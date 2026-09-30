@@ -21,7 +21,9 @@ export IPHONEOS_DEPLOYMENT_TARGET=13
 export RUSTFLAGS="--cfg aes_armv8 ${RUSTFLAGS:-}"
 # Native C LTO can discard ring's C symbols before the Rust archive is linked.
 # Keep native objects intact; Rust release LTO remains enabled.
-export CFLAGS="-DOPENSSL_SMALL -fno-lto ${CFLAGS:-}"
+# OPENSSL_SMALL globally removes a ring P-256 symbol required by its Rust code.
+# Do not pass BoringSSL-only preprocessor switches to every native dependency.
+export CFLAGS="-fno-lto ${CFLAGS:-}"
 ARGS=(build --locked -p libsignal-ffi --target "$TARGET")
 FEATURES=log/release_max_level_info
 if [ "$TARGET" = aarch64-apple-ios-sim ]; then FEATURES="$FEATURES,libsignal-bridge-testing"; fi

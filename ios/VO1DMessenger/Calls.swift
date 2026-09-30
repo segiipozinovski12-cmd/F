@@ -13,8 +13,8 @@ enum VoiceCallPhase: String {
 struct VoiceCallSession: Identifiable, Equatable {
     let id: UUID
     let callID: String
-    let peerID: String
-    let peerName: String
+    var peerID: String
+    var peerName: String
     let incoming: Bool
     let createdAt: Date
     var phase: VoiceCallPhase
@@ -177,6 +177,7 @@ final class CallManager: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private var api: APIClient?
     private var identity: LocalIdentity?
+    private var canonicalCard: ContactCard?
     private var peerCard: ContactCard?
     private var callKey: SymmetricKey?
     private var callSecrets: CallSecrets?
@@ -203,11 +204,13 @@ final class CallManager: ObservableObject {
     func configure(
         api: APIClient,
         identity: LocalIdentity,
+        ownerCard: ContactCard? = nil,
         nameResolver: @escaping (String) -> String,
         recordSink: @escaping (CallRecord) -> Void
     ) {
         self.api = api
         self.identity = identity
+        self.canonicalCard = ownerCard ?? (try? identity.card)
         self.nameResolver = nameResolver
         self.recordSink = recordSink
         if session==nil || socket==nil { connectSocket() }
@@ -226,6 +229,7 @@ final class CallManager: ObservableObject {
         transport = "OFFLINE"
         api = nil
         identity = nil
+        canonicalCard = nil
         nameResolver = nil
         recordSink = nil
     }
@@ -304,7 +308,7 @@ final class CallManager: ObservableObject {
         Task {
             do {
                 guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
-                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID)
+                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID,ownerID:canonicalCard?.id)
                 packet["type"]="invite"; packet["to"]=current.peerID; packet["callID"]=current.callID
                 try await send(packet)
             } catch {
@@ -332,7 +336,7 @@ final class CallManager: ObservableObject {
                 }
                 guard socketReady,callKey != nil else { failCurrent(reason:.failed); return }
                 guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
-                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID)
+                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID,ownerID:canonicalCard?.id)
                 packet["type"]="answer"; packet["to"]=current.peerID; packet["callID"]=current.callID
                 try await send(packet)
                 activateMediaIfReady()
@@ -476,7 +480,7 @@ final class CallManager: ObservableObject {
         case "answer":
             guard !current.incoming,let callSecrets,let identity,let peerCard,
                   let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
-            callKey=try callSecrets.accept(key:key,signature:signature,identity:identity,peer:peerCard,callID:callID)
+            callKey=try callSecrets.accept(key:key,signature:signature,identity:identity,peer:peerCard,callID:callID,ownerID:canonicalCard?.id,certificate:packet["certificate"] as? String)
             var updated = current
             updated.phase = .active
             updated.startedAt = Date()
@@ -508,12 +512,18 @@ final class CallManager: ObservableObject {
               let api,let identity,let uuid=UUID(uuidString:callID),
               let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
         do {
-            let peer=try await api.card(peerID)
+            let peer: ContactCard
+            if let packed = packet["card"] as? String { peer = try Wire.decoder.decode(ContactCard.self, from: Crypto.decode(packed)); try Crypto.validate(peer) }
+            else { peer=try await api.card(peerID) }
+            guard peer.id == peerID else { throw MessengerError.invalid("ID звонящего не совпал с ключом") }
             guard session==nil || session?.callID==callID else { return }
             let secrets=callSecrets ?? CallSecrets()
-            let symmetric=try secrets.accept(key:key,signature:signature,identity:identity,peer:peer,callID:callID)
+            let symmetric=try secrets.accept(key:key,signature:signature,identity:identity,peer:peer,callID:callID,ownerID:canonicalCard?.id,certificate:packet["certificate"] as? String)
             try audio.prepareSession()
             callSecrets=secrets; peerCard=peer; callKey=symmetric
+            if var pushed = session, pushed.callID == callID, pushed.peerID.isEmpty {
+                pushed.peerID = peerID; pushed.peerName = nameResolver?(peerID) ?? "VO1D"; session = pushed
+            }
             if session==nil {
                 let name=nameResolver?(peerID) ?? "VO1D"
                 session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:name,incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
@@ -535,7 +545,7 @@ final class CallManager: ObservableObject {
         update.remoteHandle=CXHandle(type:.generic,value:"VO1D")
         update.localizedCallerName="VO1D"
         update.hasVideo=false
-        let rejected=session != nil || allowedPeer?(peerID)==false || peerID.count != 64
+        let rejected=session != nil || (!peerID.isEmpty && (allowedPeer?(peerID)==false || peerID.count != 64))
         if !rejected {
             session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:"VO1D",incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
         }
@@ -828,4 +838,3 @@ struct CallScreen: View {
         .buttonStyle(.plain)
     }
 }
-

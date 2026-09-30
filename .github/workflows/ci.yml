@@ -16,7 +16,9 @@ jobs:
       - run: pip install -r server/requirements.txt
       - run: python -m unittest discover -s server/tests -v
       - name: Build Railway Docker image
-        run: docker build -t vo1d-relay:ci server
+        run: |
+          docker build -t vo1d-relay:ci server
+          docker run --rm --entrypoint python vo1d-relay:ci -c "from app import Relay; Relay('/tmp/smoke.sqlite3')"
   ios:
     runs-on: macos-15
     timeout-minutes: 90
@@ -34,7 +36,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             Vendor/libsignal/target
-          key: signal-ios-${{ runner.os }}-efe13e9b-v2
+          key: signal-ios-${{ runner.os }}-efe13e9b-v3
+          restore-keys: signal-ios-${{ runner.os }}-efe13e9b-v2
       - name: Prepare native protocol dependencies
         run: brew install protobuf cmake ninja
       - name: Build pinned Signal protocol for simulator
@@ -50,7 +53,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             Vendor/libsignal/target
-          key: signal-ios-${{ runner.os }}-efe13e9b-v2
+          key: signal-ios-${{ runner.os }}-efe13e9b-v3
       - name: Build Debug for iPhone Simulator
         run: |
           set -o pipefail

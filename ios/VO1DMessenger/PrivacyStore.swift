@@ -30,6 +30,7 @@ extension ChatStore {
             !contact.blocked && extended.trustedIDs.contains(contact.id) && (!preferences.verifiedOnlyCalls || contact.verified)
         }.map(\.id)
         let _: APIClient.OK = try await api.request("v1/trust/sync",method:"POST",body:Wire.encoder.encode(["ids":allowed]))
+        try await BackgroundCalls.prepare(self, api: api)
     }
 
     func trustOnServer(_ id: String, trusted: Bool) async throws {
@@ -274,8 +275,9 @@ extension ChatStore {
     func reloadProtectedData() async {
         guard fatalError != nil, UIApplication.shared.isProtectedDataAvailable else { return }
         do {
-            let loaded=try Keychain.load()
-            let storage=try Vault()
+            profileRegistry = try ProfileRegistry.load()
+            let loaded=try Keychain.load(profileID: profileID)
+            let storage=try Vault(profileID: profileID)
             let restored=try storage.read(key:loaded.storage)
             identity=loaded; ownCard=try loaded.card; vault=storage; state=restored
             fatalError=nil; locked=state.appLock; sessionUnlocked = !state.onboarded

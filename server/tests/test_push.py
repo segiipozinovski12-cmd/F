@@ -71,7 +71,9 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         url, request = calls[0]
         self.assertIn('api.push.apple.com',url)
         self.assertEqual(request['headers']['apns-topic'],'io.test.messenger.voip')
-        self.assertEqual(request['json']['callID'],'call-id')
+        self.assertEqual(request['json']['eventToken'],'call-id')
+        self.assertNotIn('from',request['json'])
+        self.assertNotIn(self.alice_card['id'],json.dumps(request['json']))
         with self.relay.db() as db:
             self.assertEqual(db.execute('SELECT count(*) FROM push_tokens').fetchone()[0],0)
 

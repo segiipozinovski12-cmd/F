@@ -6,6 +6,8 @@ import CryptoKit
 @MainActor
 final class ChatStore: ObservableObject {
     @Published var state = VaultState()
+    @Published var profileRegistry = ProfileRegistry()
+    var profileID: String { profileRegistry.activeID }
     @Published var error: String?
     @Published var connection = "Подключение…"
     @Published var busy = false
@@ -48,8 +50,9 @@ final class ChatStore: ObservableObject {
 
     init() {
         do {
-            let identity = try Keychain.load()
-            let vault = try Vault()
+            profileRegistry = try ProfileRegistry.load()
+            let identity = try Keychain.load(profileID: profileID)
+            let vault = try Vault(profileID: profileID)
             self.identity = identity; self.vault = vault; ownCard = try identity.card
             state = try vault.read(key: identity.storage)
             if state.extended == nil {
@@ -98,6 +101,7 @@ final class ChatStore: ObservableObject {
             let server=state.server.isEmpty ? AppConfig.productionRelay : state.server
             let client = try APIClient(server: server, identity: identity, privacy: preferences)
             try await client.authenticate()
+            try await BackgroundCalls.prepare(self, api: client)
             let publicCode = try await client.ensurePublicCode()
             api = client
             state.server = server
@@ -1664,8 +1668,8 @@ final class ChatStore: ObservableObject {
         BackgroundCalls.clear()
         ResumableDownload.clear()
         NotificationCoordinator.shared.clearAll()
-        try Keychain.delete()
-        let fresh = try Keychain.load()
+        try Keychain.delete(profileID: profileID)
+        let fresh = try Keychain.load(profileID: profileID)
         identity = fresh
         ownCard = try fresh.card
         api = nil

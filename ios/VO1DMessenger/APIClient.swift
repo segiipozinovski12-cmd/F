@@ -21,12 +21,14 @@ final class APIClient {
     let privacy: PrivacyPreferences
     private let identity: LocalIdentity
     private let authenticationCard: ContactCard?
+    private let callToken: String?
 
-    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil) throws {
         base = try Self.validateURL(server)
         self.privacy = privacy
         self.identity = identity
         self.authenticationCard = authenticationCard
+        self.callToken = callToken
         let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config)
     }
@@ -56,6 +58,7 @@ final class APIClient {
     }
 
     func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true) async throws -> T {
+        guard callToken == nil else { throw MessengerError.invalid("Фоновое разрешение доступно только для звонков") }
         let (data, status) = try await raw(path, method: method, body: body)
         if status == 401 && retry {
             try await authenticate()
@@ -69,6 +72,7 @@ final class APIClient {
     }
 
     func authenticate() async throws {
+        guard callToken == nil else { throw MessengerError.invalid("Разрешение звонков не авторизует аккаунт") }
         token = nil
         let card: ContactCard
         if let authenticationCard { card = authenticationCard }
@@ -249,7 +253,10 @@ final class APIClient {
     }
 
     func callSocketRequest() throws -> URLRequest {
-        guard let token else { throw MessengerError.invalid("Сессия relay ещё не готова") }
+        let authorization: String
+        if let callToken { authorization = "CallCapability \(callToken)" }
+        else if let token { authorization = "Bearer \(token)" }
+        else { throw MessengerError.invalid("Сессия relay ещё не готова") }
         guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             throw MessengerError.invalid("Некорректный адрес relay")
         }
@@ -262,7 +269,7 @@ final class APIClient {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
         return request
     }
