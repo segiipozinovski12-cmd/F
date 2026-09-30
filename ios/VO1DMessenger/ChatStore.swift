@@ -781,6 +781,125 @@ final class ChatStore: ObservableObject {
         let pending = try targets.map { PendingDelivery(envelope: try Crypto.seal(event, from: identity, to: $0), messageID: messageID) }
         state.outbox.append(contentsOf: pending)
     }
+    private func validateAttachment(_ attachment: Attachment) throws {
+        guard attachment.data.count <= 3 * 1024 * 1024 else {
+            throw MessengerError.invalid("Встроенное вложение превышает 3 МБ")
+        }
+
+        if let blobID = attachment.blobID {
+            let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
+            guard blobID.count >= 40,
+                  blobID.count <= 64,
+                  blobID.unicodeScalars.allSatisfy({ allowed.contains($0) }),
+                  let key = attachment.blobKey,
+                  (try? Crypto.decode(key, count: 32)) != nil,
+                  let plainSize = attachment.blobSize,
+                  plainSize > 0,
+                  plainSize <= 50 * 1024 * 1024,
+                  let digest = attachment.blobDigest,
+                  digest.count == 64,
+                  digest.allSatisfy({ $0.isHexDigit }),
+                  (attachment.previewData?.count ?? 0) <= 320 * 1024 else {
+                throw MessengerError.invalid("Повреждены метаданные удалённого вложения")
+            }
+        } else {
+            guard attachment.blobKey == nil,
+                  attachment.blobSize == nil,
+                  attachment.blobDigest == nil else {
+                throw MessengerError.invalid("Неполные метаданные удалённого вложения")
+            }
+        }
+    }
+
+    func prepareRemoteAttachment(
+        name: String,
+        mime: String,
+        data: Data,
+        preview: Data? = nil
+    ) async throws -> Attachment {
+        guard let api else {
+            throw MessengerError.invalid("Нет соединения с VO1D")
+        }
+        guard data.count > 3 * 1024 * 1024,
+              data.count <= 50 * 1024 * 1024 else {
+            throw MessengerError.invalid("Большое вложение должно быть от 3 до 50 МБ")
+        }
+        guard (preview?.count ?? 0) <= 320 * 1024 else {
+            throw MessengerError.invalid("Preview слишком большой")
+        }
+
+        let plainSize = data.count
+        let safeName = String(name.prefix(180))
+        let safeMime = String(mime.prefix(120))
+
+        let encrypted = try await Task.detached(priority: .userInitiated) {
+            let keyData = try Crypto.random(32)
+            let key = SymmetricKey(data: keyData)
+            let aad = Data("VO1D-BLOB-1\n\(safeName)\n\(safeMime)\n\(plainSize)".utf8)
+            let box = try AES.GCM.seal(data, using: key, authenticating: aad)
+            guard let combined = box.combined else {
+                throw MessengerError.invalid("Не удалось зашифровать вложение")
+            }
+            return (keyData, combined)
+        }.value
+
+        let localDigest = Crypto.hex(SHA256.hash(data: encrypted.1))
+        let receipt = try await api.uploadBlob(encrypted.1)
+
+        guard receipt.digest.lowercased() == localDigest.lowercased(),
+              receipt.size == encrypted.1.count else {
+            try? await api.deleteBlob(receipt.id)
+            throw MessengerError.invalid("VO1D отклонил проверку целостности вложения")
+        }
+
+        var attachment = Attachment(
+            name: safeName,
+            mime: safeMime,
+            data: Data()
+        )
+        attachment.blobID = receipt.id
+        attachment.blobKey = encrypted.0.base64EncodedString()
+        attachment.blobSize = plainSize
+        attachment.blobDigest = receipt.digest.lowercased()
+        attachment.blobExpiresAt = Date(timeIntervalSince1970: TimeInterval(receipt.expiresAt))
+        attachment.previewData = preview
+        try validateAttachment(attachment)
+        return attachment
+    }
+
+    func downloadRemoteAttachment(_ attachment: Attachment) async throws -> Data {
+        try validateAttachment(attachment)
+        guard let api,
+              let blobID = attachment.blobID,
+              let keyText = attachment.blobKey,
+              let plainSize = attachment.blobSize,
+              let expectedDigest = attachment.blobDigest else {
+            throw MessengerError.invalid("Удалённое вложение недоступно")
+        }
+
+        let ciphertext = try await api.downloadBlob(blobID)
+        let digest = Crypto.hex(SHA256.hash(data: ciphertext))
+        guard digest.lowercased() == expectedDigest.lowercased() else {
+            throw MessengerError.invalid("Проверка SHA-256 вложения не пройдена")
+        }
+
+        let keyData = try Crypto.decode(keyText, count: 32)
+        let safeName = attachment.name
+        let safeMime = attachment.mime
+
+        let clear = try await Task.detached(priority: .userInitiated) {
+            let key = SymmetricKey(data: keyData)
+            let aad = Data("VO1D-BLOB-1\n\(safeName)\n\(safeMime)\n\(plainSize)".utf8)
+            let box = try AES.GCM.SealedBox(combined: ciphertext)
+            return try AES.GCM.open(box, using: key, authenticating: aad)
+        }.value
+
+        guard clear.count == plainSize else {
+            throw MessengerError.invalid("Размер расшифрованного вложения не совпадает")
+        }
+        return clear
+    }
+
     func send(
         roomID: String,
         text: String,
@@ -886,7 +1005,7 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("В этой группе писать могут только админы")
         }
         guard text.count <= 16000 else { throw MessengerError.invalid("Сообщение слишком длинное") }
-        guard (attachment?.data.count ?? 0) <= 3 * 1024 * 1024 else { throw MessengerError.invalid("Размер вложения — до 3 МБ") }
+        if let attachment { try validateAttachment(attachment) }
         guard !room.members.contains(where: { member in state.contacts.contains(where: { $0.id == member.id && $0.blocked }) }) else {
             throw MessengerError.invalid("В чате есть заблокированный контакт")
         }
@@ -1304,9 +1423,16 @@ final class ChatStore: ObservableObject {
                 throw MessengerError.invalid("Участник без прав попытался отправить сообщение")
             }
 
-            guard message.sender == sender.id, message.roomID == incoming.id, !message.id.isEmpty,
-                  message.text.count <= 16000, (message.attachment?.data.count ?? 0) <= 3 * 1024 * 1024,
-                  message.expiresAt == nil || message.expiresAt! > Date() else { throw MessengerError.invalid("Неверное содержимое сообщения") }
+            guard message.sender == sender.id,
+                  message.roomID == incoming.id,
+                  !message.id.isEmpty,
+                  message.text.count <= 16000,
+                  message.expiresAt == nil || message.expiresAt! > Date() else {
+                throw MessengerError.invalid("Неверное содержимое сообщения")
+            }
+            if let attachment = message.attachment {
+                try validateAttachment(attachment)
+            }
             if !state.messages.contains(where: { $0.id == message.id }) {
                 message.state = "delivered"; message.reactions = [:]; message.readBy = []; message.deliveredTo = []; message.edited = false; message.openedAt = nil
                 state.messages.append(message)

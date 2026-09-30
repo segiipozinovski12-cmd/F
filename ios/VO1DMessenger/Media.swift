@@ -197,10 +197,14 @@ final class VoiceRecorder: ObservableObject {
 enum MediaFiles {
     static var directory: URL { FileManager.default.temporaryDirectory.appendingPathComponent("VO1DPreview", isDirectory: true) }
     static func export(_ attachment: Attachment) throws -> URL {
+        try export(data: attachment.data, name: attachment.name)
+    }
+
+    static func export(data: Data, name: String) throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let safeName = URL(fileURLWithPath: attachment.name).lastPathComponent
+        let safeName = URL(fileURLWithPath: name).lastPathComponent
         let url = directory.appendingPathComponent(UUID().uuidString + "-" + (safeName.isEmpty ? "file" : safeName))
-        try attachment.data.write(to: url, options: [.atomic, .completeFileProtection])
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
         return url
     }
     static func clear() { try? FileManager.default.removeItem(at: directory) }

@@ -66,20 +66,32 @@ struct SharedMediaView: View {
         } else {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 5) {
                 ForEach(photos) { message in
-                    if let attachment = message.attachment, let image = UIImage(data: attachment.data) {
-                        Button {
-                            do { preview = try MediaFiles.export(attachment) }
-                            catch { store.error = error.localizedDescription }
-                        } label: {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(height: 118)
-                                .frame(maxWidth: .infinity)
-                                .clipped()
+                    if let attachment = message.attachment {
+                        let imageData = attachment.blobID == nil ? attachment.data : (attachment.previewData ?? Data())
+                        if let image = UIImage(data: imageData) {
+                            Button {
+                                open(attachment)
+                            } label: {
+                                ZStack(alignment: .bottomTrailing) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(height: 118)
+                                        .frame(maxWidth: .infinity)
+                                        .clipped()
+
+                                    if attachment.blobID != nil {
+                                        Image(systemName: "lock.fill")
+                                            .font(.caption2)
+                                            .padding(7)
+                                            .background(.black.opacity(0.66), in: Circle())
+                                            .padding(6)
+                                    }
+                                }
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -119,8 +131,7 @@ struct SharedMediaView: View {
                 ForEach(files) { message in
                     if let attachment = message.attachment {
                         Button {
-                            do { preview = try MediaFiles.export(attachment) }
-                            catch { store.error = error.localizedDescription }
+                            open(attachment)
                         } label: {
                             HStack(spacing: 14) {
                                 Image(systemName: "doc.fill")
@@ -129,12 +140,15 @@ struct SharedMediaView: View {
                                     .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(attachment.name).lineLimit(2)
-                                    Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
+                                    Text(ByteCountFormatter.string(
+                                        fromByteCount: Int64(attachment.blobSize ?? attachment.data.count),
+                                        countStyle: .file
+                                    ))
                                         .font(.caption2)
                                         .foregroundStyle(Theme.secondary)
                                 }
                                 Spacer()
-                                Image(systemName: "arrow.up.right")
+                                Image(systemName: attachment.blobID == nil ? "arrow.up.right" : "lock.open.display")
                                     .foregroundStyle(Theme.secondary)
                             }
                             .panel()
@@ -142,6 +156,22 @@ struct SharedMediaView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+        }
+    }
+
+    private func open(_ attachment: Attachment) {
+        Task {
+            do {
+                let data: Data
+                if attachment.blobID != nil {
+                    data = try await store.downloadRemoteAttachment(attachment)
+                } else {
+                    data = attachment.data
+                }
+                preview = try MediaFiles.export(data: data, name: attachment.name)
+            } catch {
+                store.error = error.localizedDescription
             }
         }
     }

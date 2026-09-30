@@ -231,14 +231,9 @@ struct ChatView: View {
                 EditHistoryView(message: message)
             }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
-                do {
-                    let url = try result.get(); let granted = url.startAccessingSecurityScopedResource()
-                    defer { if granted { url.stopAccessingSecurityScopedResource() } }
-                    let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
-                    guard (values.fileSize ?? 0) <= 3 * 1024 * 1024 else { throw MessengerError.invalid("Файл должен быть не больше 3 МБ") }
-                    let attachment = Attachment(name: url.lastPathComponent, mime: values.contentType?.preferredMIMEType ?? "application/octet-stream", data: try Data(contentsOf: url))
-                    send(attachment)
-                } catch { store.error = error.localizedDescription }
+                Task {
+                    await processImportedFile(result)
+                }
             }
             .onChange(of: photo) { _, item in
                 guard let item else { return }
@@ -502,7 +497,18 @@ struct ChatView: View {
                     )
                 }
                 if let attachment = message.attachment {
-                    if attachment.mime.hasPrefix("image/"), let image = UIImage(data: attachment.data) {
+                    if attachment.blobID != nil {
+                        RemoteAttachmentCard(
+                            attachment: attachment,
+                            mine: mine
+                        ) { clear in
+                            do {
+                                preview = try MediaFiles.export(data: clear, name: attachment.name)
+                            } catch {
+                                store.error = error.localizedDescription
+                            }
+                        }
+                    } else if attachment.mime.hasPrefix("image/"), let image = UIImage(data: attachment.data) {
                         if let seconds = attachment.viewSeconds, seconds > 0 {
                             EphemeralPhotoView(
                                 messageID: message.id,
@@ -689,6 +695,62 @@ struct ChatView: View {
             return call.incoming ? "ВХОДЯЩИЙ" : "ИСХОДЯЩИЙ"
         }
         return String(format: "%@ · %02d:%02d", call.incoming ? "ВХОДЯЩИЙ" : "ИСХОДЯЩИЙ", call.duration / 60, call.duration % 60)
+    }
+
+    @MainActor
+    func processImportedFile(_ result: Result<URL, Error>) async {
+        do {
+            let url = try result.get()
+            let granted = url.startAccessingSecurityScopedResource()
+            defer {
+                if granted { url.stopAccessingSecurityScopedResource() }
+            }
+
+            let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+            let size = values.fileSize ?? 0
+            guard size > 0, size <= 50 * 1024 * 1024 else {
+                throw MessengerError.invalid("Файл должен быть не больше 50 МБ")
+            }
+
+            let data = try await Task.detached(priority: .userInitiated) {
+                try Data(contentsOf: url, options: [.mappedIfSafe])
+            }.value
+
+            let mime = values.contentType?.preferredMIMEType ?? "application/octet-stream"
+            let name = String(url.lastPathComponent.prefix(180))
+
+            if data.count <= 3 * 1024 * 1024 {
+                send(Attachment(name: name, mime: mime, data: data))
+                return
+            }
+
+            var previewData: Data?
+            if mime.hasPrefix("image/"), let image = UIImage(data: data) {
+                let maxSide: CGFloat = 360
+                let scale = min(1, maxSide / max(image.size.width, image.size.height))
+                let target = CGSize(
+                    width: max(1, image.size.width * scale),
+                    height: max(1, image.size.height * scale)
+                )
+                let renderer = UIGraphicsImageRenderer(size: target)
+                let previewImage = renderer.image { _ in
+                    image.draw(in: CGRect(origin: .zero, size: target))
+                }
+                previewData = previewImage.jpegData(compressionQuality: 0.58)
+            }
+
+            let attachment = try await store.prepareRemoteAttachment(
+                name: name,
+                mime: mime,
+                data: data,
+                preview: previewData
+            )
+            send(attachment)
+            Haptics.success()
+        } catch {
+            Haptics.warning()
+            store.error = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -1054,6 +1116,99 @@ private struct ForwardPickerView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+private struct RemoteAttachmentCard: View {
+    let attachment: Attachment
+    let mine: Bool
+    let onOpen: (Data) -> Void
+
+    @EnvironmentObject private var store: ChatStore
+    @State private var downloading = false
+
+    var body: some View {
+        Button {
+            guard !downloading else { return }
+            downloading = true
+            Task {
+                do {
+                    let clear = try await store.downloadRemoteAttachment(attachment)
+                    onOpen(clear)
+                    Haptics.success()
+                } catch {
+                    Haptics.warning()
+                    store.error = error.localizedDescription
+                }
+                downloading = false
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                if let preview = attachment.previewData,
+                   let image = UIImage(data: preview) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 170)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                HStack(spacing: 11) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill((mine ? Color.black : Color.white).opacity(0.08))
+                            .frame(width: 42, height: 42)
+
+                        if downloading {
+                            ProgressView()
+                                .tint(mine ? .black : .white)
+                                .scaleEffect(0.78)
+                        } else {
+                            Image(systemName: icon)
+                                .font(.headline)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(attachment.name)
+                            .font(.subheadline.bold())
+                            .lineLimit(2)
+
+                        HStack(spacing: 7) {
+                            if let size = attachment.blobSize {
+                                Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                            }
+                            Text("E2EE BLOB")
+                        }
+                        .font(.caption2.monospaced())
+                        .opacity(0.58)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: downloading ? "hourglass" : "arrow.down.circle.fill")
+                        .font(.title3)
+                        .opacity(0.72)
+                }
+
+                if let expiry = attachment.blobExpiresAt {
+                    Text("Ciphertext доступен до \(expiry.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.caption2)
+                        .opacity(0.46)
+                }
+            }
+            .padding(4)
+        }
+        .buttonStyle(.plain)
+        .disabled(downloading)
+    }
+
+    private var icon: String {
+        if attachment.mime.hasPrefix("video/") { return "play.rectangle.fill" }
+        if attachment.mime.hasPrefix("image/") { return "photo.fill" }
+        if attachment.mime.hasPrefix("audio/") { return "waveform" }
+        if attachment.mime == "application/pdf" { return "doc.richtext.fill" }
+        return "doc.fill"
     }
 }
 

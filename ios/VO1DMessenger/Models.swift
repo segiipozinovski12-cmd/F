@@ -43,6 +43,12 @@ struct Attachment: Codable, Hashable {
     var data: Data
     var viewSeconds: Int? = nil
     var voiceEffect: String? = nil
+    var blobID: String? = nil
+    var blobKey: String? = nil
+    var blobSize: Int? = nil
+    var blobDigest: String? = nil
+    var blobExpiresAt: Date? = nil
+    var previewData: Data? = nil
 }
 
 struct PollOption: Codable, Hashable, Identifiable {
@@ -55,24 +61,6 @@ struct PollData: Codable, Hashable {
     var question: String
     var options: [PollOption]
     var closed: Bool = false
-}
-
-struct CallMessageData: Codable, Hashable {
-    var incoming: Bool
-    var status: String
-    var duration: Int
-}
-
-struct CallRecord: Codable, Hashable, Identifiable {
-    var id: String
-    var callID: String
-    var peerID: String
-    var peerName: String
-    var incoming: Bool
-    var startedAt: Date
-    var endedAt: Date
-    var status: String
-    var duration: Int
 }
 
 struct ChatMessage: Codable, Identifiable, Hashable {
@@ -96,7 +84,6 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var editHistory: [String]? = nil
     var poll: PollData? = nil
     var topic: String? = nil
-    var call: CallMessageData? = nil
 }
 
 /// All event content, including group membership and attachments, lives inside AEAD.
@@ -151,7 +138,6 @@ struct VaultState: Codable {
     var username: String? = nil
     var bio: String? = nil
     var profileAvatar: Data? = nil
-    var callHistory: [CallRecord]? = nil
 }
 
 struct Invite: Codable {

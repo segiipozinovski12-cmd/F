@@ -8,6 +8,12 @@ final class APIClient {
     struct UsernameCheck: Decodable { var username: String; var available: Bool; var valid: Bool }
     private struct UsernameResponse: Decodable { var username: String }
     private struct UsernameLookup: Decodable { var username: String; var card: ContactCard }
+    struct BlobReceipt: Decodable {
+        var id: String
+        var size: Int
+        var digest: String
+        var expiresAt: Int
+    }
 
     var base: URL
     private var token: String?
@@ -114,6 +120,100 @@ final class APIClient {
         let result: UsernameLookup = try await request("v1/username/\(encoded)")
         try Crypto.validate(result.card)
         return result.card
+    }
+
+    func uploadBlob(_ ciphertext: Data, retry: Bool = true) async throws -> BlobReceipt {
+        if token == nil {
+            try await authenticate()
+        }
+
+        var request = URLRequest(url: base.appendingPathComponent("v1/blob"))
+        request.httpMethod = "PUT"
+        request.httpBody = ciphertext
+        request.timeoutInterval = 120
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MessengerError.invalid("Нет ответа VO1D")
+        }
+
+        if http.statusCode == 401 && retry {
+            try await authenticate()
+            return try await uploadBlob(ciphertext, retry: false)
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка upload \(http.statusCode)"
+            throw MessengerError.invalid(detail)
+        }
+
+        return try Wire.decoder.decode(BlobReceipt.self, from: data)
+    }
+
+    func downloadBlob(_ id: String, retry: Bool = true) async throws -> Data {
+        guard id.count >= 40 && id.count <= 64 else {
+            throw MessengerError.invalid("Некорректный blob ID")
+        }
+        if token == nil {
+            try await authenticate()
+        }
+
+        var request = URLRequest(url: base.appendingPathComponent("v1/blob/\(id)"))
+        request.timeoutInterval = 120
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MessengerError.invalid("Нет ответа VO1D")
+        }
+
+        if http.statusCode == 401 && retry {
+            try await authenticate()
+            return try await downloadBlob(id, retry: false)
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка download \(http.statusCode)"
+            throw MessengerError.invalid(detail)
+        }
+        guard data.count <= 50 * 1024 * 1024 + 64 else {
+            throw MessengerError.invalid("Удалённое вложение превышает лимит")
+        }
+        return data
+    }
+
+    func deleteBlob(_ id: String, retry: Bool = true) async throws {
+        if token == nil {
+            try await authenticate()
+        }
+
+        var request = URLRequest(url: base.appendingPathComponent("v1/blob/\(id)"))
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 30
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MessengerError.invalid("Нет ответа VO1D")
+        }
+
+        if http.statusCode == 401 && retry {
+            try await authenticate()
+            return try await deleteBlob(id, retry: false)
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка удаления blob \(http.statusCode)"
+            throw MessengerError.invalid(detail)
+        }
     }
 
     func inbox() async throws -> [Envelope] {

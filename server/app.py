@@ -81,6 +81,16 @@ class Relay:
                 CREATE INDEX IF NOT EXISTS code_identity ON codes(identity);
                 CREATE TABLE IF NOT EXISTS usernames (username TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL, updated INTEGER NOT NULL);
                 CREATE INDEX IF NOT EXISTS username_identity ON usernames(identity);
+                CREATE TABLE IF NOT EXISTS blobs (
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    digest TEXT NOT NULL,
+                    created INTEGER NOT NULL,
+                    expires INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS blob_owner ON blobs(owner);
+                CREATE INDEX IF NOT EXISTS blob_expiry ON blobs(expires);
                 CREATE TABLE IF NOT EXISTS rates (bucket TEXT PRIMARY KEY, count INTEGER, expires INTEGER);
             ''')
 
@@ -295,6 +305,7 @@ class Relay:
                 db.execute('DELETE FROM blocks WHERE owner=? OR peer=?', (user, user))
                 db.execute('DELETE FROM codes WHERE identity=?', (user,))
                 db.execute('DELETE FROM usernames WHERE identity=?', (user,))
+                db.execute('DELETE FROM blobs WHERE owner=?', (user,))
                 db.execute('DELETE FROM sessions WHERE identity=?', (user,))
                 db.execute('DELETE FROM challenges WHERE identity=?', (user,))
                 db.execute('DELETE FROM identities WHERE id=?', (user,))

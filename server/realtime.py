@@ -6,14 +6,23 @@ never receives audio plaintext.
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
+import re
+import secrets
+import time
+from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from app import APIError, ID, MAX_BODY, UUID, Relay
 
 CALL_MAX_AUDIO = 96 * 1024
 CALL_MAX_TEXT = 140 * 1024
+BLOB_MAX_BYTES = 50 * 1024 * 1024 + 64
+BLOB_OWNER_QUOTA = 500 * 1024 * 1024
+BLOB_RETENTION = 30 * 86400
+BLOB_ID = re.compile(r"^[A-Za-z0-9_-]{40,64}$")
 
 
 class RealtimeGateway:
@@ -22,6 +31,9 @@ class RealtimeGateway:
         self.clients = {}
         self.calls = {}
         self.lock = asyncio.Lock()
+        self.blob_dir = Path(os.environ.get("VO1D_BLOB_DIR", "/data/blobs"))
+        self.blob_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_blobs(include_orphans=True)
 
     def _env(self, request):
         return {
@@ -35,6 +47,170 @@ class RealtimeGateway:
         with self.relay.db() as db:
             self.relay.clean(db)
             return self.relay.user(self._env(request), db)
+
+    def _blob_path(self, blob_id):
+        if not isinstance(blob_id, str) or not BLOB_ID.fullmatch(blob_id):
+            raise APIError(400, "Invalid blob id")
+        return self.blob_dir / blob_id
+
+    def _cleanup_blobs(self, include_orphans=False):
+        now = int(time.time())
+        with self.relay.db() as db:
+            expired = [row["id"] for row in db.execute(
+                "SELECT id FROM blobs WHERE expires<=?", (now,)
+            ).fetchall()]
+            if expired:
+                db.executemany("DELETE FROM blobs WHERE id=?", [(blob_id,) for blob_id in expired])
+            live = set()
+            if include_orphans:
+                live = {row["id"] for row in db.execute("SELECT id FROM blobs").fetchall()}
+
+        for blob_id in expired:
+            try:
+                self._blob_path(blob_id).unlink(missing_ok=True)
+            except (OSError, APIError):
+                pass
+
+        if include_orphans:
+            try:
+                for item in self.blob_dir.iterdir():
+                    if item.is_file() and item.name not in live:
+                        item.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _write_blob(path, data):
+        temp = path.with_name(path.name + ".tmp-" + secrets.token_hex(8))
+        try:
+            with open(temp, "xb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    async def blob_upload(self, request):
+        try:
+            user = self._user(request)
+            self.relay.rate("blob-upload:" + user, 80, 3600)
+            self._cleanup_blobs()
+
+            if request.content_type != "application/octet-stream":
+                raise APIError(415, "Encrypted binary blob required")
+
+            length = request.content_length
+            if length is None or length < 29 or length > BLOB_MAX_BYTES:
+                raise APIError(413, "Blob exceeds size limit")
+
+            with self.relay.db() as db:
+                count, total = db.execute(
+                    "SELECT count(*),coalesce(sum(size),0) FROM blobs WHERE owner=? AND expires>?",
+                    (user, int(time.time()))
+                ).fetchone()
+            if count >= 200 or total + length > BLOB_OWNER_QUOTA:
+                raise APIError(429, "Blob quota exceeded")
+
+            payload = await request.read()
+            if len(payload) != length or len(payload) > BLOB_MAX_BYTES:
+                raise APIError(413, "Blob exceeds size limit")
+
+            blob_id = secrets.token_urlsafe(32)
+            path = self._blob_path(blob_id)
+            digest = hashlib.sha256(payload).hexdigest()
+            now = int(time.time())
+            expires = now + BLOB_RETENTION
+
+            await asyncio.to_thread(self._write_blob, path, payload)
+            try:
+                with self.relay.db() as db:
+                    db.execute(
+                        "INSERT INTO blobs(id,owner,size,digest,created,expires) VALUES (?,?,?,?,?,?)",
+                        (blob_id, user, len(payload), digest, now, expires)
+                    )
+            except Exception:
+                path.unlink(missing_ok=True)
+                raise
+
+            return web.json_response(
+                {
+                    "id": blob_id,
+                    "size": len(payload),
+                    "digest": digest,
+                    "expiresAt": expires
+                },
+                headers={"Cache-Control": "no-store"}
+            )
+        except APIError as exc:
+            return web.json_response(
+                {"error": exc.message},
+                status=exc.status,
+                headers={"Cache-Control": "no-store"}
+            )
+        except Exception:
+            return web.json_response(
+                {"error": "Blob upload unavailable"},
+                status=500,
+                headers={"Cache-Control": "no-store"}
+            )
+
+    async def blob_download(self, request):
+        try:
+            user = self._user(request)
+            self.relay.rate("blob-download:" + user, 240, 3600)
+            self._cleanup_blobs()
+
+            blob_id = request.match_info.get("blob_id", "")
+            path = self._blob_path(blob_id)
+
+            with self.relay.db() as db:
+                row = db.execute(
+                    "SELECT size,digest,expires FROM blobs WHERE id=? AND expires>?",
+                    (blob_id, int(time.time()))
+                ).fetchone()
+            if not row or not path.is_file():
+                raise APIError(404, "Blob not found")
+
+            response = web.FileResponse(path)
+            response.content_type = "application/octet-stream"
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-VO1D-Blob-Digest"] = row["digest"]
+            response.headers["Content-Length"] = str(row["size"])
+            return response
+        except APIError as exc:
+            return web.json_response(
+                {"error": exc.message},
+                status=exc.status,
+                headers={"Cache-Control": "no-store"}
+            )
+
+    async def blob_delete(self, request):
+        try:
+            user = self._user(request)
+            blob_id = request.match_info.get("blob_id", "")
+            path = self._blob_path(blob_id)
+
+            with self.relay.db() as db:
+                row = db.execute("SELECT owner FROM blobs WHERE id=?", (blob_id,)).fetchone()
+                if not row:
+                    return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
+                if row["owner"] != user:
+                    raise APIError(403, "Blob owner required")
+                db.execute("DELETE FROM blobs WHERE id=?", (blob_id,))
+
+            path.unlink(missing_ok=True)
+            return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
+        except APIError as exc:
+            return web.json_response(
+                {"error": exc.message},
+                status=exc.status,
+                headers={"Cache-Control": "no-store"}
+            )
 
     async def http(self, request):
         try:
@@ -50,6 +226,8 @@ class RealtimeGateway:
                 raise APIError(400, "JSON object required")
             result = self.relay.dispatch(self._env(request), body)
             status = 200
+            if request.method == "DELETE" and request.path == "/v1/account":
+                self._cleanup_blobs(include_orphans=True)
         except APIError as exc:
             result, status = {"error": exc.message}, exc.status
         except (ValueError, TypeError, KeyError, UnicodeError, json.JSONDecodeError):
@@ -250,8 +428,11 @@ class RealtimeGateway:
 
 def create_app():
     gateway = RealtimeGateway()
-    app = web.Application(client_max_size=MAX_BODY)
+    app = web.Application(client_max_size=BLOB_MAX_BYTES)
     app.router.add_get("/v1/call/socket", gateway.websocket)
+    app.router.add_put("/v1/blob", gateway.blob_upload)
+    app.router.add_get("/v1/blob/{blob_id}", gateway.blob_download)
+    app.router.add_delete("/v1/blob/{blob_id}", gateway.blob_delete)
     app.router.add_route("*", "/{tail:.*}", gateway.http)
     return app
 
