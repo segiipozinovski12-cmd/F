@@ -1,15 +1,22 @@
-# VO1D Messenger 1.3
+# VO1D Messenger 2 · work branch
 
-Нативный мессенджер для iPhone и iPad, SwiftUI, iOS 17+. Личность без номера, почты и загрузки адресной книги. Сообщения и локальная история шифруются. Это псевдонимная переписка; сетевую анонимность приложение не гарантирует.
+Нативный мессенджер для iPhone и iPad, SwiftUI, iOS 17+. Личность без номера, почты и загрузки адресной книги. Новые сообщения используют официальный libsignal PQXDH/Double Ratchet; есть встроенный Tor и private capability delivery. Интерфейс — глубокий чёрный и белый. Независимый аудит не проводился, полная анонимность не гарантируется.
 
 ## Запуск
 
 ```bash
-git clone --branch codex/privacy-expansion https://github.com/segiipozinovski12-cmd/F.git VO1D-Messenger
-open VO1D-Messenger/ios/VO1DMessenger.xcodeproj
+git clone --recurse-submodules --branch codex/anonymous-v2 https://github.com/segiipozinovski12-cmd/F.git VO1D-Messenger
+cd VO1D-Messenger
+brew install protobuf cmake ninja
+rustup toolchain install nightly-2025-02-25
+rustup target add --toolchain nightly-2025-02-25 aarch64-apple-ios-sim aarch64-apple-ios
+bash scripts/build_signal.sh aarch64-apple-ios-sim debug
+open ios/VO1DMessenger.xcodeproj
 ```
 
-Выбери схему `VO1DMessenger` и установленный симулятор. Для устройства настрой свою Team, Bundle Identifier и Push Notifications. Ключи и сертификаты Apple в репозитории отсутствуют. Новые серверные функции требуют relay из этой же ветки; публикация исходников сама по себе не обновляет production-сервер.
+Нужны macOS, Xcode и Rust/rustup. Выбери схему `VO1DMessenger` и arm64 симулятор; Debug связывается с собранным native SDK. Для Release устройства сначала выполни `bash scripts/build_signal.sh aarch64-apple-ios release`, затем настрой Team/Bundle Identifier/Push Notifications. Apple credentials отсутствуют. Relay должен быть из этой же ветки и отвечать на `/v2/capabilities`; публикация исходников не обновляет production-сервер. Закреплённый libsignal имеет AGPL-3.0-only; notices включены в приложение.
+
+Статус всех 60 пунктов и оставшаяся работа: **[docs/ANONYMITY-V2.md](docs/ANONYMITY-V2.md)**. Там отдельно отмечены работающий код, исследования, частичные функции и внешние проверки.
 
 ## Возможности
 
@@ -19,8 +26,13 @@ open VO1D-Messenger/ios/VO1DMessenger.xcodeproj
 - Запросы от незнакомцев, согласие на группы, одноразовые приглашения со сроком и числом использований, отзыв, замена кода, отключение поиска.
 - Псевдоним для каждого личного контакта, QR проверки ключей, скрытые чаты, нейтральные уведомления, настройки receipts/typing, временный буфер обмена.
 - Проверка метаданных, фото без EXIF, редактор закрытия областей и поиска лиц, OCR на устройстве, подтверждение ссылок и удаление известных tracking-параметров.
-- SOCKS5 для HTTP, файлов и WSS без прямого обхода при ошибке; нужен внешний работающий прокси/Tor.
-- Парольная зашифрованная резервная копия файла, управление памятью, сессиями и сроками хранения, блокировка и очистка при неактивности.
+- Официальный libsignal, атомарные one-time prekeys, сохранение ratchet state и ciphertext до отправки, запрет downgrade.
+- Встроенный Tor/SOCKS5 для HTTP, файлов и WSS без прямого обхода при ошибке; отдельные scopes для capability соединений.
+- Private QR, отдельные mailbox адреса разговоров, read/write capabilities и encrypted blobs без account bearer. Account bootstrap и звонки всё ещё раскрывают метаданные.
+- До 12 независимых профилей с отдельными ключами; scoped contact/group profiles для раздельных личностей.
+- Групповой pairwise fanout до 16 участников, epochs, подписанные приглашения с audience/expiry/отзывом; MLS не реализован.
+- Режимы encrypted backup identity/history/full без старых ratchet sessions, локальная диагностика, protected temp cleanup и удаление одного профиля.
+- Двусторонняя привязка второго устройства и отзыв; ручной E2EE перенос ограниченной text/poll истории в read-only archive, без live sync.
 - Скрытый состав подписчиков в канале с одним публикующим владельцем; обычные группы раскрывают состав. В приватных опросах участники видят только счётчики, создатель видит индивидуальные голоса.
 
 Полный перечень и фактический статус: [docs/FEATURES.md](docs/FEATURES.md).
@@ -30,11 +42,11 @@ open VO1D-Messenger/ios/VO1DMessenger.xcodeproj
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r server/requirements.txt
+pip install --require-hashes -r server/requirements.lock
 VO1D_DB=/tmp/vo1d.sqlite3 VO1D_BLOB_DIR=/tmp/vo1d-blobs python3 server/realtime.py
 ```
 
-В двух симуляторах укажи `http://127.0.0.1:8080`, создай разные личности и обменяйся приглашениями. HTTP доступен для loopback в Debug. Физическому iPhone нужен HTTPS.
+В двух arm64 симуляторах укажи `http://127.0.0.1:8080`, создай разные личности и обменяйся private QR приглашениями. HTTP доступен для loopback в Debug. Физическому iPhone нужен HTTPS либо v3 onion в явном Tor режиме.
 
 ## Сервер и push
 
@@ -44,7 +56,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Инструкции: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), [server/RAILWAY.md](server/RAILWAY.md). APNs/PushKit реализованы, но нужны ключ Apple, корректные entitlement/topic и проверка на устройстве. Фоновые звонки используют отдельное разрешение: ключ подписи доступен после первого разблокирования, ключи расшифровки истории и сообщений остаются `WhenUnlockedThisDeviceOnly`. APNs и внешний браузер не используют прокси приложения.
+Инструкции: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), [server/RAILWAY.md](server/RAILWAY.md). Опциональный onion origin — `compose.onion.yaml`. APNs/PushKit требуют ключ Apple, корректные entitlement/topic и physical QA. Фоновые звонки используют ограниченный делегированный calls-only ключ после первого разблокирования; корневые и message/vault keys остаются `WhenUnlockedThisDeviceOnly`. APNs и внешний браузер не используют прокси приложения. Private mailbox delivery без account association не имеет account push.
 
 ## Проверки
 
@@ -52,15 +64,18 @@ docker compose up -d --build
 python3 -m unittest discover -s server/tests -v
 python3 scripts/generate_project.py
 xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger \
-  -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO
+  -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO \
+  ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+  LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug" \
+  OTHER_LDFLAGS='-lsignal_ffi -lc++ -lresolv'
 ```
 
-Выбери имя установленного симулятора. CI проверяет Xcode-проект, Debug, XCTest, Release для устройства, серверные тесты и Docker-образ. Новые тесты покрывают приглашения, приватность, APNs, WSS, Range-загрузку, резервные копии и защиту аудио от повторов.
+Выбери имя установленного симулятора. CI проверяет generated project, Debug/XCTest/unsigned device Release, сервер и Docker. Python pins проходят dependency audit; build manifest и device archive публикуются как artifacts. Provenance не означает аудит безопасности или Apple подпись. Native/системные зависимости и Tor binary не дают полной bit-reproducibility.
 
 ## Ограничения
 
-Сообщения используют X25519, HKDF-SHA256, AES-GCM и подписи Ed25519. Протокол сообщений v1 пока без Double Ratchet: получение долгосрочного ключа получателя может раскрыть записанный трафик. Внешний аудит не проводился. Звонки используют отдельные подписанные ephemeral-ключи; это также собственный неаудированный протокол.
+Новая переписка использует libsignal; legacy v1 history не приобретает forward secrecy задним числом. Outer mailbox encryption, profile/group/device integration и звонки ещё не прошли независимый аудит. Голос — собственный PCM/WSS transport с Apple resampling, а не RingRTC/WebRTC SDK. Wi-Fi/mobile reconnect реализован, но physical handover не проверен.
 
-Relay видит ID сторон, время, размеры и IP подключения; с прокси — IP выхода. Padding не обеспечивает защиту от анализа трафика. Удаление не стирает копии у получателей. Восстановление из файла не является синхронизацией нескольких устройств; отложенная отправка требует работы приложения. APNs/CallKit ещё требуют физической проверки.
+Private mailboxes не передают plaintext sender/account ID, но время, buckets, соединения и операторская корреляция остаются. Account discovery/обычная доставка/звонки сохраняют routing IDs. Padding/Tor не являются доказательством устойчивости к глобальному наблюдателю; нужны реальные DNS/packet captures. Удаление не стирает копии у получателей и host backups. Отложенная отправка и private inbox polling требуют возможности работы приложения. APNs/CallKit, visual QA и полный live multi-device sync ещё не завершены.
 
-Модель угроз: [docs/SECURITY.md](docs/SECURITY.md). Оставшаяся работа по протоколу: [docs/PROTOCOL-V2.md](docs/PROTOCOL-V2.md).
+Модель угроз: [docs/SECURITY.md](docs/SECURITY.md). Протокол: [docs/PROTOCOL-V2.md](docs/PROTOCOL-V2.md). Пакет аудита: [docs/AUDIT-PACK.md](docs/AUDIT-PACK.md).

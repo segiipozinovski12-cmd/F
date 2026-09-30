@@ -42,7 +42,7 @@ enum DeviceHistory {
         return archive
     }
     static func validate(_ archive: HistoryArchive, owner: ContactCard) throws {
-        guard archive.ownerCard == owner, archive.messages.count <= 200, archive.rooms.count <= 200,
+        guard archive.ownerCard?.hasSameKeys(as: owner) == true, archive.messages.count <= 200, archive.rooms.count <= 200,
               archive.contacts.count <= 3200, archive.messages.allSatisfy({ $0.attachment == nil }),
               Set(archive.messages.map(\.id)).count == archive.messages.count,
               Set(archive.rooms.map(\.id)).count == archive.rooms.count,
@@ -72,7 +72,7 @@ extension ChatStore {
     }
     func approveDevice(_ id: String) throws {
         guard let link = extended.deviceLinks.first(where:{ $0.id == id }), link.certificate.device == myID,
-              state.contacts.contains(where:{ $0.card == link.peer && $0.verified && !$0.blocked }) else { throw MessengerError.invalid("Сверь отпечаток второго устройства") }
+              state.contacts.contains(where:{ $0.card.hasSameKeys(as: link.peer) && $0.verified && !$0.blocked }) else { throw MessengerError.invalid("Сверь отпечаток второго устройства") }
         try link.certificate.validate()
         try deviceEvent(kind:"deviceApprove",certificate:link.certificate,peer:link.peer)
         var local = extended
@@ -103,15 +103,15 @@ extension ChatStore {
         var local = extended
         local.revokedDevices = local.revokedDevices.filter { $0.value > Int(Date().timeIntervalSince1970) }
         if event.kind == "deviceRevoke" {
-            guard (certificate.issuer == sender && certificate.device == myID) || (certificate.issuer.id == myID && certificate.device == sender.id) else { throw MessengerError.invalid("Другая связь устройства") }
+            guard (certificate.issuer.hasSameKeys(as: sender) && certificate.device == myID) || (certificate.issuer.id == myID && certificate.device == sender.id) else { throw MessengerError.invalid("Другая связь устройства") }
             local.deviceLinks.removeAll { $0.id == certificate.id }
             local.revokedDevices[certificate.id] = certificate.expiresAt
             state.extended = local; return true
         }
         guard local.revokedDevices[certificate.id] == nil else { throw MessengerError.invalid("Эта связь отозвана") }
         if event.kind == "devicePair" {
-            guard certificate.issuer == sender, certificate.device == myID, local.deviceLinks.count < 8,
-                  state.contacts.contains(where:{ $0.card == sender && !$0.blocked }) else { throw MessengerError.invalid("Незнакомое устройство") }
+            guard certificate.issuer.hasSameKeys(as: sender), certificate.device == myID, local.deviceLinks.count < 8,
+                  state.contacts.contains(where:{ $0.card.hasSameKeys(as: sender) && !$0.blocked }) else { throw MessengerError.invalid("Незнакомое устройство") }
             if !local.deviceLinks.contains(where:{ $0.id == certificate.id }) { local.deviceLinks.append(DeviceLink(certificate:certificate,peer:sender)) }
         } else {
             guard let index = local.deviceLinks.firstIndex(where:{ $0.id == certificate.id }), local.deviceLinks[index].peer == sender,
@@ -121,7 +121,7 @@ extension ChatStore {
                 guard certificate.issuer.id == myID, certificate.device == sender.id else { throw MessengerError.invalid("Другое устройство в подтверждении") }
                 local.deviceLinks[index].approved = true
             case "deviceHistory":
-                guard local.deviceLinks[index].approved, certificate.issuer == sender, certificate.device == myID, let archive = event.historyArchive else { throw MessengerError.invalid("История не разрешена") }
+                guard local.deviceLinks[index].approved, certificate.issuer.hasSameKeys(as: sender), certificate.device == myID, let archive = event.historyArchive else { throw MessengerError.invalid("История не разрешена") }
                 try DeviceHistory.validate(archive,owner:sender)
                 local.archives.removeAll { $0.id == archive.id }
                 guard local.archives.count < 20 else { throw MessengerError.invalid("Удалить старые архивы можно в разделе истории") }

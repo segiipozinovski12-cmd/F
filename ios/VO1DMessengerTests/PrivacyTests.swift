@@ -74,6 +74,32 @@ final class PrivacyTests: XCTestCase {
         envelope.ciphertext[envelope.ciphertext.startIndex] ^= 1
         XCTAssertThrowsError(try SecureBackup.open(Wire.encoder.encode(envelope),password:"correct horse battery"))
     }
+
+    func testBackupRejectsDifferentOwnerAndChangedAgreementKey() throws {
+        let identity = try LocalIdentity.create(), other = try LocalIdentity.create()
+        let state = VaultState()
+        let foreign = try SecureBackup.export(BackupPayload(identity:identity,state:state,ownerCard:other.card),password:"correct horse battery")
+        XCTAssertThrowsError(try SecureBackup.open(foreign,password:"correct horse battery"))
+        var card = try identity.card
+        card.agreementKey = try other.card.agreementKey
+        card.binding = try identity.signingPrivate.signature(for:Crypto.cardBytes(card)).base64EncodedString()
+        try Crypto.validate(card)
+        let changed = try SecureBackup.export(BackupPayload(identity:identity,state:state,ownerCard:card),password:"correct horse battery")
+        XCTAssertThrowsError(try SecureBackup.open(changed,password:"correct horse battery"))
+    }
+
+    func testKeyIdentityComparisonDoesNotReplaceSignatureValidation() throws {
+        let identity = try LocalIdentity.create()
+        let card = try identity.card
+        let renewed = try identity.card
+        try Crypto.validate(renewed)
+        XCTAssertEqual(card,renewed)
+        XCTAssertEqual(Set([card,renewed]).count,1)
+        var forged = card; forged.binding = Data(repeating:0,count:64).base64EncodedString()
+        XCTAssertThrowsError(try Crypto.validate(forged))
+        let other = try LocalIdentity.create()
+        XCTAssertNotEqual(card,try other.card)
+    }
 }
 
 extension PrivacyTests {

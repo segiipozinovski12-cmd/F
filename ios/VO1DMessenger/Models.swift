@@ -6,6 +6,15 @@ struct ContactCard: Codable, Hashable, Identifiable {
     var agreementKey: String
     var binding: String
     var shortID: String { String(id.prefix(12)).uppercased() }
+    /// A valid signature is evidence of the binding, not part of the key identity.
+    /// Providers may produce different valid signatures for the same public card.
+    func hasSameKeys(as other: ContactCard) -> Bool {
+        id == other.id && signingKey == other.signingKey && agreementKey == other.agreementKey
+    }
+    static func == (lhs: ContactCard, rhs: ContactCard) -> Bool { lhs.hasSameKeys(as: rhs) }
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id); hasher.combine(signingKey); hasher.combine(agreementKey)
+    }
 }
 
 struct Contact: Codable, Identifiable, Hashable {
