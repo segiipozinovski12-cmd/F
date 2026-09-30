@@ -31,6 +31,11 @@ jobs:
         run: |
           docker build -t vo1d-relay:ci server
           docker run --rm --entrypoint python vo1d-relay:ci -c "from app import Relay; Relay('/tmp/smoke.sqlite3')"
+      - name: Validate reverse proxy and onion configuration
+        run: |
+          docker run --rm -e VO1D_DOMAIN=ci.invalid -v "$PWD/server/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+          docker build -t vo1d-onion:ci deploy/tor
+          docker run --rm --add-host relay:127.0.0.1 vo1d-onion:ci --verify-config -f /etc/tor/torrc
   ios:
     permissions:
       contents: read
@@ -82,6 +87,21 @@ jobs:
         run: |
           bash scripts/build_signal.sh aarch64-apple-ios release
           xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Release -destination 'generic/platform=iOS' -derivedDataPath release CODE_SIGNING_ALLOWED=NO
+      - name: Capture first-run interface for visual review
+        run: |
+          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and "iPhone" in d["name"]))')
+          xcrun simctl bootstatus "$simulator_id" -b
+          xcrun simctl status_bar "$simulator_id" override --time '9:41' --batteryState charged --batteryLevel 100
+          xcrun simctl install "$simulator_id" build/Build/Products/Debug-iphonesimulator/VO1DMessenger.app
+          xcrun simctl launch "$simulator_id" io.vo1d.messenger
+          sleep 3
+          mkdir -p build-evidence
+          xcrun simctl io "$simulator_id" screenshot build-evidence/first-run.png
+      - name: Upload interface preview
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VO1D-first-run-interface
+          path: build-evidence/first-run.png
       - name: Package unsigned device build and dependency evidence
         run: |
           python3 scripts/build_manifest.py

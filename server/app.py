@@ -187,8 +187,10 @@ class Relay:
             if method == 'POST' and path == '/v1/register':
                 card = verify_card(body)
                 old = db.execute('SELECT card FROM identities WHERE id=?', (card['id'],)).fetchone()
-                if old and json.loads(old[0]) != card:
-                    raise APIError(409, 'Identity already bound to different keys')
+                if old:
+                    previous = json.loads(old[0])
+                    if any(b64(previous[key],32) != b64(card[key],32) for key in ('signingKey','agreementKey')):
+                        raise APIError(409, 'Identity already bound to different keys')
                 db.execute('INSERT OR IGNORE INTO identities VALUES (?,?)', (card['id'], json.dumps(card)))
                 db.execute('INSERT OR IGNORE INTO privacy(identity,last_active) VALUES (?,?)',(card['id'],now))
                 return {'ok': True}
