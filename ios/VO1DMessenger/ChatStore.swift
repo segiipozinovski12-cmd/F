@@ -63,11 +63,11 @@ final class ChatStore: ObservableObject {
 
             var relayChanged = false
             if state.onboarded {
-                if state.server != AppConfig.productionRelay {
+                if state.server.isEmpty {
                     state.server = AppConfig.productionRelay
                     relayChanged = true
                 }
-                api = try APIClient(server: AppConfig.productionRelay, identity: identity, privacy: preferences)
+                api = try APIClient(server: state.server, identity: identity, privacy: preferences)
                 connection = "Подключение…"
             } else {
                 connection = "Готов к регистрации"
@@ -95,11 +95,12 @@ final class ChatStore: ObservableObject {
         guard state.onboarded, let identity else { return }
         connection = "Подключение…"
         do {
-            let client = try APIClient(server: AppConfig.productionRelay, identity: identity, privacy: preferences)
+            let server=state.server.isEmpty ? AppConfig.productionRelay : state.server
+            let client = try APIClient(server: server, identity: identity, privacy: preferences)
             try await client.authenticate()
             let publicCode = try await client.ensurePublicCode()
             api = client
-            state.server = AppConfig.productionRelay
+            state.server = server
             state.publicCode = publicCode
             try save()
             CallManager.shared.configure(
@@ -1774,4 +1775,3 @@ final class ChatStore: ObservableObject {
         if let index = state.rooms.firstIndex(where: { $0.id == id }) { update(&state.rooms[index]); persist() }
     }
 }
-
