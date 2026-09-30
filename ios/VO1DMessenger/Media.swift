@@ -3,6 +3,129 @@ import AVFoundation
 import SwiftUI
 import CoreImage.CIFilterBuiltins
 
+enum VoiceEffect: String, CaseIterable, Identifiable, Codable {
+    case natural
+    case deep
+    case bright
+    case robot
+    case shadow
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .natural: return "Обычный"
+        case .deep: return "Глубокий"
+        case .bright: return "Высокий"
+        case .robot: return "Робот"
+        case .shadow: return "Тень"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .natural: return "Без обработки"
+        case .deep: return "Ниже и плотнее"
+        case .bright: return "Выше и легче"
+        case .robot: return "Металлический оттенок"
+        case .shadow: return "Ниже и медленнее"
+        }
+    }
+
+    var pitch: Float {
+        switch self {
+        case .natural: return 0
+        case .deep: return -520
+        case .bright: return 520
+        case .robot: return -110
+        case .shadow: return -760
+        }
+    }
+
+    var rate: Float {
+        switch self {
+        case .shadow: return 0.88
+        case .robot: return 1.04
+        default: return 1
+        }
+    }
+
+    var overlap: Float {
+        self == .robot ? 3 : 8
+    }
+}
+
+enum VoiceProcessor {
+    static func render(input: URL, effect: VoiceEffect) throws -> URL {
+        guard effect != .natural else { return input }
+
+        let source = try AVAudioFile(forReading: input)
+        let format = source.processingFormat
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let pitch = AVAudioUnitTimePitch()
+        pitch.pitch = effect.pitch
+        pitch.rate = effect.rate
+        pitch.overlap = effect.overlap
+
+        engine.attach(player)
+        engine.attach(pitch)
+        engine.connect(player, to: pitch, format: format)
+        engine.connect(pitch, to: engine.mainMixerNode, format: format)
+
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 24000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 48000
+        ]
+        let destination = try AVAudioFile(forWriting: output, settings: settings)
+
+        player.scheduleFile(source, at: nil)
+        try engine.start()
+        player.play()
+
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: engine.manualRenderingFormat,
+            frameCapacity: engine.manualRenderingMaximumFrameCount
+        ) else {
+            throw MessengerError.invalid("Не удалось подготовить обработку голоса")
+        }
+
+        let estimatedFrames = AVAudioFramePosition(
+            Double(source.length) / Double(max(effect.rate, 0.5))
+        ) + AVAudioFramePosition(format.sampleRate)
+
+        while engine.manualRenderingSampleTime < estimatedFrames {
+            let remaining = estimatedFrames - engine.manualRenderingSampleTime
+            let frames = AVAudioFrameCount(min(AVAudioFramePosition(buffer.frameCapacity), remaining))
+            if frames == 0 { break }
+            let status = try engine.renderOffline(frames, to: buffer)
+            switch status {
+            case .success:
+                try destination.write(from: buffer)
+            case .insufficientDataFromInput:
+                if !player.isPlaying { engine.stop(); return output }
+            case .cannotDoInCurrentContext:
+                continue
+            case .error:
+                engine.stop()
+                throw MessengerError.invalid("Не удалось применить голосовой эффект")
+            @unknown default:
+                engine.stop()
+                throw MessengerError.invalid("Неизвестная ошибка обработки голоса")
+            }
+        }
+
+        player.stop()
+        engine.stop()
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: output.path)
+        return output
+    }
+}
+
 @MainActor
 final class VoiceRecorder: ObservableObject {
     @Published var recording = false
@@ -29,11 +152,27 @@ final class VoiceRecorder: ObservableObject {
             }
         }
     }
-    func finish() throws -> Attachment? {
+    func finish(effect: VoiceEffect) throws -> Attachment? {
         guard let file else { return nil }
-        recorder?.stop(); timer?.invalidate(); recording = false
+        recorder?.stop()
+        timer?.invalidate()
+        recording = false
+
+        let rendered = try VoiceProcessor.render(input: file, effect: effect)
+        let data = try Data(contentsOf: rendered)
+        if rendered != file { try? FileManager.default.removeItem(at: rendered) }
         defer { cancel() }
-        return Attachment(name: "Voice.m4a", mime: "audio/mp4", data: try Data(contentsOf: file))
+
+        guard data.count <= 3 * 1024 * 1024 else {
+            throw MessengerError.invalid("Голосовое сообщение получилось слишком большим")
+        }
+        return Attachment(
+            name: "Voice.m4a",
+            mime: "audio/mp4",
+            data: data,
+            viewSeconds: nil,
+            voiceEffect: effect.rawValue
+        )
     }
     func cancel() {
         recorder?.stop(); timer?.invalidate(); recorder = nil; recording = false

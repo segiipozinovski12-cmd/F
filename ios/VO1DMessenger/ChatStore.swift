@@ -342,7 +342,7 @@ final class ChatStore: ObservableObject {
                   message.text.count <= 16000, (message.attachment?.data.count ?? 0) <= 3 * 1024 * 1024,
                   message.expiresAt == nil || message.expiresAt! > Date() else { throw MessengerError.invalid("Неверное содержимое сообщения") }
             if !state.messages.contains(where: { $0.id == message.id }) {
-                message.state = "delivered"; message.reactions = [:]; message.readBy = []; message.deliveredTo = []; message.edited = false
+                message.state = "delivered"; message.reactions = [:]; message.readBy = []; message.deliveredTo = []; message.edited = false; message.openedAt = nil
                 state.messages.append(message)
                 if let index = state.rooms.firstIndex(where: { $0.id == incoming.id }) { state.rooms[index].unread += 1 }
                 try enqueue(ChatEvent(kind: "delivered", room: incoming, target: message.id, senderName: state.nickname), room: incoming, to: [sender])
@@ -425,6 +425,32 @@ final class ChatStore: ObservableObject {
     func messages(_ roomID: String, search: String = "") -> [ChatMessage] {
         state.messages.filter { $0.roomID == roomID && (search.isEmpty || $0.text.localizedCaseInsensitiveContains(search)) }.sorted { $0.createdAt < $1.createdAt }
     }
+    func openEphemeral(_ messageID: String) {
+        guard let index = state.messages.firstIndex(where: { $0.id == messageID }),
+              state.messages[index].openedAt == nil,
+              let seconds = state.messages[index].attachment?.viewSeconds,
+              seconds > 0 else { return }
+        let duration = min(max(seconds, 1), 120)
+        let now = Date()
+        state.messages[index].openedAt = now
+        state.messages[index].expiresAt = now.addingTimeInterval(TimeInterval(duration))
+        persist()
+    }
+
+    func destroyEphemeralImmediately(_ messageID: String) {
+        state.messages.removeAll { $0.id == messageID }
+        persist()
+    }
+
+    func selectedVoiceEffect() -> VoiceEffect {
+        VoiceEffect(rawValue: state.voiceEffect ?? "") ?? .natural
+    }
+
+    func setVoiceEffect(_ effect: VoiceEffect) {
+        state.voiceEffect = effect.rawValue
+        persist()
+    }
+
     func updateRoom(_ id: String, _ update: (inout Room) -> Void) {
         if let index = state.rooms.firstIndex(where: { $0.id == id }) { update(&state.rooms[index]); persist() }
     }

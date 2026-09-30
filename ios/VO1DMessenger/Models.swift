@@ -35,6 +35,8 @@ struct Attachment: Codable, Hashable {
     var name: String
     var mime: String
     var data: Data
+    var viewSeconds: Int? = nil
+    var voiceEffect: String? = nil
 }
 
 struct ChatMessage: Codable, Identifiable, Hashable {
@@ -51,6 +53,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var reactions: [String: String] = [:]
     var readBy: [String] = []
     var deliveredTo: [String] = []
+    var openedAt: Date? = nil
 }
 
 /// All event content, including group membership and attachments, lives inside AEAD.
@@ -100,6 +103,7 @@ struct VaultState: Codable {
     var accessKey: String?
     var panicCodeHash: String?
     var credentialsAcknowledged: Bool?
+    var voiceEffect: String? = nil
 }
 
 struct Invite: Codable {
@@ -118,9 +122,15 @@ enum MessengerError: LocalizedError {
 
 enum Wire {
     static var encoder: JSONEncoder {
-        let e = JSONEncoder(); e.dateEncodingStrategy = .secondsSince1970; e.outputFormatting = [.sortedKeys]; return e
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .secondsSince1970
+        e.outputFormatting = [.sortedKeys]
+        return e
     }
+
     static var decoder: JSONDecoder {
-        let d = JSONDecoder(); d.dateDecodingStrategy = .secondsSince1970; return d
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .secondsSince1970
+        return d
     }
 }

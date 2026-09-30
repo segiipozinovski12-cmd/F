@@ -27,6 +27,7 @@ struct SettingsView: View {
                         profileCard
                         keysCard
                         privacyCard
+                        voiceCard
                         relayCard
                         emergencyCard
                         vpnCard
@@ -124,6 +125,46 @@ struct SettingsView: View {
 
             NavigationLink("КАК ЗАЩИЩЕНЫ СООБЩЕНИЯ") { PrivacyView() }
                 .buttonStyle(GhostButton())
+        }
+        .panel()
+    }
+
+    private var voiceCard: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            sectionTitle("ГОЛОС", icon: "waveform.and.mic")
+
+            Text("Выбранный профиль применяется к новым голосовым сообщениям перед отправкой.")
+                .font(.caption)
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(4)
+
+            ForEach(VoiceEffect.allCases) { effect in
+                Button {
+                    store.setVoiceEffect(effect)
+                } label: {
+                    HStack(spacing: 13) {
+                        Image(systemName: store.selectedVoiceEffect() == effect ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(effect.title).font(.subheadline.bold())
+                            Text(effect.subtitle).font(.caption2).foregroundStyle(Theme.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "waveform")
+                            .foregroundStyle(.white.opacity(0.48))
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if effect != .shadow {
+                    Divider().overlay(.white.opacity(0.07))
+                }
+            }
+
+            Text("Эффект меняет голос, но не является гарантией анонимности: по записи всё равно могут оставаться узнаваемые особенности речи.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondary)
+                .lineSpacing(3)
         }
         .panel()
     }

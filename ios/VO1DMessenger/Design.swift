@@ -41,37 +41,50 @@ struct BrandMark: View {
     var size: CGFloat = 58
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = false
+
     var body: some View {
         ZStack {
-            Circle().fill(.white.opacity(0.025))
-            Circle().stroke(.white.opacity(0.13), lineWidth: max(1, size * 0.012))
             Circle()
-                .trim(from: 0.08, to: 0.83)
-                .stroke(.white, style: StrokeStyle(lineWidth: max(1.5, size * 0.018), lineCap: .round))
+                .fill(.white.opacity(0.025))
+
+            Circle()
+                .stroke(.white.opacity(0.14), lineWidth: max(1, size * 0.012))
+
+            Circle()
+                .trim(from: 0.03, to: 0.46)
+                .stroke(.white, style: StrokeStyle(lineWidth: max(1.6, size * 0.018), lineCap: .round))
                 .rotationEffect(.degrees(phase ? 360 : 0))
+
             Circle()
-                .trim(from: 0.58, to: 0.92)
-                .stroke(.white.opacity(0.38), style: StrokeStyle(lineWidth: max(1, size * 0.01), lineCap: .round))
+                .trim(from: 0.53, to: 0.96)
+                .stroke(.white.opacity(0.48), style: StrokeStyle(lineWidth: max(1.1, size * 0.012), lineCap: .round))
                 .rotationEffect(.degrees(phase ? -360 : 0))
-            ZStack {
-                RoundedRectangle(cornerRadius: size * 0.07)
-                    .fill(.white)
-                    .frame(width: size * 0.22, height: size * 0.56)
-                    .rotationEffect(.degrees(34))
-                    .offset(x: -size * 0.10)
-                RoundedRectangle(cornerRadius: size * 0.07)
-                    .fill(.black)
-                    .frame(width: size * 0.11, height: size * 0.39)
-                    .rotationEffect(.degrees(34))
-                    .offset(x: -size * 0.02)
-                Circle().fill(.white).frame(width: size * 0.14, height: size * 0.14).offset(x: size * 0.18, y: -size * 0.16)
-            }
+
+            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
+                .stroke(.white.opacity(0.24), lineWidth: max(1, size * 0.01))
+                .frame(width: size * 0.46, height: size * 0.46)
+                .rotationEffect(.degrees(45))
+
+            Circle()
+                .fill(.black)
+                .frame(width: size * 0.29, height: size * 0.29)
+                .overlay(Circle().stroke(.white, lineWidth: max(1.5, size * 0.018)))
+
+            Capsule()
+                .fill(.white)
+                .frame(width: size * 0.055, height: size * 0.23)
+                .offset(y: -size * 0.012)
+
+            Circle()
+                .fill(.white)
+                .frame(width: size * 0.052, height: size * 0.052)
+                .offset(x: size * 0.285, y: -size * 0.285)
         }
         .frame(width: size, height: size)
-        .shadow(color: .white.opacity(0.08), radius: size * 0.22)
+        .shadow(color: .white.opacity(0.1), radius: size * 0.18)
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) { phase = true }
+            withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) { phase = true }
         }
         .accessibilityLabel("VO1D")
     }
@@ -111,6 +124,9 @@ struct PrimaryButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 16, weight: .bold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .allowsTightening(true)
             .foregroundStyle(.black)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 17)
@@ -124,6 +140,9 @@ struct GhostButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 15, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.70)
+            .allowsTightening(true)
             .foregroundStyle(.white.opacity(configuration.isPressed ? 0.56 : 0.92))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 15)

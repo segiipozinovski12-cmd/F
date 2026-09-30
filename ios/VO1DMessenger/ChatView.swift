@@ -11,6 +11,9 @@ struct ChatView: View {
     @State private var reply: ChatMessage?
     @State private var editing: ChatMessage?
     @State private var photo: PhotosPickerItem?
+    @State private var ephemeralPhoto: PhotosPickerItem?
+    @State private var photoOptions = false
+    @State private var photoSeconds = 10
     @State private var importing = false
     @State private var info = false
     @State private var preview: URL?
@@ -59,20 +62,22 @@ struct ChatView: View {
                 } catch { store.error = error.localizedDescription }
             }
             .onChange(of: photo) { _, item in
+                guard let item else { return }
+                Task { await processPhoto(item, viewSeconds: nil); photo = nil }
+            }
+            .onChange(of: ephemeralPhoto) { _, item in
+                guard let item else { return }
                 Task {
-                    do {
-                        guard let data = try await item?.loadTransferable(type: Data.self), let image = UIImage(data: data) else { return }
-                        let maxSide: CGFloat = 1600
-                        let scale = min(1, maxSide / max(image.size.width, image.size.height))
-                        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-                        let format = UIGraphicsImageRendererFormat(); format.scale = 1
-                        let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-                        guard let jpeg = resized.jpegData(compressionQuality: 0.8) else { return }
-                        // Rendering intentionally strips EXIF/GPS from shared photos.
-                        send(Attachment(name: "Photo.jpg", mime: "image/jpeg", data: jpeg))
-                        photo = nil
-                    } catch { store.error = error.localizedDescription }
+                    await processPhoto(item, viewSeconds: photoSeconds)
+                    ephemeralPhoto = nil
+                    photoOptions = false
                 }
+            }
+            .sheet(isPresented: $photoOptions) {
+                EphemeralPhotoPickerSheet(
+                    selection: $ephemeralPhoto,
+                    seconds: $photoSeconds
+                )
             }
             .quickLookPreview($preview)
             .onChange(of: preview) { _, value in if value == nil { MediaFiles.clear() } }
@@ -95,17 +100,41 @@ struct ChatView: View {
             if audio.recording {
                 HStack {
                     Image(systemName: "waveform").symbolEffect(.variableColor)
-                    Text("Запись · \(audio.seconds) с").font(.subheadline.monospacedDigit())
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Запись · \(audio.seconds) с").font(.subheadline.monospacedDigit())
+                        Text(store.selectedVoiceEffect().title).font(.caption2).foregroundStyle(Theme.secondary)
+                    }
                     Spacer()
                     Button("Отмена") { audio.cancel() }
-                    Button { do { if let attachment = try audio.finish() { send(attachment) } } catch { store.error = error.localizedDescription } } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
+                    Button {
+                        do {
+                            if let attachment = try audio.finish(effect: store.selectedVoiceEffect()) { send(attachment) }
+                        } catch { store.error = error.localizedDescription }
+                    } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
                 }.padding(18)
             } else {
                 HStack(alignment: .bottom, spacing: 12) {
                     Menu {
-                        PhotosPicker(selection: $photo, matching: .images) { Label("Фото", systemImage: "photo") }
+                        PhotosPicker(selection: $photo, matching: .images) {
+                            Label("Фото", systemImage: "photo")
+                        }
+                        Button("Фото с таймером", systemImage: "timer") { photoOptions = true }
                         Button("Файл", systemImage: "doc") { importing = true }
-                    } label: { Image(systemName: "plus").font(.title3).frame(width: 30, height: 42) }.accessibilityLabel("Добавить вложение")
+                        Menu("Голос: \(store.selectedVoiceEffect().title)") {
+                            ForEach(VoiceEffect.allCases) { effect in
+                                Button {
+                                    store.setVoiceEffect(effect)
+                                } label: {
+                                    Label(effect.title, systemImage: store.selectedVoiceEffect() == effect ? "checkmark" : "waveform")
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.title3)
+                            .frame(width: 30, height: 42)
+                    }
+                    .accessibilityLabel("Добавить вложение")
                     TextField("Сообщение", text: $text, axis: .vertical).lineLimit(1...5).padding(.vertical, 12).padding(.horizontal, 14)
                         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 21))
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -130,21 +159,53 @@ struct ChatView: View {
                         .padding(8).frame(maxWidth: .infinity, alignment: .leading).background(.black.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
                 }
                 if let attachment = message.attachment {
-                    Button {
-                        do { preview = try MediaFiles.export(attachment) } catch { store.error = error.localizedDescription }
-                    } label: {
-                        if attachment.mime.hasPrefix("image/"), let image = UIImage(data: attachment.data) {
-                            Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 260).clipShape(RoundedRectangle(cornerRadius: 12))
+                    if attachment.mime.hasPrefix("image/"), let image = UIImage(data: attachment.data) {
+                        if let seconds = attachment.viewSeconds, seconds > 0 {
+                            EphemeralPhotoView(
+                                messageID: message.id,
+                                mine: mine,
+                                image: image,
+                                seconds: seconds
+                            )
                         } else {
-                            HStack(spacing: 12) {
-                                Image(systemName: attachment.mime.hasPrefix("audio/") ? "play.circle.fill" : "doc.fill").font(.title)
-                                VStack(alignment: .leading) {
-                                    Text(attachment.mime.hasPrefix("audio/") ? "Голосовое сообщение" : attachment.name).font(.subheadline.weight(.medium)).lineLimit(2)
-                                    Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file)).font(.caption2)
-                                }
-                            }.padding(6)
+                            Button {
+                                do { preview = try MediaFiles.export(attachment) }
+                                catch { store.error = error.localizedDescription }
+                            } label: {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxHeight: 260)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
                         }
-                    }.buttonStyle(.plain)
+                    } else {
+                        Button {
+                            do { preview = try MediaFiles.export(attachment) }
+                            catch { store.error = error.localizedDescription }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: attachment.mime.hasPrefix("audio/") ? "play.circle.fill" : "doc.fill")
+                                    .font(.title)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(attachment.mime.hasPrefix("audio/") ? "Голосовое сообщение" : attachment.name)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(2)
+                                    if let raw = attachment.voiceEffect,
+                                       let effect = VoiceEffect(rawValue: raw),
+                                       effect != .natural {
+                                        Text("Эффект · \(effect.title)")
+                                            .font(.caption2)
+                                    }
+                                    Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
+                                        .font(.caption2)
+                                }
+                            }
+                            .padding(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 if !message.text.isEmpty { Text(message.text).font(.system(size: 16)).textSelection(.enabled) }
                 HStack(spacing: 5) {
@@ -173,6 +234,37 @@ struct ChatView: View {
             if !mine { Spacer(minLength: 42) }
         }
     }
+    @MainActor
+    func processPhoto(_ item: PhotosPickerItem, viewSeconds: Int?) async {
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else { return }
+
+            let maxSide: CGFloat = 1600
+            let scale = min(1, maxSide / max(image.size.width, image.size.height))
+            let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+            guard let jpeg = resized.jpegData(compressionQuality: 0.78) else { return }
+            guard jpeg.count <= 3 * 1024 * 1024 else {
+                throw MessengerError.invalid("Фото получилось слишком большим")
+            }
+
+            send(Attachment(
+                name: "Photo.jpg",
+                mime: "image/jpeg",
+                data: jpeg,
+                viewSeconds: viewSeconds,
+                voiceEffect: nil
+            ))
+        } catch {
+            store.error = error.localizedDescription
+        }
+    }
+
     func send(_ attachment: Attachment? = nil) {
         perform {
             if let editing { try store.action("edit", message: editing, value: text) }
@@ -213,6 +305,165 @@ struct RoomInfoView: View {
                     }
                 }
             }.navigationTitle("О чате").navigationBarTitleDisplayMode(.inline).toolbar { Button("Готово") { dismiss() } }
+        }
+    }
+}
+
+
+private struct EphemeralPhotoPickerSheet: View {
+    @Binding var selection: PhotosPickerItem?
+    @Binding var seconds: Int
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                VoidBackground()
+                VStack(alignment: .leading, spacing: 22) {
+                    Text("Фото с таймером")
+                        .font(.system(size: 31, weight: .black, design: .rounded))
+                    Text("Получатель увидит размытую карточку. Таймер начнётся только после открытия.")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.secondary)
+                        .lineSpacing(4)
+
+                    Picker("Время", selection: $seconds) {
+                        Text("5 сек").tag(5)
+                        Text("10 сек").tag(10)
+                        Text("30 сек").tag(30)
+                        Text("60 сек").tag(60)
+                    }
+                    .pickerStyle(.segmented)
+
+                    PhotosPicker(selection: $selection, matching: .images) {
+                        Label("ВЫБРАТЬ ФОТО", systemImage: "photo.fill")
+                    }
+                    .buttonStyle(PrimaryButton())
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Пересылка для такого фото в VO1D не предлагается", systemImage: "arrowshape.turn.up.right")
+                        Label("При записи экрана просмотр закрывается", systemImage: "record.circle")
+                        Label("После таймера локальная копия исчезает", systemImage: "timer")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.secondary)
+                    .panel()
+
+                    Spacer()
+                }
+                .padding(24)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+private struct EphemeralPhotoView: View {
+    let messageID: String
+    let mine: Bool
+    let image: UIImage
+    let seconds: Int
+
+    @EnvironmentObject private var store: ChatStore
+    @State private var revealed = false
+    @State private var remaining = 0
+    @State private var captureActive = UIScreen.main.isCaptured
+    @State private var timerTask: Task<Void, Never>?
+
+    var body: some View {
+        ZStack {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxHeight: 280)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .blur(radius: revealed && !captureActive ? 0 : 18)
+
+            if captureActive {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.black)
+                    .overlay {
+                        VStack(spacing: 8) {
+                            Image(systemName: "record.circle")
+                            Text("ЗАПИСЬ ЭКРАНА")
+                                .font(.caption2.monospaced())
+                                .tracking(1.6)
+                            Text("Просмотр закрыт")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.58))
+                        }
+                    }
+            } else if !revealed {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.black.opacity(0.30))
+                    .overlay {
+                        VStack(spacing: 9) {
+                            Image(systemName: mine ? "timer" : "eye.fill")
+                                .font(.title2)
+                            Text(mine ? "ФОТО С ТАЙМЕРОМ" : "НАЖМИ ДЛЯ ПРОСМОТРА")
+                                .font(.caption2.monospaced())
+                                .tracking(1.3)
+                            Text("\(seconds) сек")
+                                .font(.caption.bold())
+                        }
+                        .foregroundStyle(.white)
+                    }
+            } else {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Text("\(remaining)")
+                            .font(.caption.monospacedDigit().bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.black.opacity(0.72), in: Capsule())
+                    }
+                    Spacer()
+                }
+                .padding(10)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture {
+            guard !mine, !revealed, !captureActive else { return }
+            revealed = true
+            remaining = max(1, seconds)
+            store.openEphemeral(messageID)
+            startCountdown()
+        }
+        .onDisappear { timerTask?.cancel() }
+        .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
+            captureActive = UIScreen.main.isCaptured
+            if captureActive && revealed {
+                store.destroyEphemeralImmediately(messageID)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+            if revealed {
+                store.destroyEphemeralImmediately(messageID)
+            }
+        }
+    }
+
+    private func startCountdown() {
+        timerTask?.cancel()
+        timerTask = Task {
+            while remaining > 0 && !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                await MainActor.run { remaining -= 1 }
+            }
+            if !Task.isCancelled {
+                await MainActor.run {
+                    store.destroyEphemeralImmediately(messageID)
+                }
+            }
         }
     }
 }
