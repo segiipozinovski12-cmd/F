@@ -2,6 +2,24 @@ import XCTest
 @testable import VO1DMessenger
 
 final class PrivacyTests: XCTestCase {
+    func testCallOffersBindIdentitiesAndAudioRejectsReplayAndReflection() throws {
+        let alice=try LocalIdentity.create(),bob=try LocalIdentity.create()
+        let a=CallSecrets(),b=CallSecrets(),callID=UUID().uuidString
+        let offer=try a.offer(identity:alice,callID:callID,to:bob.card.id)
+        XCTAssertThrowsError(try b.accept(key:offer["key"]!,signature:offer["keySignature"]!,identity:bob,peer:alice.card,callID:UUID().uuidString))
+        let bk=try b.accept(key:offer["key"]!,signature:offer["keySignature"]!,identity:bob,peer:alice.card,callID:callID)
+        let answer=try b.offer(identity:bob,callID:callID,to:alice.card.id)
+        let ak=try a.accept(key:answer["key"]!,signature:answer["keySignature"]!,identity:alice,peer:bob.card,callID:callID)
+        let clear=Data("test audio".utf8)
+        let frame=try a.seal(clear,key:ak,callID:callID)
+        XCTAssertThrowsError(try a.open(frame.0,sequence:frame.1,key:ak,callID:callID))
+        XCTAssertEqual(try b.open(frame.0,sequence:frame.1,key:bk,callID:callID),clear)
+        XCTAssertNil(try b.open(frame.0,sequence:frame.1,key:bk,callID:callID))
+        XCTAssertThrowsError(try b.open(frame.0,sequence:"999",key:bk,callID:callID))
+        let next=try a.seal(clear,key:ak,callID:callID)
+        XCTAssertEqual(try b.open(next.0,sequence:next.1,key:bk,callID:callID),clear)
+    }
+
     func testWirePayloadDoesNotExposeLocalDraftOrSettings() throws {
         let alice=try LocalIdentity.create(),bob=try LocalIdentity.create()
         let ac=try alice.card,bc=try bob.card

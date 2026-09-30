@@ -1233,21 +1233,26 @@ private struct RemoteAttachmentCard: View {
 
     @EnvironmentObject private var store: ChatStore
     @State private var downloading = false
+    @State private var downloadTask: Task<Void,Never>?
 
     var body: some View {
         Button {
-            guard !downloading else { return }
+            if downloading { downloadTask?.cancel(); return }
             downloading = true
-            Task {
+            downloadTask = Task {
                 do {
                     let clear = try await store.downloadRemoteAttachment(attachment)
+                    try Task.checkCancellation()
                     onOpen(clear)
                     Haptics.success()
                 } catch {
-                    Haptics.warning()
-                    store.error = error.localizedDescription
+                    if !Task.isCancelled {
+                        Haptics.warning()
+                        store.error = error.localizedDescription
+                    }
                 }
                 downloading = false
+                downloadTask = nil
             }
         } label: {
             VStack(alignment: .leading, spacing: 10) {
@@ -1293,7 +1298,7 @@ private struct RemoteAttachmentCard: View {
 
                     Spacer()
 
-                    Image(systemName: downloading ? "hourglass" : "arrow.down.circle.fill")
+                    Image(systemName: downloading ? "xmark.circle.fill" : "arrow.down.circle.fill")
                         .font(.title3)
                         .opacity(0.72)
                 }
@@ -1307,7 +1312,8 @@ private struct RemoteAttachmentCard: View {
             .padding(4)
         }
         .buttonStyle(.plain)
-        .disabled(downloading)
+        .accessibilityLabel(downloading ? "Отменить загрузку" : "Загрузить файл")
+        .onDisappear { downloadTask?.cancel() }
     }
 
     private var icon: String {
@@ -1814,4 +1820,3 @@ private struct EphemeralPhotoView: View {
         }
     }
 }
-
