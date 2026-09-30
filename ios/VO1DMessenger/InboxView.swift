@@ -8,28 +8,14 @@ struct InboxView: View {
 
     private var rooms: [Room] {
         store.state.rooms.filter { room in
-            let archiveMatch = filter == "Архив" ? room.archived : !room.archived
-            let typeMatch: Bool
-            switch filter {
-            case "Непрочитанные":
-                typeMatch = room.unread > 0
-            case "Личные":
-                typeMatch = !room.isGroup && !store.isLocalUtilityRoom(room.id)
-            case "Группы":
-                typeMatch = room.isGroup && room.isChannel != true
-            case "Каналы":
-                typeMatch = room.isChannel == true
-            case "Сохранённые":
-                typeMatch = store.isSavedRoom(room.id)
-            default:
-                typeMatch = true
-            }
-
-            return archiveMatch &&
-                typeMatch &&
-                (search.isEmpty ||
-                 room.title.localizedCaseInsensitiveContains(search) ||
-                 store.messages(room.id).contains { $0.text.localizedCaseInsensitiveContains(search) })
+            (filter == "Архив" ? room.archived : !room.archived) &&
+            (filter != "Группы" || (room.isGroup && room.isChannel != true)) &&
+            (filter != "Личные" || !room.isGroup) &&
+            (filter != "Каналы" || room.isChannel == true) &&
+            (filter != "Непрочитанные" || room.unread > 0) &&
+            (search.isEmpty ||
+             room.title.localizedCaseInsensitiveContains(search) ||
+             store.messages(room.id).contains { $0.text.localizedCaseInsensitiveContains(search) })
         }
         .sorted { a, b in
             if a.pinned != b.pinned { return a.pinned }
@@ -69,9 +55,13 @@ struct InboxView: View {
                                         .tint(.gray)
 
                                         Button {
-                                            store.updateRoom(room.id) { $0.muted.toggle() }
+                                            if store.isRoomMuted(room) {
+                                                store.muteRoom(room.id, for: 0)
+                                            } else {
+                                                store.muteRoom(room.id, for: nil)
+                                            }
                                         } label: {
-                                            Label(room.muted ? "Со звуком" : "Без звука", systemImage: room.muted ? "speaker.wave.2" : "speaker.slash")
+                                            Label(store.isRoomMuted(room) ? "Со звуком" : "Без звука", systemImage: store.isRoomMuted(room) ? "speaker.wave.2" : "speaker.slash")
                                         }
                                         .tint(.black)
                                     }
@@ -89,6 +79,22 @@ struct InboxView: View {
                                         }
                                         Button(room.archived ? "Вернуть из архива" : "В архив", systemImage: "archivebox") {
                                             store.updateRoom(room.id) { $0.archived.toggle() }
+                                        }
+                                        Menu("Уведомления") {
+                                            if store.isRoomMuted(room) {
+                                                Button("Включить звук", systemImage: "speaker.wave.2") {
+                                                    store.muteRoom(room.id, for: 0)
+                                                }
+                                            }
+                                            Button("Без звука на 1 час", systemImage: "clock") {
+                                                store.muteRoom(room.id, for: 3600)
+                                            }
+                                            Button("Без звука на 8 часов", systemImage: "clock") {
+                                                store.muteRoom(room.id, for: 8 * 3600)
+                                            }
+                                            Button("Без звука навсегда", systemImage: "speaker.slash") {
+                                                store.muteRoom(room.id, for: nil)
+                                            }
                                         }
                                     }
                                 }
@@ -123,21 +129,6 @@ struct InboxView: View {
                     .tracking(-1.4)
             }
             Spacer()
-
-            if store.state.rooms.contains(where: { store.isSavedRoom($0.id) }) {
-                NavigationLink {
-                    ChatView(roomID: ChatStore.savedRoomID)
-                } label: {
-                    Image(systemName: "bookmark.fill")
-                        .font(.subheadline.bold())
-                        .frame(width: 44, height: 44)
-                        .background(.white.opacity(0.075), in: Circle())
-                        .foregroundStyle(.white)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Сохранённые сообщения")
-            }
-
             Button { composing = true } label: {
                 Image(systemName: "plus")
                     .font(.title3.bold())
@@ -221,19 +212,7 @@ struct InboxView: View {
     private func roomRow(_ room: Room) -> some View {
         let last = store.messages(room.id).last
         return HStack(spacing: 14) {
-            ZStack {
-                Avatar(name: room.title, group: room.isGroup, size: 56)
-                if room.isChannel == true {
-                    Circle()
-                        .fill(.black)
-                        .frame(width: 21, height: 21)
-                        .overlay(
-                            Image(systemName: "megaphone.fill")
-                                .font(.system(size: 9, weight: .bold))
-                        )
-                        .offset(x: 19, y: 19)
-                }
-            }
+            Avatar(name: room.title, group: room.isGroup, size: 56)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 7) {
@@ -250,6 +229,15 @@ struct InboxView: View {
                             .background(.white, in: Capsule())
                             .foregroundStyle(.black)
                     }
+                    if room.isChannel == true {
+                        Text("CHANNEL")
+                            .font(.system(size: 7, weight: .black, design: .monospaced))
+                            .tracking(0.8)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.white.opacity(0.10), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.82))
+                    }
 
                     if room.pinned {
                         Image(systemName: "pin.fill")
@@ -257,7 +245,7 @@ struct InboxView: View {
                             .foregroundStyle(Theme.secondary)
                     }
 
-                    if room.muted {
+                    if store.isRoomMuted(room) {
                         Image(systemName: "speaker.slash.fill")
                             .font(.caption2)
                             .foregroundStyle(Theme.secondary)
@@ -275,7 +263,9 @@ struct InboxView: View {
                 HStack(spacing: 8) {
                     Text(!room.draft.isEmpty
                          ? "Черновик: \(room.draft)"
-                         : (last?.attachment?.name ?? last?.text ?? "Начни разговор"))
+                         : (last?.state == "scheduled"
+                            ? "Запланировано: \(last?.text ?? "")"
+                            : (last?.attachment?.name ?? last?.text ?? "Начни разговор")))
                         .font(.subheadline)
                         .foregroundStyle(Theme.secondary)
                         .lineLimit(1)
@@ -299,17 +289,20 @@ struct InboxView: View {
 struct ComposeView: View {
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
+
     @State private var add = false
-    @State private var group = false
-    @State private var channel = false
+    @State private var mode = 0
     @State private var title = ""
     @State private var selected: Set<String> = []
     @State private var room: Room?
     @State private var creating = false
 
+    private var isMulti: Bool { mode != 0 }
+    private var isChannel: Bool { mode == 2 }
+
     private var visibleContacts: [Contact] {
         store.state.contacts.filter {
-            !$0.blocked && (!group || !store.isBuiltinBot($0.id))
+            !$0.blocked && (!isMulti || !store.isBuiltinBot($0.id))
         }
     }
 
@@ -317,46 +310,39 @@ struct ComposeView: View {
         NavigationStack {
             ZStack {
                 VoidBackground()
+
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack {
                             Wordmark(compact: true)
                             Spacer()
-                            Button("Готово") { dismiss() }.foregroundStyle(Theme.secondary)
+                            Button("Готово") { dismiss() }
+                                .foregroundStyle(Theme.secondary)
                         }
 
-                        Text("Новый разговор")
+                        Text(mode == 2 ? "Новый канал" : (mode == 1 ? "Новая группа" : "Новый разговор"))
                             .font(.system(size: 32, weight: .black, design: .rounded))
 
                         VStack(alignment: .leading, spacing: 14) {
-                            Toggle("Создать группу", isOn: $group)
-                                .tint(.white)
-                                .onChange(of: group) { _, value in
-                                    if !value {
-                                        selected.removeAll()
-                                        title = ""
-                                        channel = false
-                                    }
-                                }
+                            Picker("Тип", selection: $mode) {
+                                Text("Личный").tag(0)
+                                Text("Группа").tag(1)
+                                Text("Канал").tag(2)
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: mode) { _, _ in
+                                selected.removeAll()
+                                title = ""
+                            }
 
-                            if group {
-                                Toggle("Режим канала", isOn: $channel)
-                                    .tint(.white)
-
-                                Text(channel
-                                     ? "В канале по умолчанию публикуют только админы. Это можно изменить позже."
-                                     : "В обычной группе писать могут все участники.")
-                                    .font(.caption2)
-                                    .foregroundStyle(Theme.secondary)
-                                    .lineSpacing(3)
-
-                                TextField(channel ? "Название канала" : "Название группы", text: $title)
+                            if isMulti {
+                                TextField(isChannel ? "Название канала" : "Название группы", text: $title)
                                     .textInputAutocapitalization(.sentences)
                                     .submitLabel(.done)
                                     .voidField()
 
                                 HStack {
-                                    Label("\(selected.count) выбрано", systemImage: "person.2.fill")
+                                    Label("\(selected.count) выбрано", systemImage: isChannel ? "megaphone.fill" : "person.2.fill")
                                     Spacer()
                                     Text("до 15")
                                 }
@@ -364,18 +350,28 @@ struct ComposeView: View {
                                 .foregroundStyle(Theme.secondary)
                             }
 
-                            Button("ДОБАВИТЬ ЧЕЛОВЕКА", systemImage: "person.badge.plus") { add = true }
-                                .buttonStyle(GhostButton())
+                            Button("ДОБАВИТЬ ЧЕЛОВЕКА", systemImage: "person.badge.plus") {
+                                add = true
+                            }
+                            .buttonStyle(GhostButton())
                         }
                         .panel()
 
                         if visibleContacts.isEmpty {
                             VStack(spacing: 14) {
-                                Text("Нет доступных контактов").font(.headline)
-                                Text(group ? "Для группы нужен хотя бы один обычный контакт." : "Сначала добавь человека по VO1D ID.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.secondary)
-                                Button("ДОБАВИТЬ") { add = true }.buttonStyle(PrimaryButton())
+                                Text(isMulti ? "Нет доступных контактов" : "Нет контактов")
+                                    .font(.headline)
+                                Text(
+                                    isChannel
+                                        ? "Канал можно создать пустым и добавить участников позже."
+                                        : (isMulti ? "Для группы добавь хотя бы один обычный контакт." : "Сначала добавь человека по VO1D ID или @username.")
+                                )
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.secondary)
+                                .multilineTextAlignment(.center)
+
+                                Button("ДОБАВИТЬ") { add = true }
+                                    .buttonStyle(PrimaryButton())
                             }
                             .frame(maxWidth: .infinity)
                             .panel()
@@ -383,19 +379,34 @@ struct ComposeView: View {
                             VStack(spacing: 10) {
                                 ForEach(visibleContacts) { contact in
                                     Button {
-                                        if group {
-                                            if selected.contains(contact.id) { selected.remove(contact.id) }
-                                            else { selected.insert(contact.id) }
+                                        if isMulti {
+                                            if selected.contains(contact.id) {
+                                                selected.remove(contact.id)
+                                            } else {
+                                                selected.insert(contact.id)
+                                            }
                                         } else {
-                                            do { room = try store.direct(contact) }
-                                            catch { store.error = error.localizedDescription }
+                                            do {
+                                                room = try store.direct(contact)
+                                            } catch {
+                                                store.error = error.localizedDescription
+                                            }
                                         }
                                     } label: {
                                         HStack(spacing: 13) {
                                             Avatar(name: contact.name, size: 42)
-                                            Text(contact.name).font(.headline)
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(contact.name)
+                                                    .font(.headline)
+                                                if store.isBuiltinBot(contact.id) {
+                                                    Text("XROSB")
+                                                        .font(.caption2.monospaced())
+                                                        .foregroundStyle(Theme.secondary)
+                                                }
+                                            }
                                             Spacer()
-                                            if group {
+
+                                            if isMulti {
                                                 Image(systemName: selected.contains(contact.id) ? "checkmark.circle.fill" : "circle")
                                             } else {
                                                 Image(systemName: "arrow.up.right")
@@ -408,48 +419,57 @@ struct ComposeView: View {
                             }
                         }
 
-                        if group {
+                        if isMulti {
                             Button {
                                 guard !creating else { return }
                                 creating = true
+
                                 do {
                                     let members = visibleContacts.filter { selected.contains($0.id) }
-                                    let created = try store.createGroup(
-                                        name: title,
-                                        contacts: members,
-                                        isChannel: channel
-                                    )
+                                    let created: Room
+                                    if isChannel {
+                                        created = try store.createChannel(name: title, contacts: members)
+                                    } else {
+                                        created = try store.createGroup(name: title, contacts: members)
+                                    }
                                     selected.removeAll()
                                     title = ""
+                                    Haptics.success()
                                     room = created
                                 } catch {
+                                    Haptics.warning()
                                     store.error = error.localizedDescription
                                 }
+
                                 creating = false
                             } label: {
                                 HStack {
-                                    Text(creating ? "СОЗДАЁМ…" : (channel ? "СОЗДАТЬ КАНАЛ" : "СОЗДАТЬ ГРУППУ"))
+                                    Text(creating ? "СОЗДАЁМ…" : (isChannel ? "СОЗДАТЬ КАНАЛ" : "СОЗДАТЬ ГРУППУ"))
                                     Spacer()
                                     if creating {
-                                        ProgressView().tint(.black).scaleEffect(0.82)
+                                        ProgressView()
+                                            .tint(.black)
+                                            .scaleEffect(0.82)
                                     } else {
-                                        Image(systemName: "arrow.up.right")
+                                        Image(systemName: isChannel ? "megaphone.fill" : "arrow.up.right")
                                     }
                                 }
                             }
                             .buttonStyle(PrimaryButton())
                             .disabled(
                                 creating ||
-                                selected.isEmpty ||
-                                title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                (!isChannel && selected.isEmpty)
                             )
 
-                            Text(channel
-                                 ? "VO1D Bot · XROSB не добавляется в каналы. Создатель становится владельцем и админом."
-                                 : "VO1D Bot · XROSB не добавляется в группы. Состав можно менять позже в управлении группой.")
-                                .font(.caption2)
-                                .foregroundStyle(Theme.secondary)
-                                .lineSpacing(3)
+                            Text(
+                                isChannel
+                                    ? "В канале писать могут только админы. Участников можно добавить позже."
+                                    : "VO1D Bot · XROSB не добавляется в группы."
+                            )
+                            .font(.caption2)
+                            .foregroundStyle(Theme.secondary)
+                            .lineSpacing(3)
                         }
                     }
                     .padding(24)

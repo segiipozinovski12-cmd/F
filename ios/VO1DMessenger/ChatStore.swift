@@ -239,8 +239,8 @@ final class ChatStore: ObservableObject {
         if lower == "/privacy" || lower.contains("приват") {
             return "Содержимое переписки шифруется на устройстве. Сервис всё равно может видеть технические метаданные соединения, поэтому VO1D не заявляет абсолютную сетевую анонимность."
         }
-        if lower == "/groups" || lower.contains("групп") || lower.contains("канал") {
-            return "Группа или канал: Чаты → + → включи «Создать группу». Для канала включи «Режим канала»: писать смогут админы. VO1D Bot в группы и каналы не добавляется."
+        if lower == "/groups" || lower.contains("групп") {
+            return "Группа: Чаты → + → включи «Создать группу» → выбери людей → введи название → «Создать группу». VO1D Bot в группы не добавляется."
         }
         if lower == "/calls" || lower.contains("звон") {
             return "В личном чате нажми значок телефона. Для звонка оба пользователя должны быть онлайн и подключены к VO1D."
@@ -436,7 +436,7 @@ final class ChatStore: ObservableObject {
         let room = Room(id: id, title: contact.name, members: [ownCard, contact.card], creator: "", isGroup: false, createdAt: Date())
         state.rooms.append(room); try save(); return room
     }
-    func createGroup(name: String, contacts: [Contact], isChannel: Bool = false) throws -> Room {
+    func createGroup(name: String, contacts: [Contact]) throws -> Room {
         guard let ownCard else { throw MessengerError.invalid("Личность VO1D недоступна") }
 
         let cleanTitle = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
@@ -462,9 +462,7 @@ final class ChatStore: ObservableObject {
             creator: myID,
             isGroup: true,
             createdAt: Date(),
-            admins: [myID],
-            onlyAdminsCanPost: isChannel ? true : nil,
-            isChannel: isChannel ? true : nil
+            admins: [myID]
         )
 
         let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
@@ -479,6 +477,107 @@ final class ChatStore: ObservableObject {
         try save()
         return room
     }
+    func createChannel(name: String, contacts: [Contact]) throws -> Room {
+        guard let ownCard else { throw MessengerError.invalid("Личность VO1D недоступна") }
+
+        let cleanTitle = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !cleanTitle.isEmpty else { throw MessengerError.invalid("Введи название канала") }
+
+        var seen = Set<String>()
+        let cleanContacts = contacts.filter {
+            !$0.blocked &&
+            !isBuiltinBot($0.id) &&
+            seen.insert($0.id).inserted
+        }
+        guard cleanContacts.count <= 15 else {
+            throw MessengerError.invalid("Сейчас канал поддерживает до 16 участников")
+        }
+        for contact in cleanContacts { try Crypto.validate(contact.card) }
+
+        let room = Room(
+            id: UUID().uuidString,
+            title: cleanTitle,
+            members: [ownCard] + cleanContacts.map(\.card),
+            creator: myID,
+            isGroup: true,
+            createdAt: Date(),
+            admins: [myID],
+            onlyAdminsCanPost: true,
+            isChannel: true,
+            topics: []
+        )
+
+        let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
+        let targets = cleanContacts.map(\.card)
+        guard let identity else { throw MessengerError.invalid("Нет ключей") }
+        let pending = try targets.map {
+            PendingDelivery(envelope: try Crypto.seal(event, from: identity, to: $0), messageID: nil)
+        }
+
+        state.rooms.append(room)
+        state.outbox.append(contentsOf: pending)
+        try save()
+        return room
+    }
+
+    func isRoomMuted(_ room: Room) -> Bool {
+        if room.muted { return true }
+        if let until = room.mutedUntil, until > Date() { return true }
+        return false
+    }
+
+    func muteRoom(_ roomID: String, for interval: TimeInterval?) {
+        guard let index = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+        if let interval {
+            if interval <= 0 {
+                state.rooms[index].muted = false
+                state.rooms[index].mutedUntil = nil
+            } else {
+                state.rooms[index].muted = false
+                state.rooms[index].mutedUntil = Date().addingTimeInterval(interval)
+            }
+        } else {
+            state.rooms[index].muted = true
+            state.rooms[index].mutedUntil = nil
+        }
+        persist()
+    }
+
+    func addTopic(_ roomID: String, name: String) throws {
+        guard let index = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+        let oldRoom = state.rooms[index]
+        guard isGroupOwner(oldRoom) else {
+            throw MessengerError.invalid("Темы меняет создатель группы")
+        }
+        let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        guard !clean.isEmpty else { return }
+
+        var topics = oldRoom.topics ?? []
+        guard !topics.contains(where: { $0.caseInsensitiveCompare(clean) == .orderedSame }) else { return }
+        guard topics.count < 20 else { throw MessengerError.invalid("Максимум 20 тем") }
+        topics.append(clean)
+
+        var newRoom = oldRoom
+        newRoom.topics = topics
+        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        state.rooms[index] = newRoom
+        try save()
+    }
+
+    func removeTopic(_ roomID: String, name: String) throws {
+        guard let index = state.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+        let oldRoom = state.rooms[index]
+        guard isGroupOwner(oldRoom) else {
+            throw MessengerError.invalid("Темы меняет создатель группы")
+        }
+
+        var newRoom = oldRoom
+        newRoom.topics = (oldRoom.topics ?? []).filter { $0 != name }
+        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        state.rooms[index] = newRoom
+        try save()
+    }
+
     func groupAdminIDs(_ room: Room) -> Set<String> {
         var result = Set(room.admins ?? [])
         if !room.creator.isEmpty { result.insert(room.creator) }
@@ -816,7 +915,13 @@ final class ChatStore: ObservableObject {
         try save()
     }
 
-    func createPoll(roomID: String, question: String, options: [String], scheduledAt: Date? = nil) throws {
+    func createPoll(
+        roomID: String,
+        question: String,
+        options: [String],
+        scheduledAt: Date? = nil,
+        topic: String? = nil
+    ) throws {
         let cleanQuestion = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
         let cleanOptions = options
             .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100)) }
@@ -844,7 +949,8 @@ final class ChatStore: ObservableObject {
             forwardedFrom: nil,
             scheduledAt: scheduledAt,
             silent: false,
-            poll: poll
+            poll: poll,
+            topic: topic
         )
     }
 
@@ -1075,6 +1181,8 @@ final class ChatStore: ObservableObject {
                     let incomingAdmins = Set(incoming.admins ?? [incoming.creator])
                     guard currentAdmins == incomingAdmins,
                           current.onlyAdminsCanPost == incoming.onlyAdminsCanPost,
+                          current.isChannel == incoming.isChannel,
+                          current.topics == incoming.topics,
                           current.title == incoming.title else {
                         throw MessengerError.invalid("Метаданные группы изменены без roomUpdate")
                     }
@@ -1140,7 +1248,7 @@ final class ChatStore: ObservableObject {
                 if state.notificationsEnabled == true &&
                    message.silent != true &&
                    activeRoomID != incoming.id &&
-                   !(state.rooms.first(where: { $0.id == incoming.id })?.muted ?? false) {
+                   !(state.rooms.first(where: { $0.id == incoming.id }).map(isRoomMuted) ?? false) {
                     let title = state.rooms.first(where: { $0.id == incoming.id })?.title ?? String(event.senderName.prefix(40))
                     let body: String
                     if !message.text.isEmpty {

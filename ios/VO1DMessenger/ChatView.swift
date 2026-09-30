@@ -23,9 +23,14 @@ struct ChatView: View {
     @State private var pollBuilder = false
     @State private var historyMessage: ChatMessage?
     @State private var forwarding: ChatMessage?
+    @State private var selectedTopic: String?
     @StateObject private var audio = VoiceRecorder()
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
-    var messages: [ChatMessage] { store.messages(roomID, search: search) }
+    var messages: [ChatMessage] {
+        let all = store.messages(roomID, search: search)
+        guard let selectedTopic else { return all }
+        return all.filter { $0.topic == selectedTopic }
+    }
     var body: some View {
         VStack(spacing: 0) {
             if let room {
@@ -64,10 +69,59 @@ struct ChatView: View {
                             .buttonStyle(.plain)
                         }
 
+                        if room.isGroup, let topics = room.topics, !topics.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    Button {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                                            selectedTopic = nil
+                                        }
+                                    } label: {
+                                        Text("ВСЕ")
+                                            .font(.caption2.bold().monospaced())
+                                            .tracking(1.2)
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 8)
+                                            .background(selectedTopic == nil ? Color.white : Color.white.opacity(0.06), in: Capsule())
+                                            .foregroundStyle(selectedTopic == nil ? .black : Theme.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    ForEach(topics, id: \.self) { topic in
+                                        Button {
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                                                selectedTopic = topic
+                                            }
+                                        } label: {
+                                            Text(topic.uppercased())
+                                                .font(.caption2.bold().monospaced())
+                                                .tracking(1.0)
+                                                .lineLimit(1)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 8)
+                                                .background(selectedTopic == topic ? Color.white : Color.white.opacity(0.06), in: Capsule())
+                                                .foregroundStyle(selectedTopic == topic ? .black : Theme.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                            }
+                            .background(.black.opacity(0.92))
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
+                            }
+                        }
+
                         ScrollView {
                             LazyVStack(spacing: 14) {
                                 Label(
-                                    store.isSavedRoom(roomID) ? "Личный архив" : (store.isBuiltinBotRoom(roomID) ? "Системный помощник" : "Приватная переписка"),
+                                    store.isSavedRoom(roomID)
+                                        ? "Личный архив"
+                                        : (store.isBuiltinBotRoom(roomID)
+                                            ? "Системный помощник"
+                                            : (room.isChannel == true ? "VO1D CHANNEL" : "Приватная переписка")),
                                     systemImage: store.isSavedRoom(roomID) ? "bookmark.fill" : (store.isBuiltinBotRoom(roomID) ? "sparkles" : "lock")
                                 )
                                 .font(.caption2)
@@ -171,7 +225,7 @@ struct ChatView: View {
                 ForwardPickerView(message: message, sourceRoomID: roomID)
             }
             .sheet(isPresented: $pollBuilder) {
-                PollComposerView(roomID: roomID)
+                PollComposerView(roomID: roomID, topic: selectedTopic)
             }
             .sheet(item: $historyMessage) { message in
                 EditHistoryView(message: message)
@@ -628,7 +682,8 @@ struct ChatView: View {
                     replyTo: reply?.id,
                     forwardedFrom: nil,
                     scheduledAt: scheduledAt,
-                    silent: silent
+                    silent: silent,
+                    topic: selectedTopic
                 )
             }
             text = ""
@@ -736,6 +791,7 @@ private struct PollMessageView: View {
 
 private struct PollComposerView: View {
     let roomID: String
+    let topic: String?
 
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
@@ -788,7 +844,8 @@ private struct PollComposerView: View {
                                 try store.createPoll(
                                     roomID: roomID,
                                     question: question,
-                                    options: options
+                                    options: options,
+                                    topic: topic
                                 )
                                 Haptics.success()
                                 dismiss()
@@ -955,7 +1012,11 @@ struct RoomInfoView: View {
             Form {
                 if let room {
                     Section {
-                        HStack { Spacer(); VStack(spacing: 14) { Avatar(name: room.title, group: room.isGroup, size: 80); Text(room.title).font(.title2.bold()); Text(room.isGroup ? "\(room.members.count) участника · закрытая группа" : "Личный чат").font(.caption).foregroundStyle(Theme.secondary) }; Spacer() }.padding(.vertical, 16)
+                        HStack { Spacer(); VStack(spacing: 14) { Avatar(name: room.title, group: room.isGroup, size: 80); Text(room.title).font(.title2.bold()); Text(
+                                    room.isChannel == true
+                                        ? "\(room.members.count) участника · канал"
+                                        : (room.isGroup ? "\(room.members.count) участника · закрытая группа" : "Личный чат")
+                                ).font(.caption).foregroundStyle(Theme.secondary) }; Spacer() }.padding(.vertical, 16)
                     }
                     if !room.isGroup && !store.isLocalUtilityRoom(roomID) {
                         Section("Связь") {
@@ -1018,7 +1079,49 @@ struct RoomInfoView: View {
                             clearing = true
                         }
                     }
-                    Section("Участники") {
+                    if room.isGroup {
+                    Section("Темы") {
+                        if let topics = room.topics, !topics.isEmpty {
+                            ForEach(topics, id: \.self) { topic in
+                                HStack {
+                                    Image(systemName: "number")
+                                    Text(topic)
+                                    Spacer()
+                                    if store.isGroupOwner(room) {
+                                        Button(role: .destructive) {
+                                            do {
+                                                try store.removeTopic(roomID, name: topic)
+                                            } catch {
+                                                store.error = error.localizedDescription
+                                            }
+                                        } label: {
+                                            Image(systemName: "trash")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if store.isGroupOwner(room) {
+                            HStack {
+                                TextField("Новая тема", text: $newTopic)
+                                Button {
+                                    do {
+                                        try store.addTopic(roomID, name: newTopic)
+                                        newTopic = ""
+                                    } catch {
+                                        store.error = error.localizedDescription
+                                    }
+                                } label: {
+                                    Image(systemName: "plus.circle.fill")
+                                }
+                                .disabled(newTopic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                    }
+                }
+
+                Section("Участники") {
                         ForEach(room.members) { member in
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(store.name(member.id))
@@ -1050,6 +1153,7 @@ private struct GroupManagementView: View {
 
     @EnvironmentObject private var store: ChatStore
     @State private var title = ""
+    @State private var newTopic = ""
     @State private var showAdd = false
 
     private var room: Room? {
@@ -1085,7 +1189,7 @@ private struct GroupManagementView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(room.title)
                                 .font(.title3.bold())
-                            Text("\(room.members.count) участников")
+                            Text(room.isChannel == true ? "\(room.members.count) участников · канал" : "\(room.members.count) участников")
                                 .font(.caption)
                                 .foregroundStyle(Theme.secondary)
                         }
@@ -1193,7 +1297,7 @@ private struct GroupManagementView: View {
                 }
             }
         }
-        .navigationTitle(room?.isChannel == true ? "Канал" : "Управление")
+        .navigationTitle("Управление")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             title = room?.title ?? ""
