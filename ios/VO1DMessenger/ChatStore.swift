@@ -22,6 +22,7 @@ final class ChatStore: ObservableObject {
     var vault: Vault?
     var api: APIClient?
     private var syncing = false
+    private var connectingGeneration: Int?
     var generation = 0
     @Published var revealedHiddenRooms = false
     @Published var deliveryIssues: [String: DeliveryIssue] = [:]
@@ -50,37 +51,42 @@ final class ChatStore: ObservableObject {
 
     init() {
         do {
-            profileRegistry = try ProfileRegistry.load()
-            let identity = try Keychain.load(profileID: profileID)
-            let vault = try Vault(profileID: profileID)
-            self.identity = identity; self.vault = vault; ownCard = try identity.card
-            state = try vault.read(key: identity.storage)
-            if state.extended == nil {
-                var migrated = ExtendedState()
-                migrated.trustedIDs = state.contacts.filter { !$0.blocked && !isBuiltinBot($0.id) }.map(\.id)
-                state.extended = migrated
-            }
-            let credentialsChanged = try ensureCredentials()
-            locked = state.appLock
-            sessionUnlocked = !state.onboarded
-
-            var relayChanged = false
-            if state.onboarded {
-                if state.server.isEmpty {
-                    state.server = AppConfig.productionRelay
-                    relayChanged = true
-                }
-                api = try APIClient(server: state.server, identity: identity, privacy: preferences)
-                connection = "Подключение…"
-            } else {
-                connection = "Готов к регистрации"
-            }
-
-            expire()
-            let botChanged = state.onboarded ? ensureBuiltinBot() : false
-            let savedChanged = state.onboarded ? ensureSavedMessages() : false
-            if credentialsChanged || relayChanged || botChanged || savedChanged { try save() }
+            try loadProtectedState()
         } catch { fatalError = error.localizedDescription }
+    }
+
+    func loadProtectedState() throws {
+        profileRegistry = try ProfileRegistry.load()
+        let identity = try Keychain.load(profileID: profileID)
+        let vault = try Vault(profileID: profileID)
+        self.identity = identity; self.vault = vault; ownCard = try identity.card
+        state = try vault.read(key: identity.storage)
+        if state.extended == nil {
+            var migrated = ExtendedState()
+            migrated.trustedIDs = state.contacts.filter { !$0.blocked && !isBuiltinBot($0.id) }.map(\.id)
+            state.extended = migrated
+        }
+        let credentialsChanged = try ensureCredentials()
+        locked = state.appLock
+        sessionUnlocked = !state.onboarded
+
+        var relayChanged = false
+        if state.onboarded {
+            if state.server.isEmpty {
+                state.server = AppConfig.productionRelay
+                relayChanged = true
+            }
+            api = try APIClient(server: state.server, identity: identity, privacy: preferences)
+            connection = "Подключение…"
+        } else {
+            connection = "Готов к регистрации"
+        }
+
+        expire()
+        let botChanged = state.onboarded ? ensureBuiltinBot() : false
+        let savedChanged = state.onboarded ? ensureSavedMessages() : false
+        if credentialsChanged || relayChanged || botChanged || savedChanged { try save() }
+        fatalError = nil
     }
     func save() throws {
         guard let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
@@ -95,8 +101,11 @@ final class ChatStore: ObservableObject {
     }
 
     func connectProductionRelay() async {
-        guard state.onboarded, let identity else { return }
+        guard state.onboarded, !busy, fatalError == nil, let identity,
+              connectingGeneration != generation else { return }
         let expected = generation
+        connectingGeneration = expected
+        defer { if connectingGeneration == expected { connectingGeneration = nil } }
         connection = "Подключение…"
         do {
             let server=state.server.isEmpty ? AppConfig.productionRelay : state.server

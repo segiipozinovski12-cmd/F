@@ -179,10 +179,13 @@ def prepare_artifacts() -> None:
             simulator_suffix = "target/aarch64-apple-ios-sim/release/libsignal_ffi.a"
         simulator = read_archive_member(tar, simulator_suffix)
 
-    write_artifact(device, "iphoneos", "Debug")
-    write_artifact(device, "iphoneos", "Release")
-    write_artifact(simulator, "iphonesimulator", "Debug")
-    write_artifact(simulator, "iphonesimulator", "Release")
+    # A local build may include simulator testing symbols and different native
+    # LTO settings. Fill missing configurations without replacing that build.
+    for data, platform_name in ((device, "iphoneos"), (simulator, "iphonesimulator")):
+        for configuration in ("Debug", "Release"):
+            destination = SIGNAL_ROOT / "artifacts" / platform_name / configuration / "libsignal_ffi.a"
+            if not destination.is_file() or destination.stat().st_size <= 1024:
+                write_artifact(data, platform_name, configuration)
     print("Prepared official libsignal FFI artifacts for device and simulator.")
 
 

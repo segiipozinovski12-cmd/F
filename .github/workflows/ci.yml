@@ -14,6 +14,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --require-hashes -r server/requirements.lock
+      - run: python -m unittest discover -s scripts/tests -v
       - run: python -m unittest discover -s server/tests -v
       - name: Audit pinned Python dependencies
         run: |
@@ -41,52 +42,37 @@ jobs:
       contents: read
       id-token: write
       attestations: write
-    runs-on: macos-15
-    timeout-minutes: 90
+    name: iOS · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-        with:
-          toolchain: nightly-2025-02-25
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        id: signal-cache
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            Vendor/libsignal/target
-          key: signal-ios-${{ runner.os }}-efe13e9b-v3
-          restore-keys: signal-ios-${{ runner.os }}-efe13e9b-v2
-      - name: Prepare native protocol dependencies
-        run: brew install protobuf cmake ninja
-      - name: Build pinned Signal protocol for simulator
-        run: bash scripts/build_signal.sh aarch64-apple-ios-sim debug
       - name: Verify generated project
         run: |
           python3 scripts/generate_project.py
           git diff --exit-code ios/VO1DMessenger.xcodeproj
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        if: steps.signal-cache.outputs.cache-hit != 'true'
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            Vendor/libsignal/target
-          key: signal-ios-${{ runner.os }}-efe13e9b-v3
       - name: Build Debug for iPhone Simulator
         run: |
           set -o pipefail
           xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES | tee xcodebuild.log
+      - name: Build and validate Debug for physical iPhone
+        run: |
+          xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Debug -destination 'generic/platform=iOS' -derivedDataPath device-debug CODE_SIGNING_ALLOWED=NO
+          python3 scripts/validate_ios_bundle.py device-debug/Build/Products/Debug-iphoneos/VO1DMessenger.app
       - name: Run cryptography and privacy tests
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and "iPhone" in d["name"]))')
-          xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug" OTHER_LDFLAGS="-lsignal_ffi -lc++ -lresolv"
+          xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug"
       - name: Build release for device
         run: |
-          bash scripts/build_signal.sh aarch64-apple-ios release
           xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Release -destination 'generic/platform=iOS' -derivedDataPath release CODE_SIGNING_ALLOWED=NO
+          python3 scripts/validate_ios_bundle.py release/Build/Products/Release-iphoneos/VO1DMessenger.app
       - name: Capture first-run interface for visual review
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and "iPhone" in d["name"]))')
@@ -100,7 +86,7 @@ jobs:
       - name: Upload interface preview
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: VO1D-first-run-interface
+          name: VO1D-first-run-interface-${{ matrix.os }}
           path: build-evidence/first-run.png
       - name: Package unsigned device build and dependency evidence
         run: |
@@ -114,18 +100,18 @@ jobs:
       - name: Upload device archive and build evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: VO1D-unsigned-device
+          name: VO1D-unsigned-device-${{ matrix.os }}
           path: |
             VO1D-unsigned-device.zip
             build-evidence/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: xcode-results
+          name: xcode-results-${{ matrix.os }}
           path: |
             xcodebuild.log
             privacy-tests.xcresult
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: VO1D-iPhone-Simulator
+          name: VO1D-iPhone-Simulator-${{ matrix.os }}
           path: build/Build/Products/Debug-iphonesimulator/VO1DMessenger.app

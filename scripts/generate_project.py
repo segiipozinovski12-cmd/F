@@ -6,17 +6,25 @@ import json
 import plistlib
 import subprocess
 import sys
+import os
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 IOS = ROOT / 'ios'
 PROJECT = IOS / 'VO1DMessenger.xcodeproj'
 PROJECT.mkdir(exist_ok=True)
+previous = (PROJECT / 'project.pbxproj').read_text() if (PROJECT / 'project.pbxproj').is_file() else ''
+teams = re.findall(r'DEVELOPMENT_TEAM\s*=\s*"?([A-Z0-9]{10})"?\s*;', previous)
+bundle_ids = re.findall(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([a-zA-Z0-9.-]+)"?\s*;', previous)
+local_team = os.environ.get('VO1D_DEVELOPMENT_TEAM', teams[0] if teams else '')
+local_bundle = os.environ.get('VO1D_BUNDLE_ID', bundle_ids[0] if bundle_ids else 'io.vo1d.messenger')
 
 # Prepare pinned native dependencies before Xcode resolves the local Swift packages.
-subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_signal.py')], check=True)
+if '--project-only' not in sys.argv:
+    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_signal.py')], check=True)
 # The upstream iCepa Tor XCFramework ships iOS slices as macOS-style deep bundles.
 # Xcode 26/27 rejects those on device builds, so prepare a cached local shallow copy first.
-subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_tor.py')], check=True)
+    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_tor.py')], check=True)
 
 def uid(name):
     return hashlib.sha256(name.encode()).hexdigest()[:24].upper()
@@ -75,6 +83,14 @@ def configurations(name, settings):
     ids=[]
     for mode in ['Debug','Release']:
         allsettings=dict(settings)
+        if name in ('app','test'):
+            if local_team:
+                allsettings['DEVELOPMENT_TEAM'] = local_team
+            allsettings['PRODUCT_BUNDLE_IDENTIFIER'] = local_bundle + ('.tests' if name == 'test' else '')
+            # Official prebuilt archives contain native LLVM bitcode. Load their
+            # members before LTO, including when Xcode promotes a Swift package
+            # to a dynamic product for XCTest. Ordinary -l can load them too late.
+            allsettings['OTHER_LDFLAGS'] = '$(inherited) -Xlinker -force_load -Xlinker "$(SRCROOT)/../Vendor/libsignal/artifacts/$(PLATFORM_NAME)/$(CONFIGURATION)/libsignal_ffi.a" -lc++ -lresolv'
         allsettings.update({'SWIFT_OPTIMIZATION_LEVEL': '-Onone' if mode=='Debug' else '-O', 'DEBUG_INFORMATION_FORMAT':'dwarf' if mode=='Debug' else 'dwarf-with-dsym'})
         if mode == 'Debug':
             allsettings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'

@@ -5,8 +5,10 @@ from pathlib import Path
 import hashlib
 import os
 import plistlib
+import platform
 import shutil
 import stat
+import subprocess
 import tempfile
 import urllib.request
 import zipfile
@@ -56,6 +58,7 @@ def download_archive() -> Path:
 
 
 def safe_extract_with_symlinks(archive: Path, destination: Path) -> None:
+    root = destination.resolve()
     with zipfile.ZipFile(archive) as zf:
         for info in zf.infolist():
             relative = Path(info.filename)
@@ -63,6 +66,10 @@ def safe_extract_with_symlinks(archive: Path, destination: Path) -> None:
                 raise RuntimeError(f"Unsafe path in Tor archive: {info.filename}")
 
             target = destination / relative
+            try:
+                target.resolve().relative_to(root)
+            except ValueError:
+                raise RuntimeError(f"Archive entry escapes through a symlink: {info.filename}")
             mode = (info.external_attr >> 16) & 0xFFFF
 
             if info.is_dir():
@@ -72,6 +79,10 @@ def safe_extract_with_symlinks(archive: Path, destination: Path) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             if stat.S_ISLNK(mode):
                 link_target = zf.read(info).decode("utf-8")
+                try:
+                    (target.parent / link_target).resolve().relative_to(root)
+                except ValueError:
+                    raise RuntimeError(f"Unsafe symlink in Tor archive: {info.filename}")
                 target.unlink(missing_ok=True)
                 os.symlink(link_target, target)
                 continue
@@ -102,7 +113,10 @@ def flatten_ios_framework(framework: Path) -> None:
     if not version_dirs:
         raise RuntimeError(f"Tor framework has no concrete version directory: {framework}")
 
-    source = version_dirs[0]
+    current = versions / "Current"
+    source = current.resolve() if current.is_dir() else version_dirs[0]
+    if source not in [path.resolve() for path in version_dirs]:
+        raise RuntimeError(f"Invalid current Tor framework version: {framework}")
     replacement = framework.with_name(framework.name + ".vo1d-shallow")
     if replacement.exists():
         shutil.rmtree(replacement)
@@ -123,6 +137,28 @@ def flatten_ios_framework(framework: Path) -> None:
     replacement.rename(framework)
 
 
+def normalize_ios_binary(framework: Path) -> None:
+    """A shallow bundle also needs a shallow dyld install name, then fresh signing."""
+    with (framework / "Info.plist").open("rb") as handle:
+        executable = plistlib.load(handle).get("CFBundleExecutable", "tor")
+    if executable != Path(executable).name or not (framework / executable).is_file():
+        raise RuntimeError(f"Missing Tor framework executable: {framework}")
+    binary = framework / executable
+    if platform.system() == "Darwin":
+        desired = f"@rpath/{framework.name}/{executable}"
+        names = subprocess.check_output(["xcrun", "otool", "-D", str(binary)], text=True)
+        if desired not in [line.strip() for line in names.splitlines()]:
+            subprocess.run(["xcrun", "install_name_tool", "-id", desired, str(binary)], check=True)
+        # Moving Resources changes the sealed bundle. Xcode signs its embedded
+        # copy with the selected development identity, so remove stale signatures.
+        if subprocess.run(["codesign", "-d", str(binary)], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0:
+            subprocess.run(["codesign", "--remove-signature", str(binary)], check=True)
+    signatures = framework / "_CodeSignature"
+    if signatures.exists():
+        shutil.rmtree(signatures)
+
+
 def ios_slices_are_valid() -> bool:
     info_path = XCFRAMEWORK / "Info.plist"
     if not info_path.is_file():
@@ -131,7 +167,11 @@ def ios_slices_are_valid() -> bool:
     try:
         with info_path.open("rb") as handle:
             metadata = plistlib.load(handle)
-        for library in metadata.get("AvailableLibraries", []):
+        ios_libraries = [library for library in metadata.get("AvailableLibraries", [])
+                         if library.get("SupportedPlatform") == "ios"]
+        if not ios_libraries:
+            return False
+        for library in ios_libraries:
             if library.get("SupportedPlatform") != "ios":
                 continue
             framework = XCFRAMEWORK / library["LibraryIdentifier"] / library["LibraryPath"]
@@ -145,6 +185,11 @@ def ios_slices_are_valid() -> bool:
 
 def prepare() -> None:
     if ios_slices_are_valid():
+        with (XCFRAMEWORK / "Info.plist").open("rb") as handle:
+            metadata = plistlib.load(handle)
+        for library in metadata["AvailableLibraries"]:
+            if library.get("SupportedPlatform") == "ios":
+                normalize_ios_binary(XCFRAMEWORK / library["LibraryIdentifier"] / library["LibraryPath"])
         print("Tor runtime already prepared.")
         return
 
@@ -171,6 +216,7 @@ def prepare() -> None:
             continue
         framework = XCFRAMEWORK / library["LibraryIdentifier"] / library["LibraryPath"]
         flatten_ios_framework(framework)
+        normalize_ios_binary(framework)
 
     if not ios_slices_are_valid():
         shutil.rmtree(XCFRAMEWORK, ignore_errors=True)

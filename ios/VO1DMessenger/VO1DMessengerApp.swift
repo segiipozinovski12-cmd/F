@@ -64,6 +64,11 @@ struct RootView: View {
                     SplashView()
                 } else if let failure = store.fatalError {
                     ContentUnavailableView("Хранилище недоступно", systemImage: "lock.trianglebadge.exclamationmark", description: Text(failure))
+                        .overlay(alignment: .bottom) {
+                            Button("Повторить после разблокировки") {
+                                Task { await store.reloadProtectedData() }
+                            }.padding(32)
+                        }
                 } else if !store.state.onboarded {
                     WelcomeView()
                 } else if store.state.credentialsAcknowledged != true {
@@ -127,7 +132,7 @@ struct RootView: View {
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
-
+            await store.reloadProtectedData()
             store.beginActiveSession()
             NotificationCoordinator.shared.clearDelivered()
 

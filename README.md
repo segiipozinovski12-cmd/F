@@ -7,14 +7,12 @@
 ```bash
 git clone --recurse-submodules --branch codex/anonymous-v2 https://github.com/segiipozinovski12-cmd/F.git VO1D-Messenger
 cd VO1D-Messenger
-brew install protobuf cmake ninja
-rustup toolchain install nightly-2025-02-25
-rustup target add --toolchain nightly-2025-02-25 aarch64-apple-ios-sim aarch64-apple-ios
-bash scripts/build_signal.sh aarch64-apple-ios-sim debug
-open ios/VO1DMessenger.xcodeproj
+bash scripts/open_iphone.sh
 ```
 
-Нужны macOS, Xcode и Rust/rustup. Выбери схему `VO1DMessenger` и arm64 симулятор; Debug связывается с собранным native SDK. Для Release устройства сначала выполни `bash scripts/build_signal.sh aarch64-apple-ios release`, затем настрой Team/Bundle Identifier/Push Notifications. Apple credentials отсутствуют. Relay должен быть из этой же ветки и отвечать на `/v2/capabilities`; публикация исходников не обновляет production-сервер. Закреплённый libsignal имеет AGPL-3.0-only; notices включены в приложение.
+Нужны macOS, Xcode с iOS SDK и Python 3.8+. Скрипт загружает закреплённые native SDK, проверяет сборку для физического iPhone и открывает Xcode. Rust и Homebrew для этого пути не нужны. В Xcode выбери Team, подключённый iPhone и нажми `⌘R` для подписи и установки. Debug не запрашивает APNs/PushKit entitlement и подходит для Personal Team; Release с push требует соответствующего provisioning. Генератор сохраняет выбранные Team и Bundle Identifier. Подробности: [docs/IPHONE-BUILD.md](docs/IPHONE-BUILD.md).
+
+Для симулятора выполни `python3 scripts/generate_project.py`, открой проект и выбери iPhone Simulator. Сборка SDK из исходников остаётся доступна через `scripts/build_signal.sh`; генератор сохраняет уже собранные библиотеки. Relay должен быть из этой же ветки и отвечать на `/v2/capabilities`; публикация исходников не обновляет production-сервер. Закреплённый libsignal имеет AGPL-3.0-only; notices включены в приложение.
 
 Статус всех 60 пунктов и оставшаяся работа: **[docs/ANONYMITY-V2.md](docs/ANONYMITY-V2.md)**. Там отдельно отмечены работающий код, исследования, частичные функции и внешние проверки.
 
@@ -62,17 +60,17 @@ docker compose up -d --build
 
 ```bash
 python3 -m unittest discover -s server/tests -v
+python3 -m unittest discover -s scripts/tests -v
 python3 scripts/generate_project.py
 xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
   CODE_SIGN_ENTITLEMENTS="$(pwd)/scripts/Simulator.entitlements" \
   ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
-  LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug" \
-  OTHER_LDFLAGS='-lsignal_ffi -lc++ -lresolv'
+  LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug"
 ```
 
-Выбери имя установленного симулятора. CI проверяет generated project, Debug/XCTest/unsigned device Release, сервер и Docker. Simulator использует отдельную локальную ad-hoc подпись для доступа к Keychain: `scripts/Simulator.entitlements` предназначен только для симулятора и не даёт Apple provisioning или APNs. Проверяется запуск хранилища и повторное чтение Keychain, а не только операции на созданных в памяти ключах. Python pins проходят dependency audit; build manifest и device archive публикуются как artifacts. Provenance не означает аудит безопасности или Apple подпись. Native/системные зависимости и Tor binary не дают полной bit-reproducibility.
+Выбери имя установленного симулятора. CI проверяет generated project, Simulator Debug/XCTest, device Debug и Release, embedded frameworks на macOS 15/26, сервер и Docker. Simulator использует отдельную локальную ad-hoc подпись для доступа к Keychain: `scripts/Simulator.entitlements` предназначен только для симулятора и не даёт Apple provisioning или APNs. Проверяется запуск хранилища и повторное чтение Keychain, а не только операции на созданных в памяти ключах. Python pins проходят dependency audit; build manifest и device archive публикуются как artifacts. Provenance не означает аудит безопасности или Apple подпись. Native/системные зависимости и Tor binary не дают полной bit-reproducibility.
 
 ## Ограничения
 

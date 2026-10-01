@@ -61,6 +61,7 @@
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
@@ -77,5 +78,7 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>VO1DPushEnabled</key>
+	<true/>
 </dict>
 </plist>

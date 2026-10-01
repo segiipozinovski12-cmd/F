@@ -18,7 +18,7 @@ enum BackgroundCalls {
     }
     @MainActor static func prepare(_ store: ChatStore, api: APIClient) async throws {
         let expectedGeneration = store.generation, expectedProfile = store.profileID
-        guard store.preferences.backgroundCalls, store.state.notificationsEnabled == true,
+        guard AppConfig.pushEnabled, store.preferences.backgroundCalls, store.state.notificationsEnabled == true,
               let identity = store.identity, let card = store.ownCard else {
             clear()
             let _: APIClient.OK = try await api.request("v2/call-authority", method: "DELETE")
@@ -58,7 +58,7 @@ enum BackgroundCalls {
     @MainActor static func save(_ store: ChatStore) {
         // Remove the old full-account background signing key during migration.
         SecItemDelete([kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"io.vo1d.messenger.calls.v2"] as CFDictionary)
-        guard store.preferences.backgroundCalls, store.state.notificationsEnabled == true,
+        guard AppConfig.pushEnabled, store.preferences.backgroundCalls, store.state.notificationsEnabled == true,
               var descriptor = try? load(), descriptor.card == store.ownCard else { clear(); return }
         // Editing a route is not applying it. Background requests retain the last
         // authenticated route until prepare binds a successfully connected client.

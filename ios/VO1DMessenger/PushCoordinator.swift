@@ -14,7 +14,7 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
     var openRoom: ((String?) -> Void)?
 
     func start() {
-        guard registry == nil else { return }
+        guard AppConfig.pushEnabled, registry == nil else { return }
         let registry = PKPushRegistry(queue:.main)
         registry.delegate = self
         registry.desiredPushTypes = [.voIP]
@@ -27,6 +27,7 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
     }
 
     func register(api: APIClient, enabled: Bool) async throws {
+        let enabled = enabled && AppConfig.pushEnabled
         self.api = api
         self.enabled = enabled
         if enabled { UIApplication.shared.registerForRemoteNotifications(); if api.privacy.backgroundCalls { start() } }

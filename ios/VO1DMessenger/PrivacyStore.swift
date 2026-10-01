@@ -289,12 +289,7 @@ extension ChatStore {
     func reloadProtectedData() async {
         guard fatalError != nil, UIApplication.shared.isProtectedDataAvailable else { return }
         do {
-            profileRegistry = try ProfileRegistry.load()
-            let loaded=try Keychain.load(profileID: profileID)
-            let storage=try Vault(profileID: profileID)
-            let restored=try storage.read(key:loaded.storage)
-            identity=loaded; ownCard=try loaded.card; vault=storage; state=restored
-            fatalError=nil; locked=state.appLock; sessionUnlocked = !state.onboarded
+            try loadProtectedState()
         } catch { fatalError=error.localizedDescription }
     }
 }

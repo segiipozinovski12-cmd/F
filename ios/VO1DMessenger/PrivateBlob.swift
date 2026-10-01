@@ -46,9 +46,10 @@ extension APIClient {
         if let capability {
             try WorkProof.validateToken(capability)
             request.setValue("BlobCapability \(capability)", forHTTPHeaderField: "Authorization")
-        } else if let token {
+        } else if path == "v2/capabilities", let token {
             // Older VO1D relays required an authenticated session even for capability discovery.
-            // Sending the session token is harmless on current relays and keeps onboarding compatible.
+            // Keep this compatibility exception restricted to discovery: anonymous
+            // tickets and capability-authorized files must not receive account tokens.
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         let scope = "blob:" + String(path.split(separator:"/").last ?? "public")

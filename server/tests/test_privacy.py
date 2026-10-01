@@ -3,6 +3,7 @@ import hashlib
 import json
 import time
 import unittest
+from unittest.mock import patch
 import test_relay as fixtures
 
 
@@ -118,6 +119,9 @@ class PrivacyTests(unittest.TestCase):
         self.request('/v1/username','POST',{'username':'temporary_name'},self.a)
         self.request('/v1/username','DELETE',token=self.a)
         self.assertEqual(self.request('/v1/username/temporary_name',token=self.b)[0],404)
-        for _ in range(30):
-            self.request('/v1/code/AAAA',token=self.b)
-        self.assertEqual(self.request('/v1/code/AAAA',token=self.b)[0],429)
+        # A test spanning a wall-clock minute starts a new production bucket.
+        # Hold the clock steady while exercising the documented lookup quota.
+        with patch('app.time.time', return_value=time.time()):
+            for _ in range(30):
+                self.request('/v1/code/AAAA',token=self.b)
+            self.assertEqual(self.request('/v1/code/AAAA',token=self.b)[0],429)
