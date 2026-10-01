@@ -83,8 +83,10 @@ ffi_embed_file=obj('ffi-embed-file','PBXBuildFile',f'fileRef = {ffi_framework}; 
 ffi_embed=obj('ffi-embed','PBXCopyFilesBuildPhase',f'buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = {array([ffi_embed_file])}; name = "Embed Signal FFI"; runOnlyForDeploymentPostprocessing = 0;')
 ffi_input='$(SRCROOT)/../Vendor/libsignal/artifacts/$(PLATFORM_NAME)/$(CONFIGURATION)/signal_ffi.framework'
 ffi_output='$(BUILT_PRODUCTS_DIR)/signal_ffi.framework'
-ffi_script='set -eu\nsource_dir="${SRCROOT}/../Vendor/libsignal/artifacts/${PLATFORM_NAME}/${CONFIGURATION}/signal_ffi.framework"\ntarget_dir="${BUILT_PRODUCTS_DIR}/signal_ffi.framework"\nif [ ! -f "$source_dir/signal_ffi" ]; then echo "Run python3 scripts/generate_project.py to prepare the pinned SDK" >&2; exit 1; fi\n/usr/bin/ditto "$source_dir" "$target_dir"\n'
-ffi_prepare=obj('ffi-prepare','PBXShellScriptBuildPhase',f'buildActionMask = 2147483647; files = (); inputPaths = {array([q(ffi_input)])}; outputPaths = {array([q(ffi_output)])}; name = "Prepare isolated Signal FFI"; shellPath = /bin/sh; shellScript = {q(ffi_script)}; runOnlyForDeploymentPostprocessing = 0;')
+ffi_script='set -eu\nsource_dir="${SRCROOT}/../Vendor/libsignal/artifacts/${PLATFORM_NAME}/${CONFIGURATION}/signal_ffi.framework"\ntarget_dir="${BUILT_PRODUCTS_DIR}/signal_ffi.framework"\nif [ ! -f "$source_dir/signal_ffi" ]; then echo "Run python3 scripts/generate_project.py to prepare the pinned SDK" >&2; exit 1; fi\n/bin/mkdir -p "$target_dir"\n/bin/cp "$source_dir/signal_ffi" "$target_dir/signal_ffi"\n/bin/cp "$source_dir/Info.plist" "$target_dir/Info.plist"\n'
+ffi_inputs=[ffi_input,ffi_input+'/signal_ffi',ffi_input+'/Info.plist']
+ffi_outputs=[ffi_output,ffi_output+'/signal_ffi',ffi_output+'/Info.plist']
+ffi_prepare=obj('ffi-prepare','PBXShellScriptBuildPhase',f'buildActionMask = 2147483647; files = (); inputPaths = {array([q(path) for path in ffi_inputs])}; outputPaths = {array([q(path) for path in ffi_outputs])}; name = "Prepare isolated Signal FFI"; shellPath = /bin/sh; shellScript = {q(ffi_script)}; runOnlyForDeploymentPostprocessing = 0;')
 
 def configurations(name, settings):
     ids=[]
