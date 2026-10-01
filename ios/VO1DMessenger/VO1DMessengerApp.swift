@@ -35,7 +35,7 @@ struct VO1DMessengerApp: App {
                         leftAt=Date()
                         store.revealedHiddenRooms=false
                         if store.state.appLock && store.preferences.autoLockSeconds==0 { store.locked=true }
-                        if !store.busy { store.persist() }
+                        if !store.busy && store.fatalError == nil { store.persist() }
                         MediaFiles.clear()
                     } else if phase == .active, store.state.appLock, let leftAt,
                         Date().timeIntervalSince(leftAt)>=Double(store.preferences.autoLockSeconds) {
@@ -133,6 +133,7 @@ struct RootView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             await store.reloadProtectedData()
+            guard store.fatalError == nil else { return }
             store.beginActiveSession()
             NotificationCoordinator.shared.clearDelivered()
 

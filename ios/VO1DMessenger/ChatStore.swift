@@ -85,11 +85,11 @@ final class ChatStore: ObservableObject {
         expire()
         let botChanged = state.onboarded ? ensureBuiltinBot() : false
         let savedChanged = state.onboarded ? ensureSavedMessages() : false
-        if credentialsChanged || relayChanged || botChanged || savedChanged { try save() }
         fatalError = nil
+        if credentialsChanged || relayChanged || botChanged || savedChanged { try save() }
     }
     func save() throws {
-        guard let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
+        guard fatalError == nil, let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
         try vault.write(state, key: identity.storage)
         BackgroundCalls.save(self)
     }
@@ -1388,7 +1388,7 @@ final class ChatStore: ObservableObject {
     }
 
     func sync() async {
-        guard !syncing, !locked, state.onboarded, let api, let identity else { return }
+        guard fatalError == nil, !syncing, !locked, state.onboarded, let api, let identity else { return }
         syncing = true; let currentGeneration = generation
         defer { syncing = false }
         do {

@@ -241,8 +241,9 @@ extension ChatStore {
         try await prepareNetworkRoute()
         guard expected == generation else { throw CancellationError() }
         let client = try APIClient(server:state.server.isEmpty ? AppConfig.productionRelay : state.server,identity:identity,privacy:preferences)
-        _ = try await client.publicWorkBits()
         try await client.authenticate()
+        guard expected == generation else { throw CancellationError() }
+        _ = try await client.publicWorkBits()
         guard expected == generation else { throw CancellationError() }
         try await BackgroundCalls.prepare(self,api:client)
         guard expected == generation else { throw CancellationError() }
@@ -344,6 +345,7 @@ extension ChatStore {
     }
 
     func beginActiveSession() {
+        guard fatalError == nil else { return }
         let days=preferences.inactivityDays
         if days>0,let previous=extended.lastOpenedAt,Date().timeIntervalSince(previous)>=Double(days)*86400 {
             do { try resetLocalIdentity() } catch { self.error=error.localizedDescription }

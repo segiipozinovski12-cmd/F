@@ -2,6 +2,21 @@ import XCTest
 @testable import VO1DMessenger
 
 final class ProfileTests: XCTestCase {
+    @MainActor func testFailedVaultReadCannotOverwriteTheExistingFile() throws {
+        let store = ChatStore()
+        let vault = try XCTUnwrap(store.vault)
+        try store.save()
+        let original = try Data(contentsOf: vault.url)
+        defer { try? original.write(to: vault.url, options: [.atomic, .completeFileProtection]) }
+        let unreadable = Data("unreadable protected vault".utf8)
+        try unreadable.write(to: vault.url, options: [.atomic, .completeFileProtection])
+        let failed = ChatStore()
+        XCTAssertNotNil(failed.fatalError)
+        failed.beginActiveSession()
+        failed.persist()
+        XCTAssertThrowsError(try failed.save())
+        XCTAssertEqual(try Data(contentsOf: vault.url), unreadable)
+    }
     @MainActor func testProtectedDataRecoveryRunsCredentialMigration() async throws {
         let store = ChatStore()
         let saved = store.state
