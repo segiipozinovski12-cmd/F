@@ -76,8 +76,14 @@ final class ChatStore: ObservableObject {
                 state.server = AppConfig.productionRelay
                 relayChanged = true
             }
-            api = try APIClient(server: state.server, identity: identity, privacy: preferences)
-            connection = "Подключение…"
+            do {
+                api = try APIClient(server: state.server, identity: identity, privacy: preferences)
+                connection = "Подключение…"
+            } catch {
+                api?.invalidate(); api = nil
+                connection = "Проверь настройки подключения"
+                self.error = error.localizedDescription
+            }
         } else {
             connection = "Готов к регистрации"
         }

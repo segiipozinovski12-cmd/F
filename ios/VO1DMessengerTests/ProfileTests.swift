@@ -2,6 +2,24 @@ import XCTest
 @testable import VO1DMessenger
 
 final class ProfileTests: XCTestCase {
+    @MainActor func testInvalidSavedRelayDoesNotBlockTheLocalVault() throws {
+        let store = ChatStore()
+        let vault = try XCTUnwrap(store.vault)
+        let identity = try XCTUnwrap(store.identity)
+        try store.save()
+        let original = try Data(contentsOf: vault.url)
+        defer { try? original.write(to: vault.url, options: [.atomic, .completeFileProtection]) }
+        var state = store.state
+        state.onboarded = true
+        state.nickname = "Local data survives a bad relay"
+        state.server = "not a relay URL"
+        try vault.write(state, key: identity.storage)
+        let reopened = ChatStore()
+        XCTAssertNil(reopened.fatalError)
+        XCTAssertEqual(reopened.state.nickname, state.nickname)
+        XCTAssertNil(reopened.api)
+        XCTAssertNotNil(reopened.error)
+    }
     @MainActor func testFailedVaultReadCannotOverwriteTheExistingFile() throws {
         let store = ChatStore()
         let vault = try XCTUnwrap(store.vault)
