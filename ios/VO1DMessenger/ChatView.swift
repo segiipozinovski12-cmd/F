@@ -1607,6 +1607,7 @@ private struct GroupManagementView: View {
                     }
 
                     if store.isGroupOwner(room) {
+                        NavigationLink("Подписанные приглашения") { GroupInvitationsView(roomID:roomID) }
                         Button("Добавить участников", systemImage: "person.badge.plus") {
                             showAdd = true
                         }

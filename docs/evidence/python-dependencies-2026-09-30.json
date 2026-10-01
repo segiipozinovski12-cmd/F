@@ -1,0 +1,112 @@
+{
+  "date": "2026-09-30",
+  "scope": "Python relay dependencies only; not native iOS, Tor, libsignal or an independent application audit",
+  "service": "PyPI vulnerability database via pip-audit",
+  "dependencies": [
+    {
+      "name": "aiohappyeyeballs",
+      "version": "2.7.1",
+      "vulnerabilities": []
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.3",
+      "vulnerabilities": []
+    },
+    {
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "vulnerabilities": []
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "vulnerabilities": []
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "vulnerabilities": []
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.1",
+      "vulnerabilities": []
+    },
+    {
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "h2",
+      "version": "4.4.1",
+      "vulnerabilities": []
+    },
+    {
+      "name": "hpack",
+      "version": "4.2.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "vulnerabilities": []
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "vulnerabilities": []
+    },
+    {
+      "name": "hyperframe",
+      "version": "6.1.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "vulnerabilities": []
+    },
+    {
+      "name": "multidict",
+      "version": "6.9.1",
+      "vulnerabilities": []
+    },
+    {
+      "name": "propcache",
+      "version": "0.5.4",
+      "vulnerabilities": []
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "vulnerabilities": []
+    },
+    {
+      "name": "yarl",
+      "version": "1.25.1",
+      "vulnerabilities": []
+    }
+  ]
+}

@@ -56,7 +56,7 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     private var file: URL?
 
     init(data: Data) {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("vo1d-voice-\(UUID().uuidString).m4a")
+        let url = (try? MediaFiles.transientURL()) ?? MediaFiles.transientDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
         try? data.write(to: url, options: [.atomic, .completeFileProtection])
         file = url
         waveform = AudioWaveform.samples(file: url)

@@ -1,0 +1,7 @@
+SocksPort 0
+DataDirectory /var/lib/tor
+HiddenServiceDir /var/lib/tor/vo1d/
+HiddenServiceVersion 3
+HiddenServicePort 80 relay:8080
+SafeLogging 1
+Log err stderr

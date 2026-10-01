@@ -7,9 +7,16 @@ struct ToolsCenterView: View {
     @State private var report = ""
     var body: some View {
         List {
+            Section("Личности и восстановление") {
+                NavigationLink("Независимые личности") { ProfilesView() }
+                NavigationLink("Мои устройства") { DeviceLinksView() }
+                NavigationLink("Архивы истории") { HistoryArchivesView() }
+            }
             Section("Приватность") {
                 NavigationLink("Настройки приватности") { PrivacyCenterView() }
                 NavigationLink("Проверка приватности") { PrivacyDashboardView() }
+                NavigationLink("Диагностика и восстановление") { PrivacyDiagnosticsView() }
+                NavigationLink("Приглашения в группы") { GroupInvitationsView() }
                 NavigationLink("Одноразовые приглашения") { InvitationCenterView() }
                 NavigationLink("Запросы · \(store.requestRooms.count)") { MessageRequestsView() }
                 NavigationLink("Скрытые чаты") { HiddenRoomsView() }
@@ -46,7 +53,10 @@ struct ToolsCenterView: View {
                 }
                 Button("Освободить username") { Task { do { try await store.releaseUsername(); report="Username освобождён" } catch { report=error.localizedDescription } } }
             }
-            Section("Сеть") { NetworkStatusRow() }
+            Section("Сеть") {
+                NavigationLink("Маршруты и профили защиты") { NetworkRouteView() }
+                NetworkStatusRow()
+            }
         }.navigationTitle("Инструменты VO1D")
     }
 }

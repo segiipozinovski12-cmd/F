@@ -32,6 +32,10 @@ struct SettingsView: View {
                         .padding(.bottom, 4)
 
                         profileCard
+                        NavigationLink { ProfilesView() } label: {
+                            Label("НЕЗАВИСИМЫЕ ЛИЧНОСТИ",systemImage:"person.crop.rectangle.stack")
+                                .frame(maxWidth:.infinity,alignment:.leading).panel()
+                        }.buttonStyle(.plain)
                         keysCard
                         NavigationLink {
                             ToolsCenterView()
@@ -52,7 +56,7 @@ struct SettingsView: View {
                             Spacer()
                             VStack(spacing: 5) {
                                 Wordmark(compact: true)
-                                Text("PRIVATE MESSAGING LAYER · 1.2").font(.system(size: 8, design: .monospaced)).tracking(1.6).foregroundStyle(Theme.secondary)
+                                Text("PRIVATE MESSAGING LAYER · 2.0").font(.system(size: 8, design: .monospaced)).tracking(1.6).foregroundStyle(Theme.secondary)
                             }
                             Spacer()
                         }
@@ -291,6 +295,7 @@ struct SettingsView: View {
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
 
+            NavigationLink("КОМПОНЕНТЫ И ЛИЦЕНЗИИ") { DependencyNoticesView() }
             NavigationLink("КАК ЗАЩИЩЕНЫ СООБЩЕНИЯ") { PrivacyView() }
                 .buttonStyle(GhostButton())
         }
@@ -659,10 +664,10 @@ struct PrivacyView: View {
             sections: [
                 ("Без телефона и почты", "Личность создаётся из случайных криптографических ключей на устройстве. Контакты телефона не запрашиваются."),
                 ("Содержимое", "Текст, файлы, голосовые, реакции и события чатов шифруются на устройстве перед отправкой через relay."),
-                ("Метаданные", "Relay может видеть сетевой IP, криптографические ID отправителя и получателя, время и размер трафика. Сквозное шифрование не скрывает эти метаданные."),
+                ("Метаданные", "Приватные адреса скрывают ID участников от очереди. Обычная доставка, поиск по коду и регистрация используют ID. Relay видит адрес подключения, время и размеры; Tor уменьшает раскрытие IP, но не устраняет корреляцию."),
                 ("Ключи", "Приватные ключи хранятся в iOS Keychain. История хранится в зашифрованном локальном vault и исключается из резервного копирования приложения."),
                 ("Ограничения", "Собеседник может сохранить сообщение или сделать снимок экрана. Приложение не способно удалить такие внешние копии."),
-                ("Протокол", "Текущая реализация использует X25519, HKDF-SHA256, AES-256-GCM и Ed25519 через CryptoKit. Протокол не заявляется как независимо аудированный.")
+                ("Протокол", "Новые сообщения используют PQXDH и Double Ratchet из libsignal. Приватная доставка дополняет их оболочкой CryptoKit. Интеграция приложения пока не проходила независимый аудит.")
             ]
         )
     }
@@ -730,4 +735,3 @@ private struct DocumentScreen: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 }
-

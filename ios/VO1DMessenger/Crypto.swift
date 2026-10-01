@@ -53,7 +53,7 @@ enum Crypto {
             throw MessengerError.invalid("Отпечаток контакта или подпись не совпадают")
         }
     }
-    static func seal(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
+    static func sanitized(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> ChatEvent {
         var event = input
         let own = try identity.card
         event.room = input.room.wireCopy
@@ -65,24 +65,35 @@ enum Crypto {
             message.reactions = [:]; message.openedAt = nil
             event.message = message
         }
+        return event
+    }
+    static func seal(_ input: ChatEvent, from identity: LocalIdentity, to recipient: ContactCard) throws -> Envelope {
+        let event = try sanitized(input, from: identity, to: recipient)
+        return try sealPayload(Wire.encoder.encode(event), from: identity, to: recipient, expiry: event.message?.expiresAt)
+    }
+    static func sealPayload(_ payload: Data, from identity: LocalIdentity, to recipient: ContactCard, expiry: Date? = nil, id: String = UUID().uuidString) throws -> Envelope {
+        let own = try identity.card
         try validate(recipient)
         let ephemeral = Curve25519.KeyAgreement.PrivateKey()
         let salt = try random(32)
-        var envelope = Envelope(id: UUID().uuidString, sender: own.id, recipient: recipient.id,
+        var envelope = Envelope(id: id, sender: own.id, recipient: recipient.id,
                                 ephemeralKey: ephemeral.publicKey.rawRepresentation.base64EncodedString(), salt: salt.base64EncodedString(),
                                 expiresAt: Int(Date().timeIntervalSince1970) + 7 * 86400, ciphertext: "", signature: "")
-        if let expiry = event.message?.expiresAt {
+        if let expiry {
             envelope.expiresAt = min(envelope.expiresAt, Int(expiry.timeIntervalSince1970))
         }
         let shared = try ephemeral.sharedSecretFromKeyAgreement(with: Curve25519.KeyAgreement.PublicKey(rawRepresentation: decode(recipient.agreementKey, count: 32)))
         let key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: salt, sharedInfo: envelope.header, outputByteCount: 32)
-        let sealed = try AES.GCM.seal(Wire.encoder.encode(event), using: key, authenticating: envelope.header)
+        let sealed = try AES.GCM.seal(payload, using: key, authenticating: envelope.header)
         guard let combined = sealed.combined else { throw MessengerError.invalid("Ошибка шифрования") }
         envelope.ciphertext = combined.base64EncodedString()
         envelope.signature = try identity.signingPrivate.signature(for: envelope.header + Data([10]) + combined).base64EncodedString()
         return envelope
     }
     static func open(_ envelope: Envelope, identity: LocalIdentity, sender: ContactCard) throws -> ChatEvent {
+        try Wire.decoder.decode(ChatEvent.self, from: openPayload(envelope, identity: identity, sender: sender))
+    }
+    static func openPayload(_ envelope: Envelope, identity: LocalIdentity, sender: ContactCard) throws -> Data {
         try validate(sender)
         guard envelope.sender == sender.id, envelope.recipient == (try identity.card.id), envelope.expiresAt > Int(Date().timeIntervalSince1970) else {
             throw MessengerError.invalid("Сообщение не адресовано этому устройству или истекло")
@@ -96,38 +107,41 @@ enum Crypto {
         let shared = try identity.agreementPrivate.sharedSecretFromKeyAgreement(with: ephemeral)
         let key = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: try decode(envelope.salt, count: 32), sharedInfo: envelope.header, outputByteCount: 32)
         let clear = try AES.GCM.open(AES.GCM.SealedBox(combined: ciphertext), using: key, authenticating: envelope.header)
-        return try Wire.decoder.decode(ChatEvent.self, from: clear)
+        return clear
     }
 }
 
 enum Keychain {
     static let service = "io.vo1d.messenger.identity.v1"
-    static func load() throws -> LocalIdentity {
+    static func account(_ profileID: String) -> String { profileID == "default" ? "identity" : "identity:\(profileID)" }
+    static func load(profileID: String = "default") throws -> LocalIdentity {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                   kSecAttrAccount as String: "identity", kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+                                   kSecAttrAccount as String: account(profileID), kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecSuccess, let data = item as? Data { return try Wire.decoder.decode(LocalIdentity.self, from: data) }
         guard status == errSecItemNotFound else { throw MessengerError.invalid("Keychain недоступен (\(status))") }
         let identity = try LocalIdentity.create()
         let insert: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: "identity", kSecValueData as String: try Wire.encoder.encode(identity),
+                                    kSecAttrAccount as String: account(profileID), kSecValueData as String: try Wire.encoder.encode(identity),
                                     kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         let result = SecItemAdd(insert as CFDictionary, nil)
         guard result == errSecSuccess else { throw MessengerError.invalid("Не удалось сохранить ключи (\(result))") }
         return identity
     }
-    static func delete() throws {
-        let status = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
+    static func delete(profileID: String = "default") throws {
+        let status = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account(profileID)] as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw MessengerError.invalid("Не удалось удалить ключи") }
     }
 }
 
 struct Vault {
     let url: URL
-    init() throws {
-        let dir = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    init(profileID: String = "default") throws {
+        guard profileID == "default" || UUID(uuidString: profileID) != nil else { throw MessengerError.invalid("Неверный профиль хранилища") }
+        var dir = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("VO1D", isDirectory: true)
+        if profileID != "default" { dir = dir.appendingPathComponent("profiles", isDirectory: true).appendingPathComponent(profileID, isDirectory: true) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var excluded = dir
         var values = URLResourceValues(); values.isExcludedFromBackup = true
@@ -148,4 +162,3 @@ struct Vault {
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 }
-

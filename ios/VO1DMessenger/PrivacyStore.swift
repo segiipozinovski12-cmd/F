@@ -30,6 +30,7 @@ extension ChatStore {
             !contact.blocked && extended.trustedIDs.contains(contact.id) && (!preferences.verifiedOnlyCalls || contact.verified)
         }.map(\.id)
         let _: APIClient.OK = try await api.request("v1/trust/sync",method:"POST",body:Wire.encoder.encode(["ids":allowed]))
+        try await BackgroundCalls.prepare(self, api: api)
     }
 
     func trustOnServer(_ id: String, trusted: Bool) async throws {
@@ -234,8 +235,18 @@ extension ChatStore {
 extension ChatStore {
     func reconfigureTransport() async throws {
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
+        generation += 1
+        let expected = generation
+        CallManager.shared.disconnect(); api?.invalidate(); api = nil
+        try await prepareNetworkRoute()
+        guard expected == generation else { throw CancellationError() }
         let client = try APIClient(server:state.server.isEmpty ? AppConfig.productionRelay : state.server,identity:identity,privacy:preferences)
         try await client.authenticate()
+        guard expected == generation else { throw CancellationError() }
+        _ = try await client.publicWorkBits()
+        guard expected == generation else { throw CancellationError() }
+        try await BackgroundCalls.prepare(self,api:client)
+        guard expected == generation else { throw CancellationError() }
         api=client
         CallManager.shared.configure(api:client,identity:identity,nameResolver:{ [weak self] in self?.name($0) ?? "VO1D" },recordSink:{ [weak self] in self?.recordCall($0) })
         CallManager.shared.allowedPeer = { [weak self] id in
@@ -250,13 +261,24 @@ extension ChatStore {
     }
 
     func sealEvent(_ input: ChatEvent, from identity: LocalIdentity, to target: ContactCard) throws -> Envelope {
+        if preferences.requirePrivateDelivery, privateRoute(peerID:target.id,roomID:input.room.id) == nil {
+            throw MessengerError.invalid("Нужен приватный QR контакта: строгий режим скрывает отправителя при доставке")
+        }
         var event=input
         if !event.room.isGroup, let alias=extended.aliases[target.id], !alias.isEmpty { event.senderName=alias }
         if preferences.padding { event.padding=try Crypto.random(128).base64EncodedString() }
-        return try Crypto.seal(event,from:identity,to:target)
+        try validateScopedRoom(event.room)
+        event = try Crypto.sanitized(event, from: identity, to: target)
+        return Envelope(id: UUID().uuidString, sender: try identity.card.id, recipient: target.id,
+            ephemeralKey: "", salt: "", expiresAt: Int(Date().timeIntervalSince1970) + 7 * 86400,
+            ciphertext: "", signature: "", deferredEvent: try Wire.encoder.encode(event))
     }
 
     func retryDelivery(_ messageID: String) {
+        guard state.outbox.contains(where: { $0.messageID == messageID }) else {
+            error = "Сохранённой очереди для этого сообщения нет. Отправь его заново: старые ключи из резервной копии не восстанавливаются."
+            return
+        }
         for pending in state.outbox where pending.messageID==messageID { deliveryIssues[pending.id]=nil }
         if let i=state.messages.firstIndex(where: { $0.id==messageID }) { state.messages[i].state="queued" }
         persist()
@@ -268,11 +290,7 @@ extension ChatStore {
     func reloadProtectedData() async {
         guard fatalError != nil, UIApplication.shared.isProtectedDataAvailable else { return }
         do {
-            let loaded=try Keychain.load()
-            let storage=try Vault()
-            let restored=try storage.read(key:loaded.storage)
-            identity=loaded; ownCard=try loaded.card; vault=storage; state=restored
-            fatalError=nil; locked=state.appLock; sessionUnlocked = !state.onboarded
+            try loadProtectedState()
         } catch { fatalError=error.localizedDescription }
     }
 }
@@ -321,12 +339,13 @@ extension ChatStore {
         var updated=old
         updated.privateRoster=enabled
         updated.onlyAdminsCanPost=true
-        try publishRoomUpdate(oldRoom:old,newRoom:updated)
+        updated = try publishRoomUpdate(oldRoom:old,newRoom:updated)
         state.rooms[index]=updated
         try save()
     }
 
     func beginActiveSession() {
+        guard fatalError == nil else { return }
         let days=preferences.inactivityDays
         if days>0,let previous=extended.lastOpenedAt,Date().timeIntervalSince(previous)>=Double(days)*86400 {
             do { try resetLocalIdentity() } catch { self.error=error.localizedDescription }

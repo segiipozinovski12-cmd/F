@@ -6,6 +6,15 @@ struct ContactCard: Codable, Hashable, Identifiable {
     var agreementKey: String
     var binding: String
     var shortID: String { String(id.prefix(12)).uppercased() }
+    /// A valid signature is evidence of the binding, not part of the key identity.
+    /// Providers may produce different valid signatures for the same public card.
+    func hasSameKeys(as other: ContactCard) -> Bool {
+        id == other.id && signingKey == other.signingKey && agreementKey == other.agreementKey
+    }
+    static func == (lhs: ContactCard, rhs: ContactCard) -> Bool { lhs.hasSameKeys(as: rhs) }
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id); hasher.combine(signingKey); hasher.combine(agreementKey)
+    }
 }
 
 struct Contact: Codable, Identifiable, Hashable {
@@ -36,6 +45,7 @@ struct Room: Codable, Identifiable, Hashable {
     var topics: [String]? = nil
     var mutedUntil: Date? = nil
     var privateRoster: Bool? = nil
+    var membershipEpoch: Int? = nil
 }
 
 struct Attachment: Codable, Hashable {
@@ -45,6 +55,7 @@ struct Attachment: Codable, Hashable {
     var viewSeconds: Int? = nil
     var voiceEffect: String? = nil
     var blobID: String? = nil
+    var blobReadToken: String? = nil
     var blobKey: String? = nil
     var blobSize: Int? = nil
     var blobDigest: String? = nil
@@ -110,6 +121,10 @@ struct ChatMessage: Codable, Identifiable, Hashable {
 
 /// All event content, including group membership and attachments, lives inside AEAD.
 struct ChatEvent: Codable {
+    var deviceCertificate: DeviceCertificate? = nil
+    var historyArchive: HistoryArchive? = nil
+    var groupInvitation: GroupInvitation? = nil
+    var replyMailbox: MailboxAddress? = nil
     var id: String = UUID().uuidString
     var kind: String
     var room: Room
@@ -130,12 +145,17 @@ struct Envelope: Codable, Identifiable {
     var expiresAt: Int
     var ciphertext: String
     var signature: String
+    // Present only in the encrypted local outbox. APIClient refuses to send it.
+    var deferredEvent: Data? = nil
+    var opaque: OpaqueEnvelope? = nil
     var header: Data {
         Data("VO1D-ENVELOPE-1\n\(id)\n\(sender)\n\(recipient)\n\(ephemeralKey)\n\(salt)\n\(expiresAt)".utf8)
     }
 }
 
 struct PendingDelivery: Codable, Identifiable {
+    var authorizationID: String? = nil
+    var notBefore: Date? = nil
     var envelope: Envelope
     var messageID: String?
     var id: String { envelope.id + envelope.recipient }
@@ -170,6 +190,8 @@ struct Invite: Codable {
     var server: String
     var name: String
     var card: ContactCard
+    var mailbox: MailboxAddress? = nil
+    var prekey: SignalBundle? = nil
 }
 
 enum MessengerError: LocalizedError {
@@ -193,4 +215,3 @@ enum Wire {
         return d
     }
 }
-

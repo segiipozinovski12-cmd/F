@@ -9,6 +9,9 @@ struct VO1DMessengerApp: App {
     @State private var leftAt: Date?
 
     init() {
+        UITableView.appearance().backgroundColor = .black
+        UICollectionView.appearance().backgroundColor = .black
+        MediaFiles.clear()
         NotificationCoordinator.shared.install()
     }
 
@@ -28,13 +31,13 @@ struct VO1DMessengerApp: App {
                     PushCoordinator.shared.openRoom = { id in store.notificationRoomID=id }
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase != .active {
+                    if phase == .background {
                         leftAt=Date()
                         store.revealedHiddenRooms=false
                         if store.state.appLock && store.preferences.autoLockSeconds==0 { store.locked=true }
-                        store.persist()
+                        if !store.busy && store.fatalError == nil { store.persist() }
                         MediaFiles.clear()
-                    } else if store.state.appLock, let leftAt,
+                    } else if phase == .active, store.state.appLock, let leftAt,
                         Date().timeIntervalSince(leftAt)>=Double(store.preferences.autoLockSeconds) {
                         store.locked=true
                     }
@@ -51,6 +54,7 @@ struct RootView: View {
     @State private var incomingContact: String?
     @State private var pendingLink: URL?
     @State private var captured = UIScreen.main.isCaptured
+    private var canRunForegroundSession: Bool { scenePhase == .active && store.fatalError == nil }
 
     var body: some View {
         ZStack {
@@ -61,6 +65,11 @@ struct RootView: View {
                     SplashView()
                 } else if let failure = store.fatalError {
                     ContentUnavailableView("Хранилище недоступно", systemImage: "lock.trianglebadge.exclamationmark", description: Text(failure))
+                        .overlay(alignment: .bottom) {
+                            Button("Повторить после разблокировки") {
+                                Task { await store.reloadProtectedData() }
+                            }.padding(32)
+                        }
                 } else if !store.state.onboarded {
                     WelcomeView()
                 } else if store.state.credentialsAcknowledged != true {
@@ -82,7 +91,7 @@ struct RootView: View {
                     .zIndex(20)
             }
 
-            if scenePhase != .active || (captured && store.preferences.protectRecording) {
+            if scenePhase == .background || (captured && store.preferences.protectRecording) {
                 Color.black.ignoresSafeArea()
                     .overlay {
                         VStack(spacing: 18) {
@@ -97,14 +106,14 @@ struct RootView: View {
         .environment(\.openURL,OpenURLAction { url in
             guard ["http","https"].contains(url.scheme?.lowercased() ?? ""), url.user==nil, url.password==nil else { return .discarded }
             let clean=store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url
-            if store.preferences.confirmLinks { pendingLink=clean; return .handled }
+            if store.preferences.confirmLinks || store.preferences.proxyEnabled || store.preferences.embeddedTor { pendingLink=clean; return .handled }
             return .systemAction(clean)
         })
         .confirmationDialog("Открыть внешний сайт?",isPresented:Binding(get:{ pendingLink != nil },set:{ if !$0 { pendingLink=nil } }),titleVisibility:.visible) {
             if let url=pendingLink { Button("Открыть \(url.host ?? "сайт")") { UIApplication.shared.open(url); pendingLink=nil } }
         } message: { Text("Сайт увидит адрес подключения браузера. Прокси VO1D не распространяется на браузер.") }
         .onOpenURL { url in
-            if url.scheme=="vo1d", ["contact","invite"].contains(url.host ?? "") { incomingContact=url.absoluteString }
+            if url.scheme=="vo1d", ["contact","invite","private"].contains(url.host ?? "") { incomingContact=url.absoluteString }
         }
         .sheet(isPresented:Binding(get:{ incomingContact != nil && store.sessionUnlocked && !store.locked },set:{ if !$0 { incomingContact=nil } })) {
             AddContactView(initialValue:incomingContact ?? "")
@@ -114,7 +123,7 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.32), value: splash)
         .task {
-            try? await Task.sleep(for: .milliseconds(1350))
+            try? await Task.sleep(for: .milliseconds(650))
             splash = false
         }
         .alert("VO1D", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
@@ -122,9 +131,10 @@ struct RootView: View {
         } message: {
             Text(store.error ?? "")
         }
-        .task(id: scenePhase) {
+        .task(id: canRunForegroundSession) {
             guard scenePhase == .active else { return }
-
+            await store.reloadProtectedData()
+            guard !Task.isCancelled, store.fatalError == nil else { return }
             store.beginActiveSession()
             NotificationCoordinator.shared.clearDelivered()
 
@@ -133,7 +143,9 @@ struct RootView: View {
             }
 
             while !Task.isCancelled {
-                await store.sync()
+                if store.state.onboarded && store.sessionUnlocked && !store.busy {
+                    await store.sync()
+                }
                 try? await Task.sleep(for: .seconds(store.preferences.lowData ? 8 : 2))
             }
         }
@@ -283,4 +295,3 @@ private struct BiometricGateView: View {
         }
     }
 }
-

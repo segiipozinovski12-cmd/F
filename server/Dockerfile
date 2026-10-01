@@ -6,21 +6,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.lock .
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && useradd --uid 10001 --create-home --shell /usr/sbin/nologin relay \
     && mkdir -p /data \
     && chown relay:relay /data
 
-COPY app.py realtime.py privacy.py push.py ./
+COPY *.py ./
 COPY railway-entrypoint.sh /usr/local/bin/railway-entrypoint
 RUN chmod 0755 /usr/local/bin/railway-entrypoint
 
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/railway-entrypoint"]
-

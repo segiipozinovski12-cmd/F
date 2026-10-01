@@ -67,11 +67,84 @@ final class PrivacyTests: XCTestCase {
         let encoded=try SecureBackup.export(BackupPayload(identity:identity,state:state),password:"correct horse battery")
         XCTAssertFalse(String(data:encoded,encoding:.utf8)!.contains("Private"))
         let restored=try SecureBackup.open(encoded,password:"correct horse battery")
-        XCTAssertEqual(try restored.identity.card.id,try identity.card.id)
+        XCTAssertEqual(try restored.identity?.card.id,try identity.card.id)
         XCTAssertEqual(restored.state.nickname,"Private")
         XCTAssertThrowsError(try SecureBackup.open(encoded,password:"another secret phrase"))
         var envelope=try Wire.decoder.decode(BackupEnvelope.self,from:encoded)
         envelope.ciphertext[envelope.ciphertext.startIndex] ^= 1
         XCTAssertThrowsError(try SecureBackup.open(Wire.encoder.encode(envelope),password:"correct horse battery"))
+    }
+
+    func testBackupRejectsDifferentOwnerAndChangedAgreementKey() throws {
+        let identity = try LocalIdentity.create(), other = try LocalIdentity.create()
+        let state = VaultState()
+        let foreign = try SecureBackup.export(BackupPayload(identity:identity,state:state,ownerCard:other.card),password:"correct horse battery")
+        XCTAssertThrowsError(try SecureBackup.open(foreign,password:"correct horse battery"))
+        var card = try identity.card
+        card.agreementKey = try other.card.agreementKey
+        card.binding = try identity.signingPrivate.signature(for:Crypto.cardBytes(card)).base64EncodedString()
+        try Crypto.validate(card)
+        let changed = try SecureBackup.export(BackupPayload(identity:identity,state:state,ownerCard:card),password:"correct horse battery")
+        XCTAssertThrowsError(try SecureBackup.open(changed,password:"correct horse battery"))
+    }
+
+    func testKeyIdentityComparisonDoesNotReplaceSignatureValidation() throws {
+        let identity = try LocalIdentity.create()
+        let card = try identity.card
+        let renewed = try identity.card
+        try Crypto.validate(renewed)
+        XCTAssertEqual(card,renewed)
+        XCTAssertEqual(Set([card,renewed]).count,1)
+        var forged = card; forged.binding = Data(repeating:0,count:64).base64EncodedString()
+        XCTAssertThrowsError(try Crypto.validate(forged))
+        let other = try LocalIdentity.create()
+        XCTAssertNotEqual(card,try other.card)
+    }
+}
+
+extension PrivacyTests {
+    func testDelegatedCallKeyCannotImpersonateAccountAndCertificateBindsCall() throws {
+        let owner = try LocalIdentity.create(), peer = try LocalIdentity.create(), delegate = try LocalIdentity.create()
+        var authority = CallAuthority(owner: try owner.card.id, key: try delegate.signingPrivate.publicKey.rawRepresentation.base64EncodedString(), expiresAt: Int(Date().timeIntervalSince1970) + 3600)
+        authority.signature = try owner.signingPrivate.signature(for: authority.bytes).base64EncodedString()
+        let packed = try Wire.encoder.encode(authority).base64EncodedString()
+        let a = CallSecrets(), b = CallSecrets(), id = UUID().uuidString
+        let offer = try a.offer(identity: delegate, callID: id, to: peer.card.id, ownerID: owner.card.id)
+        XCTAssertThrowsError(try b.accept(key: offer["key"]!, signature: offer["keySignature"]!, identity: peer, peer: owner.card, callID: id))
+        let bk = try b.accept(key: offer["key"]!, signature: offer["keySignature"]!, identity: peer, peer: owner.card, callID: id, certificate: packed)
+        let reply = try b.offer(identity: peer, callID: id, to: owner.card.id)
+        let ak = try a.accept(key: reply["key"]!, signature: reply["keySignature"]!, identity: delegate, peer: peer.card, callID: id, ownerID: owner.card.id)
+        let encrypted = try a.seal(Data("delegated audio".utf8), key: ak, callID: id)
+        XCTAssertEqual(try b.open(encrypted.0, sequence: encrypted.1, key: bk, callID: id), Data("delegated audio".utf8))
+        authority.expiresAt = 0
+        XCTAssertThrowsError(try authority.validate(for: owner.card))
+    }
+}
+
+extension PrivacyTests {
+    func testBackupModesExcludeRatchetAndTransportSecrets() throws {
+        let identity = try LocalIdentity.create()
+        var snapshot = try SignalSnapshot.create()
+        snapshot.sessions["peer:1"] = Data("OLD CHAIN KEY".utf8)
+        snapshot.prekeys["1"] = Data("ONE USE PRIVATE KEY".utf8)
+        snapshot.kyberKeys["2"] = Data("PQ PRIVATE KEY".utf8)
+        var state = VaultState(); var local = ExtendedState(); local.signal = snapshot; state.extended = local
+        let full = try SecureBackup.sanitized(BackupPayload(identity:identity,state:state,mode:.full))
+        XCTAssertNotNil(full.identity)
+        XCTAssertEqual(full.state.extended?.signal?.sessions.count,0)
+        XCTAssertEqual(full.state.extended?.signal?.prekeys.count,0)
+        XCTAssertEqual(full.state.extended?.signal?.kyberKeys.count,0)
+        let history = try SecureBackup.sanitized(BackupPayload(identity:identity,state:state,mode:.history))
+        XCTAssertNil(history.identity)
+        XCTAssertNil(history.state.extended?.signal)
+        let serialized = String(data:try Wire.encoder.encode(history),encoding:.utf8)!
+        XCTAssertFalse(serialized.contains(identity.signing.base64EncodedString()))
+        XCTAssertFalse(serialized.contains(identity.agreement.base64EncodedString()))
+        XCTAssertFalse(serialized.contains(identity.storage.base64EncodedString()))
+        let onlyIdentity = try SecureBackup.sanitized(BackupPayload(identity:identity,state:state,mode:.identity))
+        XCTAssertTrue(onlyIdentity.state.messages.isEmpty)
+        XCTAssertTrue(onlyIdentity.state.contacts.isEmpty)
+        XCTAssertFalse(onlyIdentity.state.onboarded)
+        XCTAssertNotNil(onlyIdentity.state.extended?.signal?.identity)
     }
 }

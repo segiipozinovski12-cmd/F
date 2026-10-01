@@ -10,6 +10,11 @@ import threading
 import time
 from contextlib import contextmanager
 import privacy
+import prekeys
+import mailboxes
+import call_authority
+import network_privacy
+import private_blobs
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -97,6 +102,10 @@ class Relay:
             ''')
 
             privacy.install(db)
+            prekeys.install(db)
+            mailboxes.install(db)
+            call_authority.install(db)
+            private_blobs.install(db)
 
     @contextmanager
     def db(self):
@@ -121,6 +130,9 @@ class Relay:
     def clean(self, db):
         now = int(time.time())
         privacy.clean(db, now)
+        prekeys.clean(db, now)
+        mailboxes.clean(db, now)
+        db.execute('DELETE FROM call_authorities WHERE expires<=?',(now,))
         for table in ('challenges', 'sessions', 'envelopes', 'seen'):
             db.execute(f'DELETE FROM {table} WHERE expires <= ?', (now,))
 
@@ -138,11 +150,17 @@ class Relay:
     def dispatch(self, env, body):
         method, path = env['REQUEST_METHOD'], env.get('PATH_INFO', '/')
         now = int(time.time())
-        # Only the immediate peer is used; untrusted forwarded headers never bypass limits.
+        # Forwarded addresses are accepted only through explicitly trusted proxy CIDRs.
         import hmac
-        ip_hash = hmac.new(self.rate_secret,env.get('REMOTE_ADDR','').encode(),hashlib.sha256).hexdigest()
+        ip_hash = hmac.new(self.rate_secret,network_privacy.client_address(env).encode(),hashlib.sha256).hexdigest()
+        if method == 'GET' and path == '/v2/capabilities':
+            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True}
+        if method == 'POST' and path == '/v2/blobs/ticket':
+            return private_blobs.ticket(self,body,ip_hash,APIError)
+        if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
+            return mailboxes.handle(self,env,body,ip_hash,APIError,b64)
         if method == 'GET' and path == '/health':
-            return {'status': 'ok', 'protocol': 1}
+            return {'status': 'ok', 'protocol': 2}
         if path in ('/v1/register', '/v1/challenge', '/v1/session'):
             self.rate('auth:' + ip_hash, 90)
         if path == '/v1/register':
@@ -157,15 +175,33 @@ class Relay:
         with self.db() as db:
             self.clean(db)
             if not public:
+                result = call_authority.handle(db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
+                result = prekeys.handle(db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
                 result = privacy.handle(self,db,user,env,body,APIError)
                 if result is not None:
                     return result
             if method == 'POST' and path == '/v1/register':
                 card = verify_card(body)
                 old = db.execute('SELECT card FROM identities WHERE id=?', (card['id'],)).fetchone()
-                if old and json.loads(old[0]) != card:
-                    raise APIError(409, 'Identity already bound to different keys')
-                db.execute('INSERT OR IGNORE INTO identities VALUES (?,?)', (card['id'], json.dumps(card)))
+                encoded_card = json.dumps(card)
+                if old:
+                    previous = json.loads(old[0])
+                    # The identity ID is derived from the signing key. A valid new card
+                    # with the same signing key proves continuity, so an agreement-key
+                    # rotation from old prerelease clients can be recovered safely.
+                    if b64(previous['signingKey'],32) != b64(card['signingKey'],32):
+                        raise APIError(409, 'Identity already bound to different signing key')
+                    if b64(previous['agreementKey'],32) != b64(card['agreementKey'],32):
+                        db.execute('UPDATE identities SET card=? WHERE id=?', (encoded_card, card['id']))
+                        # Signal prekeys are bound to the account identity and must be
+                        # republished after the card's agreement key changes.
+                        prekeys.erase(db, card['id'])
+                else:
+                    db.execute('INSERT INTO identities VALUES (?,?)', (card['id'], encoded_card))
                 db.execute('INSERT OR IGNORE INTO privacy(identity,last_active) VALUES (?,?)',(card['id'],now))
                 return {'ok': True}
             if method == 'POST' and path == '/v1/challenge':
@@ -363,4 +399,3 @@ if __name__ == '__main__':
             pass
     print('VO1D development relay: http://127.0.0.1:8080 (production: use Docker + TLS)')
     make_server('0.0.0.0', 8080, create_app(), handler_class=QuietHandler).serve_forever()
-

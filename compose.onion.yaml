@@ -1,0 +1,20 @@
+# docker compose -f compose.yaml -f compose.onion.yaml up -d
+# Adds an onion origin. Caddy is still published unless the operator disables it.
+services:
+  onion:
+    build: ./deploy/tor
+    restart: unless-stopped
+    volumes:
+      - onion-data:/var/lib/tor
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      relay:
+        condition: service_healthy
+volumes:
+  onion-data:

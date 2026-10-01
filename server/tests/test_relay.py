@@ -107,6 +107,28 @@ class RelayTests(unittest.TestCase):
         card = dict(self.alice_card); card['agreementKey'] = self.bob_card['agreementKey']
         self.assertEqual(self.request('/v1/register', 'POST', card)[0], 400)
 
+    def test_valid_new_binding_representation_does_not_change_identity(self):
+        card = dict(self.alice_card)
+        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+        # Base64 padding bits do not change decoded bytes. A valid proof's textual
+        # representation is not an additional part of the key identity.
+        index = alphabet.index(card['binding'][-3])
+        card['binding'] = card['binding'][:-3] + alphabet[index | 1] + '=='
+        self.assertNotEqual(card['binding'],self.alice_card['binding'])
+        self.assertEqual(base64.b64decode(card['binding']),base64.b64decode(self.alice_card['binding']))
+        self.assertEqual(self.request('/v1/register','POST',card)[0],200)
+        token = self.login(self.alice,card)
+        self.assertEqual(self.request('/v1/inbox',token=token)[0],200)
+
+    def test_valid_signing_key_can_rotate_registered_agreement_key(self):
+        card = dict(self.alice_card); card['agreementKey'] = self.bob_card['agreementKey']
+        card['binding'] = encode(self.alice.sign(card_bytes(card)))
+        self.assertEqual(self.request('/v1/register','POST',card)[0],200)
+        token = self.login(self.alice,card)
+        status, stored = self.request('/v1/identity/'+card['id'],token=token)
+        self.assertEqual(status,200)
+        self.assertEqual(stored['agreementKey'],card['agreementKey'])
+
     def test_auth_replay_is_rejected(self):
         _, challenge = self.request('/v1/challenge', 'POST', {'id':self.alice_card['id']})
         data = f"VO1D-AUTH-1\n{self.alice_card['id']}\n{challenge['nonce']}".encode()

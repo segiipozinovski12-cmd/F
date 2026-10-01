@@ -260,6 +260,11 @@ struct MyIdentityView: View {
                         }
                         .buttonStyle(PrimaryButton())
                     }
+                    Button("СОЗДАТЬ ПРИВАТНОЕ ПРИГЛАШЕНИЕ") {
+                        Task { do { try await store.preparePrivateInvite() } catch { store.error = error.localizedDescription } }
+                    }.buttonStyle(.bordered)
+                    Text("Приватное приглашение действует час и используется один раз. Оно содержит адрес доставки и одноразовые ключи, зашифрованные ключом из ссылки.")
+                        .font(.caption).foregroundStyle(Theme.secondary)
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("ТЕХНИЧЕСКИЙ ОТПЕЧАТОК").font(.caption2.monospaced()).tracking(2).foregroundStyle(Theme.secondary)

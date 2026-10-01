@@ -4,11 +4,27 @@ from pathlib import Path
 import hashlib
 import json
 import plistlib
+import subprocess
+import sys
+import os
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 IOS = ROOT / 'ios'
 PROJECT = IOS / 'VO1DMessenger.xcodeproj'
 PROJECT.mkdir(exist_ok=True)
+previous = (PROJECT / 'project.pbxproj').read_text() if (PROJECT / 'project.pbxproj').is_file() else ''
+teams = re.findall(r'DEVELOPMENT_TEAM\s*=\s*"?([A-Z0-9]{10})"?\s*;', previous)
+bundle_ids = re.findall(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([a-zA-Z0-9.-]+)"?\s*;', previous)
+local_team = os.environ.get('VO1D_DEVELOPMENT_TEAM', teams[0] if teams else '')
+local_bundle = os.environ.get('VO1D_BUNDLE_ID', bundle_ids[0] if bundle_ids else 'io.vo1d.messenger')
+
+# Prepare pinned native dependencies before Xcode resolves the local Swift packages.
+if '--project-only' not in sys.argv:
+    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_signal.py')], check=True)
+# The upstream iCepa Tor XCFramework ships iOS slices as macOS-style deep bundles.
+# Xcode 26/27 rejects those on device builds, so prepare a cached local shallow copy first.
+    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'prepare_tor.py')], check=True)
 
 def uid(name):
     return hashlib.sha256(name.encode()).hexdigest()[:24].upper()
@@ -44,36 +60,70 @@ testgroup = obj('test-group', 'PBXGroup', f'children = {array(testrefs)}; name =
 main = obj('main-group','PBXGroup',f'children = {array([appgroup,testgroup,products])}; sourceTree = "<group>";')
 privacy = ref_file('VO1DMessenger/PrivacyInfo.xcprivacy', 'text.xml')
 privacy_build = obj('privacy-build','PBXBuildFile',f'fileRef = {privacy};')
+resource_builds = [privacy_build]
+for file in sorted((IOS / 'VO1DMessenger' / 'Resources').glob('*.txt')):
+    path = file.relative_to(IOS).as_posix()
+    ref = ref_file(path, 'text')
+    resource_builds.append(obj(path + ':resource', 'PBXBuildFile', f'fileRef = {ref};'))
 appsrc = obj('app-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(appbuild)}; runOnlyForDeploymentPostprocessing = 0;')
 testsrc = obj('test-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(testbuild)}; runOnlyForDeploymentPostprocessing = 0;')
-resources = obj('app-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {array([privacy_build])}; runOnlyForDeploymentPostprocessing = 0;')
-frameworks = obj('app-frameworks','PBXFrameworksBuildPhase','buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
+resources = obj('app-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(resource_builds)}; runOnlyForDeploymentPostprocessing = 0;')
+signalpackage=obj('signal-package','XCLocalSwiftPackageReference','relativePath = "../Vendor/libsignal/swift";')
+torpackage=obj('tor-package','XCLocalSwiftPackageReference','relativePath = "../Vendor/TorRuntime";')
+torproduct=obj('tor-product','XCSwiftPackageProductDependency',f'package = {torpackage}; productName = EmbeddedTor;')
+torbuild=obj('tor-build','PBXBuildFile',f'productRef = {torproduct};')
+signalproduct=obj('signal-product','XCSwiftPackageProductDependency',f'package = {signalpackage}; productName = LibSignalClient;')
+signalbuild=obj('signal-build','PBXBuildFile',f'productRef = {signalproduct};')
+frameworks = obj('app-frameworks','PBXFrameworksBuildPhase',f'buildActionMask = 2147483647; files = {array([signalbuild,torbuild])}; runOnlyForDeploymentPostprocessing = 0;')
+testsignalproduct=obj('test-signal-product','XCSwiftPackageProductDependency',f'package = {signalpackage}; productName = LibSignalClient;')
+testsignalbuild=obj('test-signal-build','PBXBuildFile',f'productRef = {testsignalproduct};')
+testframeworks=obj('test-frameworks','PBXFrameworksBuildPhase',f'buildActionMask = 2147483647; files = {array([testsignalbuild])}; runOnlyForDeploymentPostprocessing = 0;')
+ffi_framework=ref_file('signal_ffi.framework','wrapper.framework','BUILT_PRODUCTS_DIR')
+ffi_embed_file=obj('ffi-embed-file','PBXBuildFile',f'fileRef = {ffi_framework}; settings = {{ ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy,); }};')
+ffi_embed=obj('ffi-embed','PBXCopyFilesBuildPhase',f'buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = {array([ffi_embed_file])}; name = "Embed Signal FFI"; runOnlyForDeploymentPostprocessing = 0;')
+ffi_input='$(SRCROOT)/../Vendor/libsignal/artifacts/$(PLATFORM_NAME)/$(CONFIGURATION)/signal_ffi.framework'
+ffi_output='$(BUILT_PRODUCTS_DIR)/signal_ffi.framework'
+ffi_script='set -eu\nsource_dir="${SRCROOT}/../Vendor/libsignal/artifacts/${PLATFORM_NAME}/${CONFIGURATION}/signal_ffi.framework"\ntarget_dir="${BUILT_PRODUCTS_DIR}/signal_ffi.framework"\nif [ ! -f "$source_dir/signal_ffi" ]; then echo "Run python3 scripts/generate_project.py to prepare the pinned SDK" >&2; exit 1; fi\n/bin/mkdir -p "$target_dir"\n/bin/cp "$source_dir/signal_ffi" "$target_dir/signal_ffi"\n/bin/cp "$source_dir/Info.plist" "$target_dir/Info.plist"\n'
+ffi_inputs=[ffi_input,ffi_input+'/signal_ffi',ffi_input+'/Info.plist']
+ffi_outputs=[ffi_output,ffi_output+'/signal_ffi',ffi_output+'/Info.plist']
+ffi_prepare=obj('ffi-prepare','PBXShellScriptBuildPhase',f'buildActionMask = 2147483647; files = (); inputPaths = {array([q(path) for path in ffi_inputs])}; outputPaths = {array([q(path) for path in ffi_outputs])}; name = "Prepare isolated Signal FFI"; shellPath = /bin/sh; shellScript = {q(ffi_script)}; runOnlyForDeploymentPostprocessing = 0;')
 
 def configurations(name, settings):
     ids=[]
     for mode in ['Debug','Release']:
         allsettings=dict(settings)
+        if name in ('app','test'):
+            if local_team:
+                allsettings['DEVELOPMENT_TEAM'] = local_team
+            allsettings['PRODUCT_BUNDLE_IDENTIFIER'] = local_bundle + ('.tests' if name == 'test' else '')
+            allsettings['OTHER_LDFLAGS'] = '$(inherited) -lsignal_ffi -lc++ -lresolv'
         allsettings.update({'SWIFT_OPTIMIZATION_LEVEL': '-Onone' if mode=='Debug' else '-O', 'DEBUG_INFORMATION_FORMAT':'dwarf' if mode=='Debug' else 'dwarf-with-dsym'})
         if mode == 'Debug':
             allsettings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
             allsettings['ENABLE_TESTABILITY']='YES'
         if name=='app':
-            allsettings['APS_ENVIRONMENT']='development' if mode=='Debug' else 'production'
-            allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.entitlements'
-            allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.Debug.plist' if mode=='Debug' else 'VO1DMessenger/Info.plist'
+            if mode == 'Debug':
+                # Personal Apple Development teams cannot provision Push Notifications.
+                # Keep Debug installable on a real iPhone; Release retains APNs for paid-team/App Store signing.
+                allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.Debug.entitlements'
+                allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.Debug.plist'
+            else:
+                allsettings['APS_ENVIRONMENT']='production'
+                allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.entitlements'
+                allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.plist'
         content=' '.join(f'{k} = {q(v)};' for k,v in allsettings.items())
         ids.append(obj(f'{name}-{mode}','XCBuildConfiguration',f'buildSettings = {{ {content} }}; name = {mode};'))
     return obj(name+'-configs','XCConfigurationList',f'buildConfigurations = {array(ids)}; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
 
 projectconfigs=configurations('project', {'SDKROOT':'iphoneos','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SWIFT_VERSION':'5.0','CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','GCC_C_LANGUAGE_STANDARD':'gnu17','ENABLE_USER_SCRIPT_SANDBOXING':'YES'})
-appconfigs=configurations('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'io.vo1d.messenger','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','MARKETING_VERSION':'1.3.0','CURRENT_PROJECT_VERSION':'1','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator','SUPPORTS_MACCATALYST':'NO','SWIFT_EMIT_LOC_STRINGS':'YES','GENERATE_INFOPLIST_FILE':'NO'})
-testconfigs=configurations('test',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'io.vo1d.messenger.tests','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'YES','TEST_HOST':'$(BUILT_PRODUCTS_DIR)/VO1DMessenger.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VO1DMessenger','BUNDLE_LOADER':'$(TEST_HOST)','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @loader_path/Frameworks'})
+appconfigs=configurations('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'io.vo1d.messenger','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','MARKETING_VERSION':'2.0.0','CURRENT_PROJECT_VERSION':'2','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks','LIBRARY_SEARCH_PATHS':'$(inherited) $(SRCROOT)/../Vendor/libsignal/artifacts/$(PLATFORM_NAME)/$(CONFIGURATION)','OTHER_LDFLAGS':'$(inherited) -lsignal_ffi -lc++ -lresolv','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator','SUPPORTS_MACCATALYST':'NO','SWIFT_EMIT_LOC_STRINGS':'YES','GENERATE_INFOPLIST_FILE':'NO'})
+testconfigs=configurations('test',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'io.vo1d.messenger.tests','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'YES','TEST_HOST':'$(BUILT_PRODUCTS_DIR)/VO1DMessenger.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VO1DMessenger','BUNDLE_LOADER':'$(TEST_HOST)','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @loader_path/Frameworks','LIBRARY_SEARCH_PATHS':'$(inherited) $(SRCROOT)/../Vendor/libsignal/artifacts/$(PLATFORM_NAME)/$(CONFIGURATION)','OTHER_LDFLAGS':'$(inherited) -lsignal_ffi -lc++ -lresolv'})
 app=uid('app-target'); project=uid('project')
 proxy=obj('test-proxy','PBXContainerItemProxy',f'containerPortal = {project}; proxyType = 1; remoteGlobalIDString = {app}; remoteInfo = VO1DMessenger;')
 dep=obj('test-dep','PBXTargetDependency',f'target = {app}; targetProxy = {proxy};')
-obj('app-target','PBXNativeTarget',f'buildConfigurationList = {appconfigs}; buildPhases = {array([appsrc,frameworks,resources])}; buildRules = (); dependencies = (); name = VO1DMessenger; productName = VO1DMessenger; productReference = {app_product}; productType = "com.apple.product-type.application";')
-test=obj('test-target','PBXNativeTarget',f'buildConfigurationList = {testconfigs}; buildPhases = {array([testsrc])}; buildRules = (); dependencies = {array([dep])}; name = VO1DMessengerTests; productName = VO1DMessengerTests; productReference = {test_product}; productType = "com.apple.product-type.bundle.unit-test";')
-obj('project','PBXProject',f'attributes = {{ LastUpgradeCheck = 1600; TargetAttributes = {{ {app} = {{ CreatedOnToolsVersion = 16.0; }}; {test} = {{ CreatedOnToolsVersion = 16.0; TestTargetID = {app}; }}; }}; }}; buildConfigurationList = {projectconfigs}; compatibilityVersion = "Xcode 14.0"; developmentRegion = ru; hasScannedForEncodings = 0; knownRegions = (ru,en,Base); mainGroup = {main}; productRefGroup = {products}; projectDirPath = ""; projectRoot = ""; targets = {array([app,test])};')
+obj('app-target','PBXNativeTarget',f'buildConfigurationList = {appconfigs}; buildPhases = {array([ffi_prepare,appsrc,frameworks,resources,ffi_embed])}; buildRules = (); dependencies = (); packageProductDependencies = {array([signalproduct,torproduct])}; name = VO1DMessenger; productName = VO1DMessenger; productReference = {app_product}; productType = "com.apple.product-type.application";')
+test=obj('test-target','PBXNativeTarget',f'buildConfigurationList = {testconfigs}; buildPhases = {array([testsrc,testframeworks])}; buildRules = (); dependencies = {array([dep])}; packageProductDependencies = {array([testsignalproduct])}; name = VO1DMessengerTests; productName = VO1DMessengerTests; productReference = {test_product}; productType = "com.apple.product-type.bundle.unit-test";')
+obj('project','PBXProject',f'attributes = {{ LastUpgradeCheck = 1600; TargetAttributes = {{ {app} = {{ CreatedOnToolsVersion = 16.0; }}; {test} = {{ CreatedOnToolsVersion = 16.0; TestTargetID = {app}; }}; }}; }}; buildConfigurationList = {projectconfigs}; compatibilityVersion = "Xcode 14.0"; developmentRegion = ru; hasScannedForEncodings = 0; knownRegions = (ru,en,Base); mainGroup = {main}; productRefGroup = {products}; packageReferences = {array([signalpackage,torpackage])}; projectDirPath = ""; projectRoot = ""; targets = {array([app,test])};')
 (PROJECT/'project.pbxproj').write_text('// !$*UTF8*$!\n{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+'\n'.join(objects)+f'\n}}; rootObject = {project}; }}\n')
 schemes=PROJECT/'xcshareddata'/'xcschemes'; schemes.mkdir(parents=True,exist_ok=True)
 def buildref(ident,name,product):
@@ -88,4 +138,3 @@ ar=buildref(app,'VO1DMessenger','VO1DMessenger.app'); tr=buildref(test,'VO1DMess
 <AnalyzeAction buildConfiguration="Debug"/><ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
 </Scheme>''')
 print('Generated', PROJECT)
-

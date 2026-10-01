@@ -8,13 +8,14 @@ enum VoiceCallPhase: String {
     case ringing
     case connecting
     case active
+    case reconnecting
 }
 
 struct VoiceCallSession: Identifiable, Equatable {
     let id: UUID
     let callID: String
-    let peerID: String
-    let peerName: String
+    var peerID: String
+    var peerName: String
     let incoming: Bool
     let createdAt: Date
     var phase: VoiceCallPhase
@@ -33,6 +34,8 @@ private final class CallAudioEngine {
 
     private var running = false
     private var tapInstalled = false
+    private var captureConverter: AVAudioConverter?
+    private let captureFormat = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16_000,channels:1,interleaved:true)!
     var muted = false
 
     init() {
@@ -58,10 +61,12 @@ private final class CallAudioEngine {
             throw MessengerError.invalid("Микрофон недоступен")
         }
 
+        captureConverter = AVAudioConverter(from:format,to:captureFormat)
+        guard captureConverter != nil else { throw MessengerError.invalid("Формат микрофона не поддерживается") }
         if !tapInstalled {
             input.installTap(onBus: 0, bufferSize: 1920, format: format) { [weak self] buffer, _ in
                 guard let self, !self.muted else { return }
-                guard let data = Self.pcm16Mono16k(buffer: buffer, format: format), !data.isEmpty else { return }
+                guard let data = self.pcm16Mono16k(buffer: buffer, format: format), !data.isEmpty else { return }
                 onFrame(data)
             }
             tapInstalled = true
@@ -80,6 +85,7 @@ private final class CallAudioEngine {
         player.stop()
         engine.stop()
         running = false
+        captureConverter = nil
         muted = false
     }
 
@@ -107,24 +113,20 @@ private final class CallAudioEngine {
         if !player.isPlaying { player.play() }
     }
 
-    private static func pcm16Mono16k(buffer: AVAudioPCMBuffer, format: AVAudioFormat) -> Data? {
-        guard let source = buffer.floatChannelData?[0] else { return nil }
-        let frameCount = Int(buffer.frameLength)
-        guard frameCount > 0 else { return nil }
-
-        let ratio = max(1, Int((format.sampleRate / 16_000).rounded()))
-        var data = Data()
-        data.reserveCapacity((frameCount / ratio + 1) * 2)
-
-        var index = 0
-        while index < frameCount {
-            let value = max(-1, min(1, source[index]))
-            var sample = Int16(value * 32767).littleEndian
-            withUnsafeBytes(of: &sample) { data.append(contentsOf: $0) }
-            index += ratio
+    private func pcm16Mono16k(buffer: AVAudioPCMBuffer, format: AVAudioFormat) -> Data? {
+        guard let converter = captureConverter, buffer.frameLength > 0 else { return nil }
+        let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 16_000 / format.sampleRate) + 32)
+        guard let output = AVAudioPCMBuffer(pcmFormat:captureFormat,frameCapacity:capacity) else { return nil }
+        var supplied = false, conversionError: NSError?
+        let status = converter.convert(to:output,error:&conversionError) { _, inputStatus in
+            if supplied { inputStatus.pointee = .noDataNow; return nil }
+            supplied = true; inputStatus.pointee = .haveData; return buffer
         }
-        return data
+        guard status != .error, conversionError == nil, output.frameLength > 0,
+              let bytes = output.int16ChannelData?[0] else { return nil }
+        return Data(bytes:bytes,count:Int(output.frameLength)*2)
     }
+
 }
 
 private final class CallKitBridge: NSObject, CXProviderDelegate {
@@ -177,6 +179,8 @@ final class CallManager: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private var api: APIClient?
     private var identity: LocalIdentity?
+    private var pendingConfiguration: (APIClient, LocalIdentity, ContactCard?)?
+    private var canonicalCard: ContactCard?
     private var peerCard: ContactCard?
     private var callKey: SymmetricKey?
     private var callSecrets: CallSecrets?
@@ -203,17 +207,26 @@ final class CallManager: ObservableObject {
     func configure(
         api: APIClient,
         identity: LocalIdentity,
+        ownerCard: ContactCard? = nil,
         nameResolver: @escaping (String) -> String,
         recordSink: @escaping (CallRecord) -> Void
     ) {
-        self.api = api
-        self.identity = identity
         self.nameResolver = nameResolver
         self.recordSink = recordSink
-        if session==nil || socket==nil { connectSocket() }
+        if session != nil, socket != nil {
+            // An accepted background call retains the delegated identity used
+            // for its handshake until it ends, even after foreground unlock.
+            pendingConfiguration = (api, identity, ownerCard)
+            return
+        }
+        self.api = api
+        self.identity = identity
+        self.canonicalCard = ownerCard ?? (try? identity.card)
+        connectSocket()
     }
 
     func disconnect() {
+        pendingConfiguration = nil
         if let current = session {
             provider.reportCall(with: current.id, endedAt: Date(), reason: .failed)
             finishCurrent(status: current.phase == .active ? "interrupted" : (current.incoming ? "missed" : "cancelled"))
@@ -226,6 +239,7 @@ final class CallManager: ObservableObject {
         transport = "OFFLINE"
         api = nil
         identity = nil
+        canonicalCard = nil
         nameResolver = nil
         recordSink = nil
     }
@@ -304,7 +318,7 @@ final class CallManager: ObservableObject {
         Task {
             do {
                 guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
-                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID)
+                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID,ownerID:canonicalCard?.id)
                 packet["type"]="invite"; packet["to"]=current.peerID; packet["callID"]=current.callID
                 try await send(packet)
             } catch {
@@ -332,7 +346,7 @@ final class CallManager: ObservableObject {
                 }
                 guard socketReady,callKey != nil else { failCurrent(reason:.failed); return }
                 guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
-                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID)
+                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID,ownerID:canonicalCard?.id)
                 packet["type"]="answer"; packet["to"]=current.peerID; packet["callID"]=current.callID
                 try await send(packet)
                 activateMediaIfReady()
@@ -415,9 +429,8 @@ final class CallManager: ObservableObject {
                 self.socket = nil
                 self.socketReady = false
                 self.transport = "OFFLINE"
-                if self.session != nil {
-                    self.failCurrent(reason: .failed)
-                }
+                if let current = self.session, current.startedAt != nil, self.callKey != nil { self.pauseCurrent() }
+                else if self.session != nil { self.failCurrent(reason: .failed) }
 
                 try? await Task.sleep(for: .seconds(3))
                 if self.api != nil && self.socket == nil {
@@ -446,6 +459,7 @@ final class CallManager: ObservableObject {
         if type == "ready" {
             socketReady = true
             transport = "WSS"
+            if session?.phase == .reconnecting { await sendResume(type:"resume") }
             if let current=session, current.incoming, callKey==nil {
                 await preparePushedMedia(current)
             }
@@ -454,7 +468,7 @@ final class CallManager: ObservableObject {
 
         if type == "error" {
             let code = packet["code"] as? String ?? "call_error"
-            if ["peer_offline", "peer_busy", "peer_unavailable", "unknown_peer"].contains(code) {
+            if ["peer_offline", "peer_busy", "peer_unavailable", "unknown_peer", "unknown_call", "call_mismatch", "invalid_resume"].contains(code) {
                 failCurrent(reason: code == "peer_offline" ? .unanswered : .failed)
             }
             return
@@ -476,7 +490,7 @@ final class CallManager: ObservableObject {
         case "answer":
             guard !current.incoming,let callSecrets,let identity,let peerCard,
                   let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
-            callKey=try callSecrets.accept(key:key,signature:signature,identity:identity,peer:peerCard,callID:callID)
+            callKey=try callSecrets.accept(key:key,signature:signature,identity:identity,peer:peerCard,callID:callID,ownerID:canonicalCard?.id,certificate:packet["certificate"] as? String)
             var updated = current
             updated.phase = .active
             updated.startedAt = Date()
@@ -484,6 +498,17 @@ final class CallManager: ObservableObject {
             provider.reportOutgoingCall(with: current.id, connectedAt: Date())
             activateMediaIfReady()
 
+        case "paused":
+            pauseCurrent()
+        case "resume", "resumed":
+            guard current.startedAt != nil, let key = callKey, let secrets = callSecrets,
+                  let encoded = packet["payload"] as? String, let payload = Data(base64Encoded:encoded),
+                  let sequence = packet["sequence"] as? String,
+                  let clear = try secrets.open(payload,sequence:sequence,key:key,callID:callID),
+                  clear == Data("VO1D-CALL-RESUME-2".utf8) else { return }
+            var updated = current; updated.phase = .active; session = updated
+            transport = "WSS"; activateMediaIfReady()
+            if type == "resume" { await sendResume(type:"resumed") }
         case "audio":
             guard current.phase == .active,
                   let payload = packet["payload"] as? String,
@@ -503,17 +528,44 @@ final class CallManager: ObservableObject {
         }
     }
 
+    private func pauseCurrent() {
+        guard var current = session, current.startedAt != nil else { return }
+        let firstPause = current.phase != .reconnecting
+        current.phase = .reconnecting; session = current; audio.stop(); transport = "RECONNECTING"
+        if firstPause {
+            let callID = current.callID
+            Task { [weak self] in
+                try? await Task.sleep(for:.seconds(20))
+                guard let self, self.session?.callID == callID, self.session?.phase == .reconnecting else { return }
+                self.failCurrent(reason:.failed)
+            }
+        }
+    }
+    private func sendResume(type: String) async {
+        guard let current = session, let key = callKey, let secrets = callSecrets, socketReady else { return }
+        do {
+            let frame = try secrets.seal(Data("VO1D-CALL-RESUME-2".utf8),key:key,callID:current.callID)
+            try await send(["type":type,"to":current.peerID,"callID":current.callID,"payload":frame.0.base64EncodedString(),"sequence":frame.1])
+        } catch { transport = "RECONNECTING" }
+    }
+
     private func receiveInvite(from peerID: String,callID: String,packet: [String:Any]) async {
         guard allowedPeer?(peerID) != false, session==nil || session?.callID==callID,
               let api,let identity,let uuid=UUID(uuidString:callID),
               let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
         do {
-            let peer=try await api.card(peerID)
+            let peer: ContactCard
+            if let packed = packet["card"] as? String { peer = try Wire.decoder.decode(ContactCard.self, from: Crypto.decode(packed)); try Crypto.validate(peer) }
+            else { peer=try await api.card(peerID) }
+            guard peer.id == peerID else { throw MessengerError.invalid("ID звонящего не совпал с ключом") }
             guard session==nil || session?.callID==callID else { return }
             let secrets=callSecrets ?? CallSecrets()
-            let symmetric=try secrets.accept(key:key,signature:signature,identity:identity,peer:peer,callID:callID)
+            let symmetric=try secrets.accept(key:key,signature:signature,identity:identity,peer:peer,callID:callID,ownerID:canonicalCard?.id,certificate:packet["certificate"] as? String)
             try audio.prepareSession()
             callSecrets=secrets; peerCard=peer; callKey=symmetric
+            if var pushed = session, pushed.callID == callID, pushed.peerID.isEmpty {
+                pushed.peerID = peerID; pushed.peerName = nameResolver?(peerID) ?? "VO1D"; session = pushed
+            }
             if session==nil {
                 let name=nameResolver?(peerID) ?? "VO1D"
                 session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:name,incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
@@ -535,7 +587,7 @@ final class CallManager: ObservableObject {
         update.remoteHandle=CXHandle(type:.generic,value:"VO1D")
         update.localizedCallerName="VO1D"
         update.hasVideo=false
-        let rejected=session != nil || allowedPeer?(peerID)==false || peerID.count != 64
+        let rejected=session != nil || (!peerID.isEmpty && (allowedPeer?(peerID)==false || peerID.count != 64))
         if !rejected {
             session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:"VO1D",incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
         }
@@ -674,6 +726,11 @@ final class CallManager: ObservableObject {
         muted = false
         speaker = true
         audioSessionActive = false
+        if let pending = pendingConfiguration {
+            pendingConfiguration = nil
+            api = pending.0; identity = pending.1; canonicalCard = pending.2 ?? (try? pending.1.card)
+            connectSocket()
+        }
     }
 }
 
@@ -790,6 +847,7 @@ struct CallScreen: View {
         switch session.phase {
         case .ringing: return "ВХОДЯЩИЙ VO1D CALL"
         case .connecting: return "СОЕДИНЕНИЕ…"
+        case .reconnecting: return "ВОССТАНАВЛИВАЕМ СВЯЗЬ…"
         case .active: return "ЗАЩИЩЁННЫЙ АУДИОКАНАЛ"
         }
     }
@@ -828,4 +886,3 @@ struct CallScreen: View {
         .buttonStyle(.plain)
     }
 }
-

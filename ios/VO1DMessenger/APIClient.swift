@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 @MainActor
 final class APIClient {
@@ -13,29 +14,60 @@ final class APIClient {
         var size: Int
         var digest: String
         var expiresAt: Int
+        var readToken: String? = nil
+        var deleteToken: String? = nil
     }
 
     var base: URL
-    private var token: String?
+    private(set) var token: String?
     let session: URLSession
     let privacy: PrivacyPreferences
     private let identity: LocalIdentity
     private let authenticationCard: ContactCard?
+    private var capabilitySessions: [String:URLSession] = [:]
+    private let capabilityNamespace = UUID().uuidString
+    private let callToken: String?
 
-    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil) throws {
-        base = try Self.validateURL(server)
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil) throws {
+        base = try Self.validateURL(server,privacy:privacy)
         self.privacy = privacy
         self.identity = identity
         self.authenticationCard = authenticationCard
+        self.callToken = callToken
         let config = try TransportConfiguration.make(privacy)
-        session = URLSession(configuration: config)
+        session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
     }
 
-    static func validateURL(_ string: String) throws -> URL {
+    func capabilitySession(scope: String) throws -> URLSession {
+        if let session = capabilitySessions[scope] { return session }
+        var isolated = privacy
+        if isolated.embeddedTor || isolated.proxyUsesTor {
+            isolated.streamIsolation = Crypto.hex(SHA256.hash(data:Data("VO1D-STREAM-2\n\(privacy.streamIsolation)\n\(capabilityNamespace)\n\(scope)".utf8)))
+        }
+        let configuration = try TransportConfiguration.make(isolated)
+        let session = URLSession(configuration:configuration,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
+        if capabilitySessions.count >= 64, let key = capabilitySessions.keys.first {
+            capabilitySessions.removeValue(forKey:key)?.finishTasksAndInvalidate()
+        }
+        capabilitySessions[scope] = session
+        return session
+    }
+    func invalidate() {
+        session.invalidateAndCancel()
+        for client in capabilitySessions.values { client.invalidateAndCancel() }
+        capabilitySessions = [:]
+    }
+
+    nonisolated static func validateURL(_ string: String, privacy: PrivacyPreferences? = nil) throws -> URL {
         guard let url = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else {
             throw MessengerError.invalid("Укажи адрес сервера, например https://chat.example.com")
+        }
+        if host.hasSuffix(".onion") {
+            guard ["http","https"].contains(url.scheme ?? ""), let privacy, privacy.embeddedTor || (privacy.proxyEnabled && privacy.proxyUsesTor),
+                  host.range(of:"^[a-z2-7]{56}\\.onion$",options:.regularExpression) != nil else { throw MessengerError.invalid("v3 onion требует маршрута Tor") }
+            return url
         }
         if url.scheme == "https" { return url }
         #if DEBUG
@@ -56,6 +88,7 @@ final class APIClient {
     }
 
     func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true) async throws -> T {
+        guard callToken == nil else { throw MessengerError.invalid("Фоновое разрешение доступно только для звонков") }
         let (data, status) = try await raw(path, method: method, body: body)
         if status == 401 && retry {
             try await authenticate()
@@ -69,6 +102,7 @@ final class APIClient {
     }
 
     func authenticate() async throws {
+        guard callToken == nil else { throw MessengerError.invalid("Разрешение звонков не авторизует аккаунт") }
         token = nil
         let card: ContactCard
         if let authenticationCard { card = authenticationCard }
@@ -222,7 +256,21 @@ final class APIClient {
     }
 
     func send(_ envelope: Envelope) async throws {
+        guard envelope.deferredEvent == nil else { throw MessengerError.invalid("Локальное сообщение ещё не зашифровано протоколом v2") }
+        if let opaque = envelope.opaque { try await sendOpaque(opaque); return }
+        guard !envelope.ciphertext.isEmpty else { throw MessengerError.invalid("Пустой шифротекст") }
         let _: OK = try await request("v1/envelopes", method: "POST", body: Wire.encoder.encode(envelope))
+    }
+    func publishPrekeys(_ publication: SignalPublication) async throws {
+        let _: OK = try await request("v2/prekeys", method: "POST", body: Wire.encoder.encode(publication))
+    }
+    func prekey(_ target: ContactCard) async throws -> SignalBundle {
+        try await request("v2/prekeys/\(target.id)", method: "POST", body: Data("{}".utf8))
+    }
+    func prekeyCount() async throws -> Int {
+        struct Count: Decodable { var available: Int }
+        let response: Count = try await request("v2/prekeys")
+        return response.available
     }
 
     func ack(_ ids: [String]) async throws {
@@ -235,7 +283,10 @@ final class APIClient {
     }
 
     func callSocketRequest() throws -> URLRequest {
-        guard let token else { throw MessengerError.invalid("Сессия relay ещё не готова") }
+        let authorization: String
+        if let callToken { authorization = "CallCapability \(callToken)" }
+        else if let token { authorization = "Bearer \(token)" }
+        else { throw MessengerError.invalid("Сессия relay ещё не готова") }
         guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             throw MessengerError.invalid("Некорректный адрес relay")
         }
@@ -248,7 +299,7 @@ final class APIClient {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
         return request
     }

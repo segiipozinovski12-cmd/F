@@ -6,6 +6,8 @@ import CryptoKit
 @MainActor
 final class ChatStore: ObservableObject {
     @Published var state = VaultState()
+    @Published var profileRegistry = ProfileRegistry()
+    var profileID: String { profileRegistry.activeID }
     @Published var error: String?
     @Published var connection = "Подключение…"
     @Published var busy = false
@@ -20,6 +22,7 @@ final class ChatStore: ObservableObject {
     var vault: Vault?
     var api: APIClient?
     private var syncing = false
+    private var connectingGeneration: Int?
     var generation = 0
     @Published var revealedHiddenRooms = false
     @Published var deliveryIssues: [String: DeliveryIssue] = [:]
@@ -48,39 +51,51 @@ final class ChatStore: ObservableObject {
 
     init() {
         do {
-            let identity = try Keychain.load()
-            let vault = try Vault()
-            self.identity = identity; self.vault = vault; ownCard = try identity.card
-            state = try vault.read(key: identity.storage)
-            if state.extended == nil {
-                var migrated = ExtendedState()
-                migrated.trustedIDs = state.contacts.filter { !$0.blocked && !isBuiltinBot($0.id) }.map(\.id)
-                state.extended = migrated
-            }
-            let credentialsChanged = try ensureCredentials()
-            locked = state.appLock
-            sessionUnlocked = !state.onboarded
-
-            var relayChanged = false
-            if state.onboarded {
-                if state.server != AppConfig.productionRelay {
-                    state.server = AppConfig.productionRelay
-                    relayChanged = true
-                }
-                api = try APIClient(server: AppConfig.productionRelay, identity: identity, privacy: preferences)
-                connection = "Подключение…"
-            } else {
-                connection = "Готов к регистрации"
-            }
-
-            expire()
-            let botChanged = state.onboarded ? ensureBuiltinBot() : false
-            let savedChanged = state.onboarded ? ensureSavedMessages() : false
-            if credentialsChanged || relayChanged || botChanged || savedChanged { try save() }
+            try loadProtectedState()
         } catch { fatalError = error.localizedDescription }
     }
+
+    func loadProtectedState() throws {
+        profileRegistry = try ProfileRegistry.load()
+        let identity = try Keychain.load(profileID: profileID)
+        let vault = try Vault(profileID: profileID)
+        self.identity = identity; self.vault = vault; ownCard = try identity.card
+        state = try vault.read(key: identity.storage)
+        if state.extended == nil {
+            var migrated = ExtendedState()
+            migrated.trustedIDs = state.contacts.filter { !$0.blocked && !isBuiltinBot($0.id) }.map(\.id)
+            state.extended = migrated
+        }
+        let credentialsChanged = try ensureCredentials()
+        locked = state.appLock
+        sessionUnlocked = !state.onboarded
+
+        var relayChanged = false
+        if state.onboarded {
+            if state.server.isEmpty {
+                state.server = AppConfig.productionRelay
+                relayChanged = true
+            }
+            do {
+                api = try APIClient(server: state.server, identity: identity, privacy: preferences)
+                connection = "Подключение…"
+            } catch {
+                api?.invalidate(); api = nil
+                connection = "Проверь настройки подключения"
+                self.error = error.localizedDescription
+            }
+        } else {
+            connection = "Готов к регистрации"
+        }
+
+        expire()
+        let botChanged = state.onboarded ? ensureBuiltinBot() : false
+        let savedChanged = state.onboarded ? ensureSavedMessages() : false
+        fatalError = nil
+        if credentialsChanged || relayChanged || botChanged || savedChanged { try save() }
+    }
     func save() throws {
-        guard let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
+        guard fatalError == nil, let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
         try vault.write(state, key: identity.storage)
         BackgroundCalls.save(self)
     }
@@ -88,18 +103,31 @@ final class ChatStore: ObservableObject {
         do { try save() } catch { self.error = error.localizedDescription }
     }
     func onboardProduction(name: String) async {
-        await configure(name: name, server: AppConfig.productionRelay)
+        await configure(name: name, server: state.server.isEmpty ? AppConfig.productionRelay : state.server)
     }
 
     func connectProductionRelay() async {
-        guard state.onboarded, let identity else { return }
+        guard state.onboarded, !busy, fatalError == nil, let identity,
+              connectingGeneration != generation else { return }
+        let expected = generation
+        connectingGeneration = expected
+        defer { if connectingGeneration == expected { connectingGeneration = nil } }
         connection = "Подключение…"
         do {
-            let client = try APIClient(server: AppConfig.productionRelay, identity: identity, privacy: preferences)
+            let server=state.server.isEmpty ? AppConfig.productionRelay : state.server
+            try await prepareNetworkRoute()
+            guard expected == generation else { return }
+            let client = try APIClient(server: server, identity: identity, privacy: preferences)
             try await client.authenticate()
+            guard expected == generation else { return }
+            _ = try await client.publicWorkBits()
+            guard expected == generation else { return }
+            try await BackgroundCalls.prepare(self, api: client)
+            guard expected == generation else { return }
             let publicCode = try await client.ensurePublicCode()
+            guard expected == generation else { return }
             api = client
-            state.server = AppConfig.productionRelay
+            state.server = server
             state.publicCode = publicCode
             try save()
             CallManager.shared.configure(
@@ -117,45 +145,91 @@ final class ChatStore: ObservableObject {
             try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
             connection = "Подключён"
         } catch {
+            guard expected == generation else { return }
             connection = "Нет связи"
         }
     }
 
     func configure(name: String, server: String) async {
-        guard let identity else { return }
-        busy = true; defer { busy = false }
+        busy = true
+        defer { busy = false }
+
         do {
-            let firstLaunch = !state.onboarded
-            let client = try APIClient(server: server, identity: identity, privacy: preferences)
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: true)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func configureAttempt(name: String, server: String, allowIdentityRecovery: Bool) async throws {
+        guard let identity else { throw MessengerError.invalid("Ключи устройства недоступны") }
+        let expected = generation
+        let firstLaunch = !state.onboarded
+
+        try await prepareNetworkRoute()
+        guard expected == generation else { throw CancellationError() }
+
+        let client = try APIClient(server: server, identity: identity, privacy: preferences)
+
+        do {
             try await client.authenticate()
-            let publicCode = try await client.ensurePublicCode()
-            api = client
-            state.server = client.base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
-            if state.nickname.isEmpty { state.nickname = "Ghost" }
+        } catch let failure as HTTPFailure where
+            allowIdentityRecovery && !state.onboarded && failure.status == 409 {
+            // iOS keeps Keychain items after deleting/reinstalling an app. A very old
+            // pre-release build could therefore leave a signing identity whose server
+            // record points at a different agreement key. For an account that has never
+            // completed onboarding, rotate the whole local identity once and retry.
+            let selectedPrivacy = preferences
+            let selectedServer = state.server
+            generation += 1
+            try resetLocalIdentity()
+
+            var freshExtended = ExtendedState()
+            freshExtended.privacy = selectedPrivacy
+            state.extended = freshExtended
+            state.server = selectedServer
             _ = try ensureCredentials()
-            state.publicCode = publicCode
-            state.onboarded = true
-            if firstLaunch { state.credentialsAcknowledged = false }
-            sessionUnlocked = true
-            _ = ensureBuiltinBot()
-            _ = ensureSavedMessages()
             try save()
-            CallManager.shared.configure(
-                api: client,
-                identity: identity,
-                nameResolver: { [weak self] id in
-                    self?.name(id) ?? "VO1D"
-                },
-                recordSink: { [weak self] record in
-                    self?.recordCall(record)
-                }
-            )
-            setupCallPolicy()
-            try? await applyPrivacy()
-            try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
-            connection = "Подключён"
-        } catch { self.error = error.localizedDescription }
+
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: false)
+            return
+        }
+
+        guard expected == generation else { throw CancellationError() }
+        _ = try await client.publicWorkBits()
+        let publicCode = try await client.ensurePublicCode()
+        guard expected == generation else { throw CancellationError() }
+
+        api = client
+        state.server = client.base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        state.nickname = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        if state.nickname.isEmpty { state.nickname = "Ghost" }
+        _ = try ensureCredentials()
+        state.publicCode = publicCode
+        state.onboarded = true
+        if firstLaunch { state.credentialsAcknowledged = false }
+        sessionUnlocked = true
+        _ = ensureBuiltinBot()
+        _ = ensureSavedMessages()
+        try save()
+
+        guard let currentIdentity = self.identity else {
+            throw MessengerError.invalid("Ключи устройства недоступны")
+        }
+        CallManager.shared.configure(
+            api: client,
+            identity: currentIdentity,
+            nameResolver: { [weak self] id in
+                self?.name(id) ?? "VO1D"
+            },
+            recordSink: { [weak self] record in
+                self?.recordCall(record)
+            }
+        )
+        setupCallPolicy()
+        try? await applyPrivacy()
+        try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
+        connection = "Подключён"
     }
 
     @discardableResult
@@ -389,6 +463,7 @@ final class ChatStore: ObservableObject {
 
     func invite() throws -> String {
         guard let ownCard else { throw MessengerError.invalid("Нет ключей") }
+        if let link = extended.privateInviteLink { return link }
         let data = try Wire.encoder.encode(Invite(server: state.server, name: state.nickname, card: ownCard))
         let code = data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         return "vo1d://contact/\(code)"
@@ -407,7 +482,11 @@ final class ChatStore: ObservableObject {
             return bot
         }
 
-        if input.hasPrefix("vo1d://invite/") {
+        if input.hasPrefix("vo1d://private/") {
+            let invite = try await decodePrivateLink(input)
+            try importPrivateInvite(invite)
+            card = invite.card; name = String(invite.name.prefix(40))
+        } else if input.hasPrefix("vo1d://invite/") {
             guard let api else { throw MessengerError.invalid("Нет соединения") }
             struct Result: Decodable { var card: ContactCard }
             let token = String(input.dropFirst("vo1d://invite/".count))
@@ -417,12 +496,13 @@ final class ChatStore: ObservableObject {
             input = String(input.dropFirst("vo1d://contact/".count)).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
             input += String(repeating: "=", count: (4 - input.count % 4) % 4)
             let invite = try Wire.decoder.decode(Invite.self, from: Crypto.decode(input))
-            guard invite.version == 1 else { throw MessengerError.invalid("Неподдерживаемое приглашение") }
-            let server = try APIClient.validateURL(invite.server)
+            guard [1,2].contains(invite.version) else { throw MessengerError.invalid("Неподдерживаемое приглашение") }
+            let server = try APIClient.validateURL(invite.server,privacy:preferences)
             guard server.host == api?.base.host, server.port == api?.base.port, server.scheme == api?.base.scheme else {
                 throw MessengerError.invalid("Контакт использует другой сервер. Оба устройства должны подключаться к одному серверу.")
             }
             card = invite.card; name = String(invite.name.prefix(40))
+            if invite.version == 2 { try importPrivateInvite(invite) }
         } else {
             guard let api else { throw MessengerError.invalid("Нет соединения с VO1D") }
             let normalized = input.uppercased()
@@ -442,11 +522,13 @@ final class ChatStore: ObservableObject {
             }
         }
         try Crypto.validate(card)
+        try validateScopedContact(card.id)
         guard card.id != myID else { throw MessengerError.invalid("Это твой собственный ID") }
         if let existing = state.contacts.first(where: { $0.id == card.id }) {
             guard existing.card == card else { throw MessengerError.invalid("Ключ контакта изменился") }
             return existing
         }
+        try bindScopedID(card.id,scope:.contact)
         let contact = Contact(card: card, name: name)
         state.contacts.append(contact)
         changeExtended { if !$0.trustedIDs.contains(card.id) { $0.trustedIDs.append(card.id) } }
@@ -554,9 +636,10 @@ final class ChatStore: ObservableObject {
             creator: myID,
             isGroup: true,
             createdAt: Date(),
-            admins: [myID]
+            admins: [myID], membershipEpoch: 1
         )
 
+        try validateScopedRoom(room)
         let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
         let targets = cleanContacts.map(\.card)
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
@@ -564,6 +647,7 @@ final class ChatStore: ObservableObject {
             PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
+        try bindScopedID(room.id,scope:.group)
         state.rooms.append(room)
         state.outbox.append(contentsOf: pending)
         try save()
@@ -596,9 +680,10 @@ final class ChatStore: ObservableObject {
             admins: [myID],
             onlyAdminsCanPost: true,
             isChannel: true,
-            topics: []
+            topics: [], membershipEpoch: 1
         )
 
+        try validateScopedRoom(room)
         let event = ChatEvent(kind: "room", room: room, senderName: state.nickname)
         let targets = cleanContacts.map(\.card)
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
@@ -606,6 +691,7 @@ final class ChatStore: ObservableObject {
             PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
+        try bindScopedID(room.id,scope:.group)
         state.rooms.append(room)
         state.outbox.append(contentsOf: pending)
         try save()
@@ -651,7 +737,7 @@ final class ChatStore: ObservableObject {
 
         var newRoom = oldRoom
         newRoom.topics = topics
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[index] = newRoom
         try save()
     }
@@ -665,7 +751,7 @@ final class ChatStore: ObservableObject {
 
         var newRoom = oldRoom
         newRoom.topics = (oldRoom.topics ?? []).filter { $0 != name }
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[index] = newRoom
         try save()
     }
@@ -684,7 +770,10 @@ final class ChatStore: ObservableObject {
         room.isGroup && groupAdminIDs(room).contains(myID)
     }
 
-    func publishRoomUpdate(oldRoom: Room, newRoom: Room) throws {
+    func publishRoomUpdate(oldRoom: Room, newRoom input: Room) throws -> Room {
+        var newRoom = input
+        guard (oldRoom.membershipEpoch ?? 0) < 1_000_000_000 else { throw MessengerError.invalid("Версия группы исчерпана") }
+        newRoom.membershipEpoch = (oldRoom.membershipEpoch ?? 0) + 1
         guard oldRoom.isGroup,
               newRoom.isGroup,
               oldRoom.creator == myID,
@@ -707,7 +796,15 @@ final class ChatStore: ObservableObject {
             )
         }
 
+        let allowed = Set(newRoom.members.map(\.id))
+        if Set(oldRoom.members.map(\.id)) != allowed {
+            let oldMessages = Set(state.messages.filter { $0.roomID == oldRoom.id }.map(\.id))
+            let cancelled = Set(state.outbox.filter { $0.messageID.map(oldMessages.contains) == true }.compactMap(\.messageID))
+            state.outbox.removeAll { $0.messageID.map(oldMessages.contains) == true }
+            for index in state.messages.indices where cancelled.contains(state.messages[index].id) { state.messages[index].state = "failed" }
+        }
         state.outbox.append(contentsOf: pending)
+        return newRoom
     }
 
     func updateGroupMembers(_ roomID: String, contacts: [Contact]) throws {
@@ -739,7 +836,7 @@ final class ChatStore: ObservableObject {
         admins.insert(myID)
         newRoom.admins = Array(admins).sorted()
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -764,7 +861,7 @@ final class ChatStore: ObservableObject {
         admins.insert(myID)
         newRoom.admins = Array(admins).sorted()
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -780,7 +877,7 @@ final class ChatStore: ObservableObject {
         var newRoom = oldRoom
         newRoom.onlyAdminsCanPost = enabled
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -797,7 +894,7 @@ final class ChatStore: ObservableObject {
         var newRoom = oldRoom
         newRoom.title = clean
 
-        try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
+        newRoom = try publishRoomUpdate(oldRoom: oldRoom, newRoom: newRoom)
         state.rooms[roomIndex] = newRoom
         try save()
     }
@@ -813,6 +910,7 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("Встроенное вложение превышает 3 МБ")
         }
 
+        if let token = attachment.blobReadToken { try WorkProof.validateToken(token) }
         if let blobID = attachment.blobID {
             let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
             guard blobID.count >= 40,
@@ -830,7 +928,7 @@ final class ChatStore: ObservableObject {
                 throw MessengerError.invalid("Повреждены метаданные удалённого вложения")
             }
         } else {
-            guard attachment.blobKey == nil,
+            guard attachment.blobReadToken == nil, attachment.blobKey == nil,
                   attachment.blobSize == nil,
                   attachment.blobDigest == nil else {
                 throw MessengerError.invalid("Неполные метаданные удалённого вложения")
@@ -871,11 +969,16 @@ final class ChatStore: ObservableObject {
         }.value
 
         let localDigest = Crypto.hex(SHA256.hash(data: encrypted.1))
-        let receipt = try await api.uploadBlob(encrypted.1)
+        let uploadProfile = profileID
+        let receipt = try await api.uploadPrivateBlob(encrypted.1)
+        guard profileID == uploadProfile else {
+            if let token = receipt.deleteToken { try? await api.deletePrivateBlob(receipt.id,token:token) }
+            throw MessengerError.invalid("Профиль изменился во время загрузки")
+        }
 
         guard receipt.digest.lowercased() == localDigest.lowercased(),
               receipt.size == encrypted.1.count else {
-            try? await api.deleteBlob(receipt.id)
+            if let token = receipt.deleteToken { try? await api.deletePrivateBlob(receipt.id,token:token) }
             throw MessengerError.invalid("VO1D отклонил проверку целостности вложения")
         }
 
@@ -885,12 +988,18 @@ final class ChatStore: ObservableObject {
             data: Data()
         )
         attachment.blobID = receipt.id
+        attachment.blobReadToken = receipt.readToken
         attachment.blobKey = encrypted.0.base64EncodedString()
         attachment.blobSize = plainSize
         attachment.blobDigest = receipt.digest.lowercased()
         attachment.blobExpiresAt = Date(timeIntervalSince1970: TimeInterval(receipt.expiresAt))
         attachment.previewData = preview
         try validateAttachment(attachment)
+        if let token = receipt.deleteToken {
+            var local = extended; local.privateBlobDeletes[receipt.id] = OwnedPrivateBlob(deleteToken:token,expiresAt:receipt.expiresAt)
+            state.extended = local
+            do { try save() } catch { try? await api.deletePrivateBlob(receipt.id,token:token); throw error }
+        }
         return attachment
     }
 
@@ -904,7 +1013,9 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("Удалённое вложение недоступно")
         }
 
-        let ciphertext = try await api.downloadBlob(blobID)
+        let ciphertext: Data
+        if let token = attachment.blobReadToken { ciphertext = try await api.downloadPrivateBlob(blobID,token:token) }
+        else { ciphertext = try await api.downloadBlob(blobID) }
         let digest = Crypto.hex(SHA256.hash(data: ciphertext))
         guard digest.lowercased() == expectedDigest.lowercased() else {
             throw MessengerError.invalid("Проверка SHA-256 вложения не пройдена")
@@ -1244,12 +1355,11 @@ final class ChatStore: ObservableObject {
     }
     func sendTyping(_ roomID: String) async {
         guard preferences.typingSignals, !extended.hiddenRooms.contains(roomID), !isLocalUtilityRoom(roomID),
-              let api, let identity, let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
+              let room = state.rooms.first(where: { $0.id == roomID }), Date().timeIntervalSince(lastTyping[roomID] ?? .distantPast) > 5 else { return }
         lastTyping[roomID] = Date()
         let event = ChatEvent(kind: "typing", room: room, senderName: state.nickname)
-        for target in room.members where target.id != myID {
-            do { try await api.send(sealEvent(event, from: identity, to: target)) } catch { /* Ephemeral signal is intentionally not retried. */ }
-        }
+        do { try enqueue(event, room: room); try save(); await sync() }
+        catch { self.error = error.localizedDescription }
     }
     private func processScheduledMessages() {
         let now = Date()
@@ -1284,17 +1394,33 @@ final class ChatStore: ObservableObject {
     }
 
     func sync() async {
-        guard !syncing, !locked, state.onboarded, let api, let identity else { return }
+        guard fatalError == nil, !syncing, !locked, state.onboarded, let api, let identity else { return }
         syncing = true; let currentGeneration = generation
         defer { syncing = false }
         do {
             processScheduledMessages()
             expire()
+            try await maintainSignalPrekeys(api: api, identity: identity, generation: currentGeneration)
+            try await collectPrivateInbox(api: api, identity: identity, generation: currentGeneration)
             // Outbox is persisted before any network request. Retries reuse the exact signed envelope.
-            for pending in Array(state.outbox.prefix(24)) {
+            if preferences.batchDelaySeconds > 0 {
+                let moment = Date(), delay = Double(preferences.batchDelaySeconds)
+                var assigned = false
+                for index in state.outbox.indices where state.outbox[index].notBefore == nil {
+                    state.outbox[index].notBefore = moment.addingTimeInterval(delay + Double.random(in: 0...max(1,delay/2)))
+                    assigned = true
+                }
+                if assigned { try save() }
+            }
+            for pending in Array(state.outbox.filter { ($0.notBefore ?? .distantPast) <= Date() }.prefix(24)) {
                 if let issue=deliveryIssues[pending.id], issue.nextAttempt > Date() { continue }
-                do { try await api.send(pending.envelope) }
+                do {
+                    let envelope = try await prepareSignalDelivery(pending, api: api, identity: identity, generation: currentGeneration)
+                    guard currentGeneration == generation else { return }
+                    try await api.send(envelope)
+                }
                 catch {
+                    guard currentGeneration == generation else { return }
                     let attempts=(deliveryIssues[pending.id]?.attempts ?? 0)+1
                     let permanent=(error as? HTTPFailure).map { [400,403,404,409,413].contains($0.status) } ?? false
                     let delay=min(300.0,pow(2.0,Double(min(attempts,8))))+Double.random(in:0...1)
@@ -1327,7 +1453,7 @@ final class ChatStore: ObservableObject {
                 else { sender = try await api.card(envelope.sender) }
                 guard currentGeneration == generation else { return }
                 do {
-                    let event = try Crypto.open(envelope, identity: identity, sender: sender)
+                    let event = try openSignalEvent(envelope, identity: identity, sender: sender)
                     try apply(event, sender: sender)
                 } catch {
                     self.error = "Отклонено сообщение: \(error.localizedDescription)"
@@ -1340,15 +1466,20 @@ final class ChatStore: ObservableObject {
             if !ack.isEmpty { try await api.ack(ack) }
             connection = "Подключён"
         } catch {
+            guard currentGeneration == generation else { return }
             connection = "Нет связи · очередь сохранена"
             // The visible status keeps transient network failures from producing alert loops.
         }
     }
     func applyAccepted(_ event: ChatEvent, sender: ContactCard) throws { try apply(event,sender:sender) }
     private func apply(_ event: ChatEvent, sender: ContactCard) throws {
+        if try handleDeviceControl(event,sender:sender) { return }
+        if try handleGroupControl(event,sender:sender) { return }
         let incoming = event.room
+        try validateScopedRoom(incoming)
         if extended.declinedRooms.contains(incoming.id) { return }
         let minimumMembers = incoming.isGroup ? 1 : 2
+        guard (0...1_000_000_000).contains(incoming.membershipEpoch ?? 0) else { throw MessengerError.invalid("Неверная версия группы") }
 
         guard !incoming.id.isEmpty,
               incoming.id.count <= 160,
@@ -1380,6 +1511,7 @@ final class ChatStore: ObservableObject {
 
         if let roomIndex = state.rooms.firstIndex(where: { $0.id == incoming.id }) {
             let current = state.rooms[roomIndex]
+            try GroupEpoch.validate(current: current, incoming: incoming, update: event.kind == "roomUpdate")
 
             if event.kind == "roomUpdate" {
                 guard current.isGroup,
@@ -1445,7 +1577,9 @@ final class ChatStore: ObservableObject {
             }
 
             let known = extended.trustedIDs.contains(sender.id)
-            let needsConsent = incoming.isGroup ? !preferences.allowGroupInvites : (preferences.requireRequests && !known)
+            let approval = extended.acceptedGroupInvites[incoming.id]
+            let invited = (approval?.expiresAt ?? 0) > Int(Date().timeIntervalSince1970) && approval?.creator == sender && incoming.creator == sender.id
+            let needsConsent = incoming.isGroup ? (!preferences.allowGroupInvites && !invited) : (preferences.requireRequests && !known)
             if needsConsent && !acceptedPendingIDs.contains(incoming.id) {
                 changeExtended {
                     let bytes=$0.pendingEvents.reduce(0) { $0 + ($1.event.message?.attachment?.data.count ?? 0) }
@@ -1455,6 +1589,7 @@ final class ChatStore: ObservableObject {
                 }
                 return
             }
+            try bindScopedID(incoming.isGroup ? incoming.id : sender.id,scope:incoming.isGroup ? .group : .contact)
             var room = incoming
             room.pinned = false
             room.archived = false
@@ -1652,8 +1787,8 @@ final class ChatStore: ObservableObject {
         BackgroundCalls.clear()
         ResumableDownload.clear()
         NotificationCoordinator.shared.clearAll()
-        try Keychain.delete()
-        let fresh = try Keychain.load()
+        try Keychain.delete(profileID: profileID)
+        let fresh = try Keychain.load(profileID: profileID)
         identity = fresh
         ownCard = try fresh.card
         api = nil
@@ -1669,7 +1804,9 @@ final class ChatStore: ObservableObject {
         defer { busy = false }
         do {
             generation += 1
-            if let api { try await api.deleteAccount() }
+            guard let api else { throw MessengerError.invalid("Для удаления данных с relay сначала подключись к нему") }
+            try await erasePrivateRelayStorage()
+            try await api.deleteAccount()
             try resetLocalIdentity()
         } catch { self.error = error.localizedDescription }
     }
@@ -1774,4 +1911,3 @@ final class ChatStore: ObservableObject {
         if let index = state.rooms.firstIndex(where: { $0.id == id }) { update(&state.rooms[index]); persist() }
     }
 }
-

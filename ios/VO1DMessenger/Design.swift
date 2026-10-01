@@ -21,116 +21,20 @@ enum Haptics {
 
 enum Theme {
     static let background = Color.black
-    static let panel = Color.white.opacity(0.055)
-    static let panelStrong = Color.white.opacity(0.095)
-    static let secondary = Color.white.opacity(0.52)
+    static let panel = Color(white: 0.035)
+    static let panelStrong = Color(white: 0.07)
+    static let secondary = Color.white.opacity(0.68)
     static let faint = Color.white.opacity(0.08)
     static let accent = Color.white
 }
 
 struct VoidBackground: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var drift = false
-    @State private var scan = false
-
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Color.black
-
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [.white.opacity(0.11), .white.opacity(0.025), .clear],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: 220
-                        )
-                    )
-                    .frame(width: 440, height: 440)
-                    .blur(radius: 22)
-                    .offset(
-                        x: drift ? proxy.size.width * 0.34 : -proxy.size.width * 0.28,
-                        y: drift ? -proxy.size.height * 0.20 : proxy.size.height * 0.26
-                    )
-
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [.white.opacity(0.065), .clear],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: 180
-                        )
-                    )
-                    .frame(width: 360, height: 360)
-                    .blur(radius: 38)
-                    .offset(
-                        x: drift ? -proxy.size.width * 0.38 : proxy.size.width * 0.38,
-                        y: drift ? proxy.size.height * 0.34 : -proxy.size.height * 0.24
-                    )
-
-                Canvas { context, size in
-                    let spacing: CGFloat = 30
-                    var path = Path()
-                    var x: CGFloat = 0
-                    while x < size.width {
-                        path.move(to: CGPoint(x: x, y: 0))
-                        path.addLine(to: CGPoint(x: x, y: size.height))
-                        x += spacing
-                    }
-                    var y: CGFloat = 0
-                    while y < size.height {
-                        path.move(to: CGPoint(x: 0, y: y))
-                        path.addLine(to: CGPoint(x: size.width, y: y))
-                        y += spacing
-                    }
-                    context.stroke(path, with: .color(.white.opacity(0.024)), lineWidth: 0.5)
-                }
-                .mask(
-                    RadialGradient(
-                        colors: [.white, .white.opacity(0.5), .clear],
-                        center: .center,
-                        startRadius: 20,
-                        endRadius: max(proxy.size.width, proxy.size.height) * 0.75
-                    )
-                )
-
-                Rectangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.045), .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .frame(height: 150)
-                    .blur(radius: 18)
-                    .offset(y: scan ? proxy.size.height * 0.62 : -proxy.size.height * 0.62)
-            }
-            .animation(
-                reduceMotion ? nil : .easeInOut(duration: 8.5).repeatForever(autoreverses: true),
-                value: drift
-            )
-            .animation(
-                reduceMotion ? nil : .linear(duration: 7.0).repeatForever(autoreverses: false),
-                value: scan
-            )
+        ZStack {
+            Color.black
+            LinearGradient(colors:[Color(white:0.035),.black,.black],startPoint:.topLeading,endPoint:.bottomTrailing)
         }
         .ignoresSafeArea()
-        .contentShape(Rectangle())
-        .onTapGesture {
-            UIApplication.shared.sendAction(
-                #selector(UIResponder.resignFirstResponder),
-                to: nil,
-                from: nil,
-                for: nil
-            )
-        }
-        .onAppear {
-            drift = true
-            scan = true
-        }
     }
 }
 
@@ -138,6 +42,7 @@ struct BrandMark: View {
     var size: CGFloat = 58
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = false
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
 
     var body: some View {
         ZStack {
@@ -180,8 +85,12 @@ struct BrandMark: View {
         .frame(width: size, height: size)
         .shadow(color: .white.opacity(0.1), radius: size * 0.18)
         .onAppear {
-            guard !reduceMotion else { return }
+            guard !reduceMotion, !lowPower else { return }
             withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) { phase = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+            if lowPower { phase = false }
         }
         .accessibilityLabel("VO1D")
     }
@@ -337,6 +246,8 @@ struct SplashView: View {
 struct WelcomeView: View {
     @EnvironmentObject var store: ChatStore
     @State private var name = ""
+    @State private var privacyProfile = PrivacyProfile.privateDelivery
+    @State private var relay = ""
     @State private var appeared = false
 
     var body: some View {
@@ -383,12 +294,24 @@ struct WelcomeView: View {
                             .tracking(-1.9)
                             .minimumScaleFactor(0.82)
 
-                        Text("Никакого телефона и почты. Только ник, VO1D ID и локальные криптографические ключи. Всё остальное VO1D настраивает сам.")
+                        Text("Без телефона и почты. Ключи создаются на устройстве. Выбери маршрут и режим доставки перед подключением.")
                             .font(.subheadline)
                             .foregroundStyle(Theme.secondary)
                             .lineSpacing(5)
                     }
 
+                    VStack(alignment:.leading,spacing:12) {
+                        Picker("Режим защиты", selection:$privacyProfile) { ForEach(PrivacyProfile.allCases) { Text($0.title).tag($0) } }.tint(.white)
+                        Text(privacyProfile.detail).font(.caption).foregroundStyle(Theme.secondary)
+                        DisclosureGroup("Расширенные настройки подключения") {
+                            TextField("HTTPS или v3 onion адрес",text:$relay)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled().voidField()
+                                .padding(.top,8)
+                            Text("Оставь пустым для обычного подключения. Собственный адрес нужен только при использовании другого узла доставки.")
+                                .font(.caption).foregroundStyle(Theme.secondary).padding(.top,4)
+                        }.font(.caption).tint(.white)
+                        Text("Без push сообщения приходят при открытии приложения. Tor увеличивает время подключения и расход батареи. Резервная копия создаётся отдельно после входа.").font(.caption).foregroundStyle(Theme.secondary)
+                    }.panel()
                     VStack(spacing: 12) {
                         TextField("Твой ник", text: $name)
                             .textContentType(.nickname)
@@ -397,12 +320,12 @@ struct WelcomeView: View {
                             .onSubmit {
                                 let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
                                 guard !clean.isEmpty, !store.busy else { return }
-                                Task { await store.onboardProduction(name: clean) }
+                                join(name:clean)
                             }
 
                         Button {
                             let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                            Task { await store.onboardProduction(name: clean) }
+                            join(name:clean)
                         } label: {
                             HStack(spacing: 10) {
                                 Text(store.busy ? "ПОДКЛЮЧАЕМ VO1D…" : "ВОЙТИ В VO1D")
@@ -469,5 +392,14 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity)
         .foregroundStyle(.white.opacity(0.80))
     }
-}
+    private func join(name: String) {
+        Task {
+            do {
+                try store.selectPrivacyProfile(privacyProfile)
+                let selected = relay.trimmingCharacters(in:.whitespacesAndNewlines)
+                await store.configure(name:name,server:selected.isEmpty ? AppConfig.productionRelay : selected)
+            } catch { store.error = error.localizedDescription }
+        }
+    }
 
+}
