@@ -54,6 +54,7 @@ struct RootView: View {
     @State private var incomingContact: String?
     @State private var pendingLink: URL?
     @State private var captured = UIScreen.main.isCaptured
+    private var canRunForegroundSession: Bool { scenePhase == .active && store.fatalError == nil }
 
     var body: some View {
         ZStack {
@@ -130,10 +131,10 @@ struct RootView: View {
         } message: {
             Text(store.error ?? "")
         }
-        .task(id: scenePhase) {
+        .task(id: canRunForegroundSession) {
             guard scenePhase == .active else { return }
             await store.reloadProtectedData()
-            guard store.fatalError == nil else { return }
+            guard !Task.isCancelled, store.fatalError == nil else { return }
             store.beginActiveSession()
             NotificationCoordinator.shared.clearDelivered()
 
