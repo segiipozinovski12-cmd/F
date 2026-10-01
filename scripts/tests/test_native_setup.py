@@ -83,6 +83,19 @@ class NativeSetupTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 bundle.framework_binary(framework)
 
+    def test_static_tor_framework_does_not_receive_a_dylib_install_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            framework = Path(directory) / 'tor.framework'
+            framework.mkdir()
+            (framework / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable': 'tor'}))
+            (framework / 'tor').write_bytes(b'!<arch>\n')
+            with patch.object(tor.platform, 'system', return_value='Darwin'), \
+                 patch.object(tor.subprocess, 'check_output', return_value='MH_MAGIC_64 ARM64 ALL OBJECT'), \
+                 patch.object(tor.subprocess, 'run') as run:
+                run.return_value.returncode = 1
+                tor.normalize_ios_binary(framework)
+                self.assertFalse(any('install_name_tool' in call.args[0] for call in run.call_args_list))
+
     def test_xcframework_without_ios_slices_is_not_ready(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

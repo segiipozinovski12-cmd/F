@@ -145,10 +145,14 @@ def normalize_ios_binary(framework: Path) -> None:
         raise RuntimeError(f"Missing Tor framework executable: {framework}")
     binary = framework / executable
     if platform.system() == "Darwin":
-        desired = f"@rpath/{framework.name}/{executable}"
-        names = subprocess.check_output(["xcrun", "otool", "-D", str(binary)], text=True)
-        if desired not in [line.strip() for line in names.splitlines()]:
-            subprocess.run(["xcrun", "install_name_tool", "-id", desired, str(binary)], check=True)
+        # Some upstream slices contain a universal static archive. Those have
+        # no install name and install_name_tool rejects them; inspect file type.
+        headers = subprocess.check_output(["xcrun", "otool", "-hv", str(binary)], text=True)
+        if "DYLIB" in headers.split():
+            desired = f"@rpath/{framework.name}/{executable}"
+            names = subprocess.check_output(["xcrun", "otool", "-D", str(binary)], text=True)
+            if desired not in [line.strip() for line in names.splitlines()]:
+                subprocess.run(["xcrun", "install_name_tool", "-id", desired, str(binary)], check=True)
         # Moving Resources changes the sealed bundle. Xcode signs its embedded
         # copy with the selected development identity, so remove stale signatures.
         if subprocess.run(["codesign", "-d", str(binary)], stdout=subprocess.DEVNULL,
