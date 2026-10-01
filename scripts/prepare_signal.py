@@ -192,6 +192,8 @@ def prepare_artifacts() -> None:
 def main() -> None:
     ensure_submodule()
     prepare_artifacts()
+    from isolate_signal import prepare_frameworks
+    prepare_frameworks()
 
 
 if __name__ == "__main__":

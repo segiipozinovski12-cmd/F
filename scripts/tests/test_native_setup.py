@@ -22,9 +22,45 @@ def load(name):
 tor = load('prepare_tor')
 signal = load('prepare_signal')
 bundle = load('validate_ios_bundle')
+isolate = load('isolate_signal')
+
+
+def archive_member(name, data, long_name=False):
+    prefix = name.encode() if long_name else b''
+    stored_name = ('#1/' + str(len(prefix))) if long_name else name + '/'
+    payload = prefix + data
+    header = f'{stored_name:<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(payload):<10}`\n'.encode()
+    return header + payload + (b'\n' if len(payload) % 2 else b'')
 
 
 class NativeSetupTests(unittest.TestCase):
+    def test_signal_archive_preserves_bsd_names_and_removes_stale_symbol_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / 'signal.a'
+            name = 'very-long-native-object-name.o'
+            archive.write_bytes(b'!<arch>\n' + archive_member('__.SYMDEF SORTED', b'old-offsets', True)
+                                + archive_member(name, b'native-object', True))
+            members = list(isolate.archive_members(archive))
+            self.assertEqual([(member[2], member[3]) for member in members], [(name, b'native-object')])
+            archive.write_bytes(archive.read_bytes()[:-3])
+            with self.assertRaises(RuntimeError):
+                list(isolate.archive_members(archive))
+
+    def test_signal_ir_is_native_before_the_framework_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root / 'source.a', root / 'native.a'
+            source.write_bytes(b'!<arch>\n' + archive_member('kem.o', b'BC\xc0\xdeIR')
+                               + archive_member('assembly.o', b'existing-native'))
+            def execute(args, **kwargs):
+                if 'clang' in args:
+                    Path(args[-1]).write_bytes(b'compiled-native')
+            with patch.object(isolate.subprocess, 'run', side_effect=execute) as run:
+                isolate.materialize_native_archive(source, output, 'arm64-apple-ios13.0', '/sdk')
+            self.assertEqual([(member[2], member[3]) for member in isolate.archive_members(output)],
+                             [('kem.o', b'compiled-native'), ('assembly.o', b'existing-native')])
+            self.assertTrue(any('ranlib' in call.args[0] for call in run.call_args_list))
+
     def test_preserves_source_built_simulator_and_fills_device_archives(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -78,6 +78,13 @@ frameworks = obj('app-frameworks','PBXFrameworksBuildPhase',f'buildActionMask = 
 testsignalproduct=obj('test-signal-product','XCSwiftPackageProductDependency',f'package = {signalpackage}; productName = LibSignalClient;')
 testsignalbuild=obj('test-signal-build','PBXBuildFile',f'productRef = {testsignalproduct};')
 testframeworks=obj('test-frameworks','PBXFrameworksBuildPhase',f'buildActionMask = 2147483647; files = {array([testsignalbuild])}; runOnlyForDeploymentPostprocessing = 0;')
+ffi_framework=ref_file('signal_ffi.framework','wrapper.framework','BUILT_PRODUCTS_DIR')
+ffi_embed_file=obj('ffi-embed-file','PBXBuildFile',f'fileRef = {ffi_framework}; settings = {{ ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy,); }};')
+ffi_embed=obj('ffi-embed','PBXCopyFilesBuildPhase',f'buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = {array([ffi_embed_file])}; name = "Embed Signal FFI"; runOnlyForDeploymentPostprocessing = 0;')
+ffi_input='$(SRCROOT)/../Vendor/libsignal/artifacts/$(PLATFORM_NAME)/$(CONFIGURATION)/signal_ffi.framework'
+ffi_output='$(BUILT_PRODUCTS_DIR)/signal_ffi.framework'
+ffi_script='set -eu\nsource_dir="${SRCROOT}/../Vendor/libsignal/artifacts/${PLATFORM_NAME}/${CONFIGURATION}/signal_ffi.framework"\ntarget_dir="${BUILT_PRODUCTS_DIR}/signal_ffi.framework"\nif [ ! -f "$source_dir/signal_ffi" ]; then echo "Run python3 scripts/generate_project.py to prepare the pinned SDK" >&2; exit 1; fi\n/usr/bin/ditto "$source_dir" "$target_dir"\n'
+ffi_prepare=obj('ffi-prepare','PBXShellScriptBuildPhase',f'buildActionMask = 2147483647; files = (); inputPaths = {array([q(ffi_input)])}; outputPaths = {array([q(ffi_output)])}; name = "Prepare isolated Signal FFI"; shellPath = /bin/sh; shellScript = {q(ffi_script)}; runOnlyForDeploymentPostprocessing = 0;')
 
 def configurations(name, settings):
     ids=[]
@@ -87,10 +94,7 @@ def configurations(name, settings):
             if local_team:
                 allsettings['DEVELOPMENT_TEAM'] = local_team
             allsettings['PRODUCT_BUNDLE_IDENTIFIER'] = local_bundle + ('.tests' if name == 'test' else '')
-            # Official prebuilt archives contain native LLVM bitcode. Load their
-            # members before LTO, including when Xcode promotes a Swift package
-            # to a dynamic product for XCTest. Ordinary -l can load them too late.
-            allsettings['OTHER_LDFLAGS'] = '$(inherited) -Xlinker -force_load -Xlinker "$(SRCROOT)/../Vendor/libsignal/artifacts/$(PLATFORM_NAME)/$(CONFIGURATION)/libsignal_ffi.a" -lc++ -lresolv'
+            allsettings['OTHER_LDFLAGS'] = '$(inherited) -lsignal_ffi -lc++ -lresolv'
         allsettings.update({'SWIFT_OPTIMIZATION_LEVEL': '-Onone' if mode=='Debug' else '-O', 'DEBUG_INFORMATION_FORMAT':'dwarf' if mode=='Debug' else 'dwarf-with-dsym'})
         if mode == 'Debug':
             allsettings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
@@ -115,7 +119,7 @@ testconfigs=configurations('test',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUND
 app=uid('app-target'); project=uid('project')
 proxy=obj('test-proxy','PBXContainerItemProxy',f'containerPortal = {project}; proxyType = 1; remoteGlobalIDString = {app}; remoteInfo = VO1DMessenger;')
 dep=obj('test-dep','PBXTargetDependency',f'target = {app}; targetProxy = {proxy};')
-obj('app-target','PBXNativeTarget',f'buildConfigurationList = {appconfigs}; buildPhases = {array([appsrc,frameworks,resources])}; buildRules = (); dependencies = (); packageProductDependencies = {array([signalproduct,torproduct])}; name = VO1DMessenger; productName = VO1DMessenger; productReference = {app_product}; productType = "com.apple.product-type.application";')
+obj('app-target','PBXNativeTarget',f'buildConfigurationList = {appconfigs}; buildPhases = {array([ffi_prepare,appsrc,frameworks,resources,ffi_embed])}; buildRules = (); dependencies = (); packageProductDependencies = {array([signalproduct,torproduct])}; name = VO1DMessenger; productName = VO1DMessenger; productReference = {app_product}; productType = "com.apple.product-type.application";')
 test=obj('test-target','PBXNativeTarget',f'buildConfigurationList = {testconfigs}; buildPhases = {array([testsrc,testframeworks])}; buildRules = (); dependencies = {array([dep])}; packageProductDependencies = {array([testsignalproduct])}; name = VO1DMessengerTests; productName = VO1DMessengerTests; productReference = {test_product}; productType = "com.apple.product-type.bundle.unit-test";')
 obj('project','PBXProject',f'attributes = {{ LastUpgradeCheck = 1600; TargetAttributes = {{ {app} = {{ CreatedOnToolsVersion = 16.0; }}; {test} = {{ CreatedOnToolsVersion = 16.0; TestTargetID = {app}; }}; }}; }}; buildConfigurationList = {projectconfigs}; compatibilityVersion = "Xcode 14.0"; developmentRegion = ru; hasScannedForEncodings = 0; knownRegions = (ru,en,Base); mainGroup = {main}; productRefGroup = {products}; packageReferences = {array([signalpackage,torpackage])}; projectDirPath = ""; projectRoot = ""; targets = {array([app,test])};')
 (PROJECT/'project.pbxproj').write_text('// !$*UTF8*$!\n{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+'\n'.join(objects)+f'\n}}; rootObject = {project}; }}\n')

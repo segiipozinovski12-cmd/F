@@ -26,6 +26,13 @@ def validate(app: Path) -> None:
     if not binary.is_file():
         raise RuntimeError('App executable is missing')
     images = [binary] + [framework_binary(path) for path in (app / 'Frameworks').glob('*.framework')]
+    ffi = app / 'Frameworks/signal_ffi.framework/signal_ffi'
+    if not ffi.is_file():
+        raise RuntimeError('The isolated Signal framework is missing from the app')
+    exports = subprocess.check_output(['xcrun', 'nm', '-gjU', str(ffi)], text=True)
+    public = [line.strip() for line in exports.splitlines() if line.strip().startswith('_')]
+    if not public or any(not symbol.startswith('_signal_') for symbol in public):
+        raise RuntimeError('The Signal framework exposes internal crypto symbols')
     for image in images:
         dependencies = subprocess.check_output(['xcrun', 'otool', '-L', str(image)], text=True)
         for line in dependencies.splitlines()[1:]:
