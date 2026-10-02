@@ -12,6 +12,18 @@ public partial class MainWindow
     private DateTimeOffset lastTypingSent = DateTimeOffset.MinValue;
     private readonly Dictionary<string, DispatcherTimer> typingTimers = new();
 
+    private void AttachMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.ContextMenu != null)
+        {
+            button.ContextMenu.PlacementTarget = button;
+            button.ContextMenu.IsOpen = true;
+        }
+    }
+
+    private void AttachFile_Click(object sender, RoutedEventArgs e) =>
+        Attach_Click(AttachButton, new RoutedEventArgs());
+
     private async Task SendTypingPulseAsync()
     {
         if (selectedRoom == null || IsSavedRoom(selectedRoom) || signal == null || api == null) return;
