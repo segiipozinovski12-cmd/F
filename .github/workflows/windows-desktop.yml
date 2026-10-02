@@ -56,9 +56,18 @@ jobs:
       - name: Launch smoke-test
         shell: pwsh
         run: |
+          $crash = Join-Path $env:LOCALAPPDATA "VO1D/crash.log"
+          if (Test-Path $crash) { Remove-Item $crash -Force }
           $p = Start-Process -FilePath "artifacts/VO1D-Windows/VO1D.exe" -PassThru
           Start-Sleep -Seconds 5
-          if ($p.HasExited) { throw "VO1D.exe exited during launch smoke-test with code $($p.ExitCode)" }
+          if ($p.HasExited) {
+            if (Test-Path $crash) {
+              Write-Host "===== VO1D crash.log ====="
+              Get-Content $crash
+              Write-Host "===== end crash.log ====="
+            }
+            throw "VO1D.exe exited during launch smoke-test with code $($p.ExitCode)"
+          }
           Stop-Process -Id $p.Id -Force
       - name: Interactive composer smoke-test
         shell: pwsh
