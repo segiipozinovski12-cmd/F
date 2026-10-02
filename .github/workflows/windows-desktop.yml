@@ -36,9 +36,27 @@ jobs:
           Start-Sleep -Seconds 5
           if ($p.HasExited) { throw "VO1D.exe exited during launch smoke-test with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
+      - name: Capture UI preview
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $p = Start-Process -FilePath "artifacts/VO1D-Windows/VO1D.exe" -PassThru
+          Start-Sleep -Seconds 5
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+          $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+          $bmp.Save((Join-Path $PWD "artifacts/VO1D-Windows/VO1D-preview.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+          $gfx.Dispose()
+          $bmp.Dispose()
+          if (!$p.HasExited) { Stop-Process -Id $p.Id -Force }
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
           name: VO1D-Windows-x64
-          path: artifacts/VO1D-Windows/VO1D.exe
+          path: |
+            artifacts/VO1D-Windows/VO1D.exe
+            artifacts/VO1D-Windows/VO1D-preview.png
           if-no-files-found: error
