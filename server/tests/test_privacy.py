@@ -43,6 +43,7 @@ class PrivacyTests(unittest.TestCase):
         _,old=self.request('/v1/code','POST',{},self.a)
         _,new=self.request('/v1/code/rotate','POST',{},self.a)
         self.assertNotEqual(old['code'],new['code'])
+        self.assertEqual(len(new['code']),4)
         self.assertEqual(self.request('/v1/code/'+old['code'],token=self.b)[0],404)
         self.assertEqual(self.request('/v1/code/'+new['code'],token=self.b)[1],self.alice_card)
 

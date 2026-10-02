@@ -92,6 +92,9 @@ struct BrandMark: View {
             lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
             if lowPower { phase = false }
         }
+        .onChange(of: reduceMotion) { _, enabled in
+            if enabled { phase = false }
+        }
         .accessibilityLabel("VO1D")
     }
 }
@@ -144,7 +147,57 @@ struct Avatar: View {
     }
 }
 
+struct SelectionMark: View {
+    var selected: Bool
+    var color: Color = .white
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(color.opacity(selected ? 0 : 0.42), lineWidth: 1.5)
+            Circle()
+                .fill(color)
+                .scaleEffect(selected ? 1 : 0.72)
+                .opacity(selected ? 1 : 0)
+            Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(.black)
+                .scaleEffect(selected ? 1 : 0.4)
+                .opacity(selected ? 1 : 0)
+                .rotationEffect(.degrees(selected && !reduceMotion ? 0 : -18))
+        }
+        .frame(width: 22, height: 22)
+        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.68), value: selected)
+        .accessibilityHidden(true)
+    }
+}
+
+struct ConnectionGlyph: View {
+    var connected: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var rotating = false
+
+    var body: some View {
+        Image(systemName: connected ? "lock.shield.fill" : "circle.dashed")
+            .contentTransition(.symbolEffect(.replace))
+            .rotationEffect(.degrees(!connected && rotating && !reduceMotion ? 360 : 0))
+            .animation(
+                !connected && !reduceMotion
+                    ? .linear(duration: 1.8).repeatForever(autoreverses: false)
+                    : .default,
+                value: rotating
+            )
+            .onAppear { rotating = !connected }
+            .onChange(of: connected) { _, value in rotating = !value }
+            .onChange(of: reduceMotion) { _, value in if value { rotating = false } }
+            .accessibilityHidden(true)
+    }
+}
+
 struct PrimaryButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 16, weight: .bold))
@@ -156,12 +209,14 @@ struct PrimaryButton: ButtonStyle {
             .padding(.horizontal, 18)
             .padding(.vertical, 17)
             .background(.white.opacity(configuration.isPressed ? 0.72 : 1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.975 : 1)
-            .animation(.spring(response: 0.26, dampingFraction: 0.82), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.82), value: configuration.isPressed)
     }
 }
 
 struct GhostButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 15, weight: .semibold))
@@ -174,6 +229,8 @@ struct GhostButton: ButtonStyle {
             .padding(.vertical, 15)
             .background(.white.opacity(configuration.isPressed ? 0.035 : 0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.1)))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.86), value: configuration.isPressed)
     }
 }
 
@@ -236,7 +293,7 @@ struct SplashView: View {
             }
         }
         .onAppear {
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.82)) { reveal = true }
+            withAnimation(reduceMotion ? nil : .spring(response: 0.75, dampingFraction: 0.82)) { reveal = true }
             guard !reduceMotion else { return }
             withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) { scan = 1.08 }
         }
@@ -245,6 +302,7 @@ struct SplashView: View {
 
 struct WelcomeView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var name = ""
     @State private var privacyProfile = PrivacyProfile.privateDelivery
     @State private var relay = ""
@@ -373,7 +431,7 @@ struct WelcomeView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .onAppear {
-            withAnimation(.spring(response: 0.72, dampingFraction: 0.78)) {
+            withAnimation(reduceMotion ? nil : .spring(response: 0.72, dampingFraction: 0.78)) {
                 appeared = true
             }
         }

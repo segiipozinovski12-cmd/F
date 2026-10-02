@@ -50,6 +50,7 @@ struct RootView: View {
     @EnvironmentObject private var store: ChatStore
     @EnvironmentObject private var calls: CallManager
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var splash = true
     @State private var incomingContact: String?
     @State private var pendingLink: URL?
@@ -80,14 +81,16 @@ struct RootView: View {
                     BiometricGateView()
                 } else {
                     MainShell()
+                        .privacySensitive()
                 }
             }
-            .transition(.opacity.combined(with: .scale(scale: 0.985)))
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985)))
 
             if let call = calls.session {
                 CallScreen(session: call)
                     .environmentObject(calls)
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    .privacySensitive()
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985)))
                     .zIndex(20)
             }
 
@@ -121,7 +124,7 @@ struct RootView: View {
         .sheet(isPresented:Binding(get:{ store.notificationRoomID != nil && store.sessionUnlocked && !store.locked },set:{ if !$0 { store.notificationRoomID=nil } })) {
             if let id=store.notificationRoomID, !store.extended.hiddenRooms.contains(id) { NavigationStack { ChatView(roomID:id) } }
         }
-        .animation(.easeInOut(duration: 0.32), value: splash)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: splash)
         .task {
             try? await Task.sleep(for: .milliseconds(650))
             splash = false
@@ -169,6 +172,7 @@ private struct MainShell: View {
 
 private struct CredentialRevealView: View {
     @EnvironmentObject private var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var entered = false
 
     var body: some View {
@@ -202,7 +206,7 @@ private struct CredentialRevealView: View {
                     .panel()
 
                     Button("Я СОХРАНИЛ КЛЮЧИ") {
-                        withAnimation(.spring(response: 0.42, dampingFraction: 0.85)) { entered = true }
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.85)) { entered = true }
                         store.acknowledgeCredentials()
                     }
                     .buttonStyle(PrimaryButton())
@@ -212,6 +216,7 @@ private struct CredentialRevealView: View {
                 .opacity(entered ? 0 : 1)
             }
         }
+        .privacySensitive()
     }
 
     private func credential(title: String, value: String, detail: String) -> some View {
@@ -224,6 +229,9 @@ private struct CredentialRevealView: View {
             Text(value)
                 .font(.system(size: 31, weight: .black, design: .monospaced))
                 .tracking(5)
+                .lineLimit(1)
+                .minimumScaleFactor(0.58)
+                .allowsTightening(true)
                 .textSelection(.enabled)
             Text(detail).font(.caption).foregroundStyle(Theme.secondary)
         }

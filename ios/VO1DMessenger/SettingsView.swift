@@ -251,7 +251,7 @@ struct SettingsView: View {
     private var keysCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             sectionTitle("КЛЮЧИ", icon: "key.fill")
-            keyRow("VO1D ID", store.state.publicCode ?? "----", "4 символа · поиск друзей")
+            keyRow("VO1D ID", store.state.publicCode ?? "----", "4 символа · быстрый поиск людей")
             Divider().overlay(.white.opacity(0.08))
             keyRow("КЛЮЧ ДОСТУПА", store.state.accessKey ?? "---------", "9 символов · вход в приложение")
             NavigationLink {

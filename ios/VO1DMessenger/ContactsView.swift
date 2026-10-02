@@ -73,7 +73,7 @@ struct ContactsView: View {
                                 BrandMark(size: 76)
                                 Text(search.isEmpty ? "Никого лишнего." : "Ничего не найдено.")
                                     .font(.title3.bold())
-                                Text(search.isEmpty ? "Добавь человека по его 4-символьному VO1D ID или QR-приглашению." : "Попробуй другой ник или отпечаток.")
+                                Text(search.isEmpty ? "Добавь человека по его 4-символьному VO1D ID или приватному QR-приглашению." : "Попробуй другой ник или отпечаток.")
                                     .font(.subheadline)
                                     .foregroundStyle(Theme.secondary)
                                     .multilineTextAlignment(.center)
@@ -161,7 +161,7 @@ struct AddContactView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Найди своего.")
                             .font(.system(size: 34, weight: .black, design: .rounded))
-                        Text("Введи 4-символьный VO1D ID, специальный ключ XROSB, QR-приглашение или полный технический ID.")
+                        Text("Введи 4-символьный VO1D ID, ключ XROSB, QR-приглашение либо полный технический ID.")
                             .font(.subheadline)
                             .foregroundStyle(Theme.secondary)
                             .lineSpacing(4)
@@ -245,7 +245,7 @@ struct MyIdentityView: View {
                             .font(.system(size: 32, weight: .black, design: .monospaced))
                             .tracking(6)
                             .textSelection(.enabled)
-                        Text("Эти 4 символа можно отправить другу для поиска в VO1D.")
+                        Text("Этот ID можно отправить другу для поиска. Для минимизации метаданных используй приватный одноразовый QR.")
                             .font(.caption)
                             .foregroundStyle(Theme.secondary)
                     }
