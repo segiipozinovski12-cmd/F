@@ -54,15 +54,84 @@ internal sealed class ContactState
 {
     public string Name { get; set; } = "";
     public ContactCard Card { get; set; } = new();
+    public bool Verified { get; set; }
+    public bool Blocked { get; set; }
+    public bool Favorite { get; set; }
+    public string Note { get; set; } = "";
+    public string Alias { get; set; } = "";
+}
+
+internal sealed class AttachmentState
+{
+    public string Name { get; set; } = "";
+    public string Mime { get; set; } = "application/octet-stream";
+    public byte[] Data { get; set; } = Array.Empty<byte>();
+    public int? ViewSeconds { get; set; }
 }
 
 internal sealed class LocalMessage
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
+    // Kept for migration from the first Windows beta.
     public string PeerId { get; set; } = "";
+    public string RoomId { get; set; } = "";
+    public string SenderId { get; set; } = "";
     public bool Mine { get; set; }
     public string Text { get; set; } = "";
     public long CreatedAt { get; set; }
+    public long? ExpiresAt { get; set; }
+    public string? ReplyTo { get; set; }
+    public AttachmentState? Attachment { get; set; }
+    public string State { get; set; } = "sent";
+    public bool Edited { get; set; }
+    public Dictionary<string, string> Reactions { get; set; } = new();
+    public bool Bookmarked { get; set; }
+    public long? ScheduledAt { get; set; }
+    public bool Silent { get; set; }
+    public List<string> EditHistory { get; set; } = new();
+}
+
+internal sealed class RoomState
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public List<string> MemberIds { get; set; } = new();
+    public string Creator { get; set; } = "";
+    public bool IsGroup { get; set; }
+    public bool IsChannel { get; set; }
+    public long CreatedAt { get; set; }
+    public bool Pinned { get; set; }
+    public bool Archived { get; set; }
+    public bool Muted { get; set; }
+    public int Unread { get; set; }
+    public string Draft { get; set; } = "";
+    public int DisappearingSeconds { get; set; }
+    public bool OnlyAdminsCanPost { get; set; }
+    public List<string> Admins { get; set; } = new();
+    public List<string> PinnedMessageIds { get; set; } = new();
+    public List<string> Topics { get; set; } = new();
+    public string Note { get; set; } = "";
+}
+
+internal sealed class ChatFolderState
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string Name { get; set; } = "";
+    public List<string> RoomIds { get; set; } = new();
+}
+
+internal sealed class DesktopPreferences
+{
+    public bool CompactRows { get; set; }
+    public bool ConfirmLinks { get; set; } = true;
+    public bool CleanLinks { get; set; } = true;
+    public bool HideMedia { get; set; }
+    public bool LowData { get; set; }
+    public bool QuietHours { get; set; }
+    public bool ProtectCapture { get; set; } = true;
+    public bool ReadReceipts { get; set; } = true;
+    public int TextScale { get; set; } = 100;
+    public int FileLimitMb { get; set; } = 25;
 }
 
 internal sealed class VaultState
@@ -71,8 +140,46 @@ internal sealed class VaultState
     public string? PublicCode { get; set; }
     public string? Username { get; set; }
     public List<ContactState> Contacts { get; set; } = new();
+    public List<RoomState> Rooms { get; set; } = new();
     public List<LocalMessage> Messages { get; set; } = new();
     public HashSet<string> Processed { get; set; } = new();
+    public HashSet<string> HiddenRooms { get; set; } = new();
+    public List<ChatFolderState> Folders { get; set; } = new();
+    public DesktopPreferences Preferences { get; set; } = new();
+    public string? SignalSnapshotJson { get; set; }
+}
+
+internal sealed class SignalBundleDto
+{
+    public string Owner { get; set; } = "";
+    public string IdentityKey { get; set; } = "";
+    public string IdentityBinding { get; set; } = "";
+    public uint RegistrationId { get; set; }
+    public uint DeviceId { get; set; } = 1;
+    public uint SignedPrekeyId { get; set; }
+    public string SignedPrekey { get; set; } = "";
+    public string SignedPrekeySignature { get; set; } = "";
+    public uint PrekeyId { get; set; }
+    public string Prekey { get; set; } = "";
+    public uint KyberPrekeyId { get; set; }
+    public string KyberPrekey { get; set; } = "";
+    public string KyberPrekeySignature { get; set; } = "";
+    public int ExpiresAt { get; set; }
+    public string Signature { get; set; } = "";
+}
+
+internal sealed class SignalPublicationDto
+{
+    public List<SignalBundleDto> Bundles { get; set; } = new();
+}
+
+internal sealed class SignalPacketDto
+{
+    public int Version { get; set; } = 2;
+    public string IdentityKey { get; set; } = "";
+    public string IdentityBinding { get; set; } = "";
+    public byte Type { get; set; }
+    public byte[] Ciphertext { get; set; } = Array.Empty<byte>();
 }
 
 internal sealed class IdentityCrypto : IDisposable
@@ -339,6 +446,9 @@ internal sealed class Vo1dApi : IDisposable
     public async Task<string> EnsureCodeAsync() =>
         (await SendAsync<CodeResponse>(HttpMethod.Post, "v1/code", new { })).Code;
 
+    public async Task<string> RotateCodeAsync() =>
+        (await SendAsync<CodeResponse>(HttpMethod.Post, "v1/code/rotate", new { })).Code;
+
     public Task<ContactCard> LookupCodeAsync(string code) =>
         SendAsync<ContactCard>(HttpMethod.Get, "v1/code/" + Uri.EscapeDataString(code.ToUpperInvariant()));
 
@@ -347,6 +457,18 @@ internal sealed class Vo1dApi : IDisposable
 
     public Task<ContactCard> LookupIdAsync(string id) =>
         SendAsync<ContactCard>(HttpMethod.Get, "v1/identity/" + id.ToLowerInvariant());
+
+    public Task<OkResponse> SetBlockedAsync(string id, bool blocked) =>
+        SendAsync<OkResponse>(HttpMethod.Post, "v1/block", new { id, blocked });
+
+    public Task<OkResponse> PublishPrekeysAsync(SignalPublicationDto publication) =>
+        SendAsync<OkResponse>(HttpMethod.Post, "v2/prekeys", publication);
+
+    public Task<SignalBundleDto> ClaimPrekeyAsync(string targetId) =>
+        SendAsync<SignalBundleDto>(HttpMethod.Post, "v2/prekeys/" + targetId.ToLowerInvariant(), new { });
+
+    public async Task<int> PrekeyCountAsync() =>
+        (await SendAsync<PrekeyCountResponse>(HttpMethod.Get, "v2/prekeys")).Available;
 
     public Task<OkResponse> SendEnvelopeAsync(Envelope env) =>
         SendAsync<OkResponse>(HttpMethod.Post, "v1/envelopes", env);
@@ -365,4 +487,5 @@ internal sealed class Vo1dApi : IDisposable
     internal sealed class CodeResponse { public string Code { get; set; } = ""; }
     internal sealed class UsernameLookup { public string Username { get; set; } = ""; public ContactCard Card { get; set; } = new(); }
     internal sealed class InboxResponse { public List<Envelope>? Envelopes { get; set; } }
+    internal sealed class PrekeyCountResponse { public int Available { get; set; } }
 }
