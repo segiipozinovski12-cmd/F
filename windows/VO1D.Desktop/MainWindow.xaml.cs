@@ -481,7 +481,7 @@ public partial class MainWindow : Window
                     last?.Text ?? "Начни разговор",
                 Time = last == null ? "" : DateTimeOffset.FromUnixTimeSeconds(last.CreatedAt).LocalDateTime.ToString("HH:mm"),
                 Unread = room.Unread,
-                Badge = room.IsChannel ? "CHANNEL" : room.IsGroup ? "GROUP" : room.Muted ? "MUTED" : room.Pinned ? "PIN" : ""
+                Badge = room.IsChannel ? "CH" : room.IsGroup ? "GRP" : room.Muted ? "MUTE" : room.Pinned ? "PIN" : ""
             });
         }
 
