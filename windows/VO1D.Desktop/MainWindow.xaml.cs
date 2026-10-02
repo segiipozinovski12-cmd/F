@@ -603,6 +603,8 @@ public partial class MainWindow : Window
             toolsItems.Add(new ToolsItemVm { Title = "Отложено · " + ResolveRoomTitle(state.Rooms.FirstOrDefault(r => r.Id == m.RoomId)), Detail = m.Text, Meta = FormatWhen(m.ScheduledAt) });
         foreach (var m in state.Messages.Where(x => x.Bookmarked).OrderByDescending(x => x.CreatedAt))
             toolsItems.Add(new ToolsItemVm { Title = "Закладка · " + ResolveRoomTitle(state.Rooms.FirstOrDefault(r => r.Id == m.RoomId)), Detail = m.Text, Meta = DateTimeOffset.FromUnixTimeSeconds(m.CreatedAt).LocalDateTime.ToString("dd.MM HH:mm") });
+
+        AppendLocalTools();
     }
 
     private static string FormatWhen(long? sec) =>
@@ -773,7 +775,8 @@ public partial class MainWindow : Window
         {
             var edit = state.Messages.FirstOrDefault(x => x.Id == editingId && x.Mine);
             if (edit == null || text.Length == 0) return;
-            edit.EditHistory.Add(edit.Text);
+            if (state.Preferences.KeepEditHistory) edit.EditHistory.Add(edit.Text);
+            else edit.EditHistory.Clear();
             edit.Text = text;
             edit.Edited = true;
             selectedRoom.Draft = "";
