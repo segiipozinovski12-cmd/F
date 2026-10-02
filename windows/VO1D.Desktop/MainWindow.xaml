@@ -3,9 +3,9 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:VO1D.Desktop"
  xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
- Title="VO1D" Width="1200" Height="780" MinWidth="900" MinHeight="620"
+ Title="VO1D" Width="1260" Height="820" MinWidth="920" MinHeight="640"
  WindowStartupLocation="Manual" WindowStyle="None" Background="#050505"
- Foreground="White" FontFamily="{StaticResource UiFont}">
+ Foreground="White" FontFamily="{StaticResource UiFont}" SizeChanged="Window_SizeChanged">
   <shell:WindowChrome.WindowChrome>
     <shell:WindowChrome CaptionHeight="38" ResizeBorderThickness="7" GlassFrameThickness="0" CornerRadius="0"/>
   </shell:WindowChrome.WindowChrome>
@@ -18,8 +18,7 @@
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="BorderBrush" Value="Transparent"/>
     </Style>
-
-    <Style x:Key="RoomItem" TargetType="ListBoxItem">
+    <Style x:Key="FlatListItem" TargetType="ListBoxItem">
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="BorderThickness" Value="0"/>
@@ -28,77 +27,69 @@
       <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Setter Property="Template">
         <Setter.Value>
-          <ControlTemplate TargetType="ListBoxItem">
-            <ContentPresenter/>
-          </ControlTemplate>
+          <ControlTemplate TargetType="ListBoxItem"><ContentPresenter/></ControlTemplate>
         </Setter.Value>
       </Setter>
     </Style>
   </Window.Resources>
 
-  <Grid x:Name="Root">
+  <Grid x:Name="Root" ClipToBounds="True">
     <Grid.Background>
-      <RadialGradientBrush Center="0.12,0.04" GradientOrigin="0.12,0.04" RadiusX="1.2" RadiusY="1.1">
-        <GradientStop Color="#151515" Offset="0"/>
-        <GradientStop Color="#080808" Offset="0.38"/>
-        <GradientStop Color="#030303" Offset="1"/>
-      </RadialGradientBrush>
+      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#111111" Offset="0"/>
+        <GradientStop Color="#050505" Offset="0.38"/>
+        <GradientStop Color="#020202" Offset="1"/>
+      </LinearGradientBrush>
     </Grid.Background>
 
-    <Ellipse Width="620" Height="620" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-260,-320,0,0" IsHitTestVisible="False">
-      <Ellipse.Fill>
-        <RadialGradientBrush>
-          <GradientStop Color="#18FFFFFF" Offset="0"/>
-          <GradientStop Color="#00FFFFFF" Offset="1"/>
-        </RadialGradientBrush>
-      </Ellipse.Fill>
+    <!-- animated monochrome depth -->
+    <Ellipse x:Name="GlowA" Width="760" Height="760" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-330,-380,0,0" IsHitTestVisible="False" Opacity="0.9">
+      <Ellipse.Fill><RadialGradientBrush><GradientStop Color="#20FFFFFF" Offset="0"/><GradientStop Color="#00FFFFFF" Offset="1"/></RadialGradientBrush></Ellipse.Fill>
+      <Ellipse.RenderTransform><TranslateTransform x:Name="GlowATransform"/></Ellipse.RenderTransform>
     </Ellipse>
-    <Ellipse Width="500" Height="500" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-260,-280" IsHitTestVisible="False">
-      <Ellipse.Fill>
-        <RadialGradientBrush>
-          <GradientStop Color="#0EFFFFFF" Offset="0"/>
-          <GradientStop Color="#00FFFFFF" Offset="1"/>
-        </RadialGradientBrush>
-      </Ellipse.Fill>
+    <Ellipse x:Name="GlowB" Width="640" Height="640" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-320,-330" IsHitTestVisible="False" Opacity="0.7">
+      <Ellipse.Fill><RadialGradientBrush><GradientStop Color="#12FFFFFF" Offset="0"/><GradientStop Color="#00FFFFFF" Offset="1"/></RadialGradientBrush></Ellipse.Fill>
+      <Ellipse.RenderTransform><TranslateTransform x:Name="GlowBTransform"/></Ellipse.RenderTransform>
+    </Ellipse>
+    <Ellipse x:Name="GlowC" Width="420" Height="420" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" Opacity="0.32">
+      <Ellipse.Fill><RadialGradientBrush><GradientStop Color="#0CFFFFFF" Offset="0"/><GradientStop Color="#00FFFFFF" Offset="1"/></RadialGradientBrush></Ellipse.Fill>
+      <Ellipse.RenderTransform><ScaleTransform x:Name="GlowCScale" ScaleX="1" ScaleY="1"/></Ellipse.RenderTransform>
     </Ellipse>
 
-    <!-- custom title bar -->
+    <!-- titlebar -->
     <Grid Height="38" VerticalAlignment="Top" Background="#01000000" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
       <TextBlock Text="VO1D / DESKTOP" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"
                  VerticalAlignment="Center" Margin="18,0,0,0"/>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" shell:WindowChrome.IsHitTestVisibleInChrome="True">
-        <Button x:Name="MinButton" Width="46" Height="38" Content="&#xE921;" FontFamily="Segoe Fluent Icons" FontSize="11"
+        <Button Width="46" Height="38" Content="&#xE921;" FontFamily="Segoe Fluent Icons" FontSize="11"
                 Background="Transparent" Foreground="#BFFFFFFF" BorderThickness="0" Click="Minimize_Click"/>
-        <Button x:Name="MaxButton" Width="46" Height="38" Content="&#xE922;" FontFamily="Segoe Fluent Icons" FontSize="11"
+        <Button Width="46" Height="38" Content="&#xE922;" FontFamily="Segoe Fluent Icons" FontSize="11"
                 Background="Transparent" Foreground="#BFFFFFFF" BorderThickness="0" Click="Maximize_Click"/>
-        <Button x:Name="CloseButton" Width="46" Height="38" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="11"
+        <Button Width="46" Height="38" Content="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="11"
                 Background="Transparent" Foreground="#BFFFFFFF" BorderThickness="0" Click="Close_Click"/>
       </StackPanel>
     </Grid>
 
-    <!-- MAIN SHELL -->
+    <!-- app shell -->
     <Grid x:Name="MainShell" Margin="16,48,16,16" Opacity="0" RenderTransformOrigin="0.5,0.5">
       <Grid.RenderTransform><ScaleTransform x:Name="MainScale" ScaleX="0.985" ScaleY="0.985"/></Grid.RenderTransform>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="78"/>
-        <ColumnDefinition Width="12"/>
-        <ColumnDefinition Width="390"/>
-        <ColumnDefinition Width="12"/>
-        <ColumnDefinition Width="*"/>
+        <ColumnDefinition x:Name="NavColumn" Width="78"/>
+        <ColumnDefinition x:Name="GapOne" Width="12"/>
+        <ColumnDefinition x:Name="RoomsColumn" Width="370"/>
+        <ColumnDefinition x:Name="GapTwo" Width="12"/>
+        <ColumnDefinition x:Name="ContentColumn" Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <!-- NAV -->
+      <!-- nav rail -->
       <Border Grid.Column="0" Style="{StaticResource GlassCard}" Padding="10" CornerRadius="28">
         <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-          </Grid.RowDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <local:BrandMark Width="48" Height="48" HorizontalAlignment="Center" Margin="0,4,0,12"/>
           <StackPanel Grid.Row="1" VerticalAlignment="Center">
             <Button x:Name="ChatsNav" Style="{StaticResource NavButton}" Content="&#xE8BD;" ToolTip="Чаты" Click="ChatsNav_Click"/>
             <Button x:Name="PeopleNav" Style="{StaticResource NavButton}" Content="&#xE716;" ToolTip="Люди" Click="PeopleNav_Click"/>
+            <Button x:Name="ToolsNav" Style="{StaticResource NavButton}" Content="&#xE9D9;" ToolTip="Инструменты" Click="ToolsNav_Click"/>
             <Button x:Name="SettingsNav" Style="{StaticResource NavButton}" Content="&#xE713;" ToolTip="Настройки" Click="SettingsNav_Click"/>
           </StackPanel>
           <StackPanel Grid.Row="2" HorizontalAlignment="Center">
@@ -110,17 +101,10 @@
         </Grid>
       </Border>
 
-      <!-- CHAT LIST -->
+      <!-- rooms -->
       <Border x:Name="RoomsPane" Grid.Column="2" Style="{StaticResource GlassCard}" Padding="20" CornerRadius="28">
         <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-          </Grid.RowDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
           <Grid>
             <StackPanel>
@@ -134,46 +118,55 @@
               <TextBlock Text="Сообщения" FontSize="34" FontWeight="Black" Margin="0,17,0,0"/>
             </StackPanel>
             <Button Style="{StaticResource RoundIconButton}" Content="&#xE710;" Background="White" Foreground="Black"
-                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="50" Height="50" Click="OpenAddContact_Click"/>
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="50" Height="50" Click="OpenCompose_Click"/>
           </Grid>
 
           <Grid Grid.Row="1" Margin="2,15,2,13">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xEA18;" FontFamily="Segoe Fluent Icons" FontSize="12" Foreground="#A8FFFFFF" VerticalAlignment="Center"/>
               <TextBlock x:Name="ConnectionText" Text="ПОДКЛЮЧЕНИЕ…" FontFamily="{StaticResource MonoFont}" FontSize="9" FontWeight="SemiBold"
-                         Foreground="#A8FFFFFF" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                         Foreground="#A8FFFFFF" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
-            <TextBlock x:Name="QueueText" Text="E2EE" HorizontalAlignment="Right" FontFamily="{StaticResource MonoFont}"
-                       FontSize="9" Foreground="#78FFFFFF"/>
+            <TextBlock x:Name="QueueText" Text="E2EE" HorizontalAlignment="Right" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#78FFFFFF"/>
           </Grid>
 
-          <Grid Grid.Row="2">
-            <TextBox x:Name="SearchBox" Style="{StaticResource VoidTextBox}" Height="48" Padding="42,0,14,0"
-                     VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged"/>
-            <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons" FontSize="14" Foreground="#82FFFFFF"
-                       Margin="15,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False"/>
-            <TextBlock x:Name="SearchHint" Text="Найти чат или сообщение" Foreground="#68FFFFFF" Margin="42,0,0,0"
-                       VerticalAlignment="Center" IsHitTestVisible="False"/>
-          </Grid>
+          <Border Grid.Row="2" Style="{StaticResource InputShell}" Height="48" Padding="14,0">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons" FontSize="14" Foreground="#82FFFFFF" VerticalAlignment="Center"/>
+              <TextBox x:Name="SearchBox" Grid.Column="1" Style="{StaticResource BareTextBox}" TextChanged="SearchBox_TextChanged"/>
+              <TextBlock x:Name="SearchHint" Grid.Column="1" Text="Найти чат или сообщение" Foreground="#68FFFFFF"
+                         VerticalAlignment="Center" IsHitTestVisible="False"/>
+            </Grid>
+          </Border>
 
           <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" Margin="0,12,0,10">
             <StackPanel Orientation="Horizontal">
-              <Button x:Name="AllChip" Style="{StaticResource ChipButton}" Content="ВСЕ" Background="White" Foreground="Black" Margin="0,0,7,0"/>
-              <Button Style="{StaticResource ChipButton}" Content="НЕПРОЧИТАННЫЕ" Margin="0,0,7,0"/>
-              <Button Style="{StaticResource ChipButton}" Content="ЛИЧНЫЕ" Margin="0,0,7,0"/>
-              <Button Style="{StaticResource ChipButton}" Content="ГРУППЫ" Margin="0,0,7,0"/>
-              <Button Style="{StaticResource ChipButton}" Content="АРХИВ"/>
+              <Button Style="{StaticResource ChipButton}" Content="ВСЕ" Tag="all" Margin="0,0,7,0" Click="Filter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="НЕПРОЧИТАННЫЕ" Tag="unread" Margin="0,0,7,0" Click="Filter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="ЛИЧНЫЕ" Tag="dm" Margin="0,0,7,0" Click="Filter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="ГРУППЫ" Tag="groups" Margin="0,0,7,0" Click="Filter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="КАНАЛЫ" Tag="channels" Margin="0,0,7,0" Click="Filter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="АРХИВ" Tag="archive" Click="Filter_Click"/>
             </StackPanel>
           </ScrollViewer>
 
           <Grid Grid.Row="4">
             <ListBox x:Name="RoomList" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                     ItemContainerStyle="{StaticResource RoomItem}" SelectionChanged="RoomList_SelectionChanged">
+                     ItemContainerStyle="{StaticResource FlatListItem}" SelectionChanged="RoomList_SelectionChanged">
               <ListBox.ItemTemplate>
                 <DataTemplate>
-                  <Border x:Name="Card" CornerRadius="22" Padding="13" Margin="0,0,0,10" Background="#B50D0D0D"
-                          BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" RenderTransformOrigin="0.5,0.5">
-                    <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                  <Border CornerRadius="22" Padding="13" Margin="0,0,0,10" Background="#B50D0D0D"
+                          BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
+                    <Border.ContextMenu>
+                      <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="Закрепить / открепить" CommandParameter="{Binding}" Click="RoomPin_Click"/>
+                        <MenuItem Header="Архив / вернуть" CommandParameter="{Binding}" Click="RoomArchive_Click"/>
+                        <MenuItem Header="Без звука / со звуком" CommandParameter="{Binding}" Click="RoomMute_Click"/>
+                        <Separator/>
+                        <MenuItem Header="Скрыть локально" CommandParameter="{Binding}" Click="RoomHide_Click"/>
+                      </ContextMenu>
+                    </Border.ContextMenu>
                     <Grid>
                       <Grid.ColumnDefinitions><ColumnDefinition Width="54"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                       <Border Width="52" Height="52" CornerRadius="18" Background="#14FFFFFF" BorderBrush="#22FFFFFF" BorderThickness="1">
@@ -182,30 +175,20 @@
                       <Grid Grid.Column="1" Margin="13,0,0,0">
                         <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                         <Grid>
-                          <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                          <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding Badge}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#BFFFFFFF" Margin="7,2,0,0"/>
+                          </StackPanel>
                           <TextBlock Text="{Binding Time}" HorizontalAlignment="Right" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#78FFFFFF"/>
                         </Grid>
                         <Grid Grid.Row="1" Margin="0,7,0,0">
                           <TextBlock Text="{Binding Preview}" Foreground="#8FFFFFFF" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,0,34,0"/>
-                          <Border x:Name="UnreadBadge" Width="24" Height="24" CornerRadius="12" Background="White" HorizontalAlignment="Right"
-                                  Visibility="{Binding UnreadVisibility}">
+                          <Border Width="24" Height="24" CornerRadius="12" Background="White" HorizontalAlignment="Right" Visibility="{Binding UnreadVisibility}">
                             <TextBlock Text="{Binding Unread}" Foreground="Black" FontWeight="Bold" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                           </Border>
                         </Grid>
                       </Grid>
                     </Grid>
-                    <Border.Style>
-                      <Style TargetType="Border">
-                        <Setter Property="Background" Value="#B50D0D0D"/>
-                        <Style.Triggers>
-                          <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#EE181818"/></Trigger>
-                          <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}" Value="True">
-                            <Setter Property="Background" Value="#F21D1D1D"/>
-                            <Setter Property="BorderBrush" Value="#43FFFFFF"/>
-                          </DataTrigger>
-                        </Style.Triggers>
-                      </Style>
-                    </Border.Style>
                   </Border>
                 </DataTemplate>
               </ListBox.ItemTemplate>
@@ -215,74 +198,96 @@
               <StackPanel HorizontalAlignment="Center">
                 <local:BrandMark Width="76" Height="76" Margin="0,0,0,15"/>
                 <TextBlock Text="Здесь пока тихо." FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
-                <TextBlock Text="Добавь человека по VO1D ID или @username." Foreground="#8FFFFFFF" TextAlignment="Center" Margin="0,8,0,0"/>
+                <TextBlock Text="Добавь человека, группу или канал." Foreground="#8FFFFFFF" TextAlignment="Center" Margin="0,8,0,0"/>
               </StackPanel>
             </Border>
           </Grid>
 
           <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
             <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="10" Foreground="#72FFFFFF" Margin="0,0,7,0"/>
-            <TextBlock Text="E2EE · ЗАШИФРОВАНО НА УСТРОЙСТВЕ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/>
+            <TextBlock Text="E2EE · ЛОКАЛЬНЫЙ VAULT" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/>
           </StackPanel>
         </Grid>
       </Border>
 
-      <!-- RIGHT WORKSPACES -->
+      <!-- workspaces -->
       <Grid Grid.Column="4">
+        <!-- chat -->
         <Border x:Name="ChatWorkspace" Style="{StaticResource GlassCard}" Padding="0" CornerRadius="28" ClipToBounds="True">
           <Grid>
-            <Grid.RowDefinitions><RowDefinition Height="78"/><RowDefinition Height="*"/><RowDefinition Height="82"/></Grid.RowDefinitions>
-
+            <Grid.RowDefinitions><RowDefinition Height="78"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Border BorderBrush="#14FFFFFF" BorderThickness="0,0,0,1" Padding="20,14">
               <Grid>
                 <StackPanel Orientation="Horizontal">
-                  <Border x:Name="ChatAvatar" Width="50" Height="50" CornerRadius="17" Background="#14FFFFFF" BorderBrush="#24FFFFFF" BorderThickness="1">
+                  <Border Width="50" Height="50" CornerRadius="17" Background="#14FFFFFF" BorderBrush="#24FFFFFF" BorderThickness="1">
                     <TextBlock x:Name="ChatInitial" Text="V" FontWeight="Black" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                   </Border>
                   <StackPanel Margin="13,4,0,0">
-                    <TextBlock x:Name="ChatTitle" Text="VO1D Desktop" FontWeight="Bold" FontSize="17"/>
+                    <TextBlock x:Name="ChatTitle" Text="VO1D Desktop" FontWeight="Bold" FontSize="17" TextTrimming="CharacterEllipsis"/>
                     <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                       <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="10" Foreground="#8FFFFFFF" Margin="0,0,6,0"/>
-                      <TextBlock Text="E2EE · PRIVATE CHANNEL" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#8FFFFFFF"/>
+                      <TextBlock x:Name="ChatSubtitle" Text="E2EE · PRIVATE CHANNEL" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#8FFFFFFF"/>
                     </StackPanel>
                   </StackPanel>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                  <Button Style="{StaticResource RoundIconButton}" Content="&#xE721;" Margin="0,0,8,0"/>
-                  <Button Style="{StaticResource RoundIconButton}" Content="&#xE717;" Margin="0,0,8,0"/>
-                  <Button Style="{StaticResource RoundIconButton}" Content="&#xE946;"/>
+                  <Button Style="{StaticResource RoundIconButton}" Content="&#xE721;" Margin="0,0,8,0" ToolTip="Поиск" Click="FocusChatSearch_Click"/>
+                  <Button Style="{StaticResource RoundIconButton}" Content="&#xE717;" Margin="0,0,8,0" ToolTip="Звонок"/>
+                  <Button Style="{StaticResource RoundIconButton}" Content="&#xE946;" ToolTip="Информация" Click="OpenRoomInfo_Click"/>
                 </StackPanel>
               </Grid>
             </Border>
 
-            <Grid Grid.Row="1">
+            <Border x:Name="PinnedStrip" Grid.Row="1" Background="#0BFFFFFF" BorderBrush="#14FFFFFF" BorderThickness="0,0,0,1"
+                    Padding="16,9" Visibility="Collapsed">
+              <Grid>
+                <TextBlock Text="&#xE718;" FontFamily="Segoe Fluent Icons" Foreground="#AFFFFFFF" VerticalAlignment="Center"/>
+                <StackPanel Margin="24,0,36,0">
+                  <TextBlock Text="ЗАКРЕПЛЕНО" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#78FFFFFF"/>
+                  <TextBlock x:Name="PinnedText" Text="" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                <Button Content="×" HorizontalAlignment="Right" Background="Transparent" Foreground="#9FFFFFFF" BorderThickness="0" Click="UnpinMessage_Click"/>
+              </Grid>
+            </Border>
+
+            <Grid Grid.Row="2">
               <ScrollViewer x:Name="MessageScroll" VerticalScrollBarVisibility="Auto" Padding="24,20">
                 <ItemsControl x:Name="MessageList">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <Grid Margin="0,4">
-                        <Border x:Name="Bubble" MaxWidth="620" CornerRadius="21" Padding="14,11" HorizontalAlignment="Left"
-                                Background="#F0151515" BorderBrush="#18FFFFFF" BorderThickness="1">
+                      <Grid Margin="0,5">
+                        <Border MaxWidth="650" CornerRadius="21" Padding="14,11" HorizontalAlignment="{Binding Align}"
+                                Background="{Binding BubbleBrush}" BorderBrush="#18FFFFFF" BorderThickness="1">
+                          <Border.ContextMenu>
+                            <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                              <MenuItem Header="Ответить" CommandParameter="{Binding}" Click="MessageReply_Click"/>
+                              <MenuItem Header="Копировать" CommandParameter="{Binding}" Click="MessageCopy_Click"/>
+                              <MenuItem Header="❤️ Реакция" CommandParameter="{Binding}" Click="MessageReact_Click"/>
+                              <MenuItem Header="Закладка" CommandParameter="{Binding}" Click="MessageBookmark_Click"/>
+                              <MenuItem Header="Закрепить" CommandParameter="{Binding}" Click="MessagePin_Click"/>
+                              <Separator/>
+                              <MenuItem Header="Редактировать" CommandParameter="{Binding}" Click="MessageEdit_Click"/>
+                              <MenuItem Header="Удалить" CommandParameter="{Binding}" Click="MessageDelete_Click"/>
+                            </ContextMenu>
+                          </Border.ContextMenu>
                           <StackPanel>
-                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="14.5"/>
-                            <TextBlock Text="{Binding Time}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"
-                                       HorizontalAlignment="Right" Margin="8,7,0,0"/>
+                            <Border Background="#0F7F7F7F" CornerRadius="8" Padding="8,5" Margin="0,0,0,8" Visibility="{Binding ReplyVisibility}">
+                              <TextBlock Text="{Binding ReplyPreview}" FontSize="11" Foreground="{Binding MetaBrush}" TextTrimming="CharacterEllipsis"/>
+                            </Border>
+                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="{Binding FontSize}" Foreground="{Binding ForegroundBrush}"/>
+                            <Border Background="#0DFFFFFF" CornerRadius="10" Padding="9,7" Margin="0,8,0,0" Visibility="{Binding AttachmentVisibility}">
+                              <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE8A5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0" Foreground="{Binding MetaBrush}"/>
+                                <TextBlock Text="{Binding AttachmentName}" FontSize="11" Foreground="{Binding ForegroundBrush}" TextTrimming="CharacterEllipsis"/>
+                              </StackPanel>
+                            </Border>
+                            <TextBlock Text="{Binding ReactionsText}" FontSize="11" Margin="0,7,0,0" Visibility="{Binding ReactionsVisibility}" Foreground="{Binding ForegroundBrush}"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="8,7,0,0">
+                              <TextBlock Text="{Binding EditedText}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="{Binding MetaBrush}" Margin="0,0,6,0"/>
+                              <TextBlock Text="{Binding Time}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="{Binding MetaBrush}"/>
+                              <TextBlock Text="{Binding StateGlyph}" FontFamily="Segoe Fluent Icons" FontSize="8" Foreground="{Binding MetaBrush}" Margin="5,0,0,0"/>
+                            </StackPanel>
                           </StackPanel>
-                          <Border.Style>
-                            <Style TargetType="Border">
-                              <Setter Property="HorizontalAlignment" Value="Left"/>
-                              <Setter Property="Background" Value="#F0151515"/>
-                              <Setter Property="TextElement.Foreground" Value="White"/>
-                              <Style.Triggers>
-                                <DataTrigger Binding="{Binding Mine}" Value="True">
-                                  <Setter Property="HorizontalAlignment" Value="Right"/>
-                                  <Setter Property="Background" Value="#FFE2E2EA"/>
-                                  <Setter Property="TextElement.Foreground" Value="Black"/>
-                                  <Setter Property="BorderBrush" Value="#10FFFFFF"/>
-                                </DataTrigger>
-                              </Style.Triggers>
-                            </Style>
-                          </Border.Style>
                         </Border>
                       </Grid>
                     </DataTemplate>
@@ -290,51 +295,96 @@
                 </ItemsControl>
               </ScrollViewer>
 
-              <StackPanel x:Name="NoChat" HorizontalAlignment="Center" VerticalAlignment="Center" Width="390">
+              <StackPanel x:Name="NoChat" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="390">
                 <local:BrandMark Width="112" Height="112" HorizontalAlignment="Center"/>
                 <TextBlock Text="Тише сети. Ближе к своим." FontSize="27" FontWeight="Black" TextAlignment="Center" Margin="0,20,0,0"/>
-                <TextBlock Text="Выбери разговор слева или добавь человека по 4-символьному VO1D ID." Foreground="#8FFFFFFF"
-                           TextAlignment="Center" FontSize="13.5" LineHeight="21" Margin="0,10,0,0"/>
+                <TextBlock Text="Выбери разговор слева или создай новый." Foreground="#8FFFFFFF" TextAlignment="Center" FontSize="13.5" LineHeight="21" Margin="0,10,0,0"/>
               </StackPanel>
             </Grid>
 
-            <Border Grid.Row="2" BorderBrush="#14FFFFFF" BorderThickness="0,1,0,0" Padding="16,13">
-              <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/><ColumnDefinition Width="46"/><ColumnDefinition Width="46"/></Grid.ColumnDefinitions>
-                <Button Style="{StaticResource RoundIconButton}" Content="&#xE710;" Width="42" Height="42" IsEnabled="False"/>
-                <TextBox x:Name="ComposerBox" Grid.Column="1" Style="{StaticResource VoidTextBox}" Margin="10,0" VerticalContentAlignment="Center"
-                         KeyDown="ComposerBox_KeyDown" IsEnabled="False"/>
-                <Button Grid.Column="2" Style="{StaticResource RoundIconButton}" Content="&#xE720;" Width="42" Height="42" IsEnabled="False"/>
-                <Button x:Name="SendButton" Grid.Column="3" Style="{StaticResource RoundIconButton}" Content="&#xE74A;" Width="42" Height="42"
-                        Background="White" Foreground="Black" Click="Send_Click" IsEnabled="False"/>
-              </Grid>
+            <TextBlock x:Name="TypingText" Grid.Row="3" Text="Собеседник печатает…" FontSize="11" Foreground="#7FFFFFFF" Margin="18,0,18,6" Visibility="Collapsed"/>
+
+            <Border Grid.Row="4" BorderBrush="#14FFFFFF" BorderThickness="0,1,0,0" Padding="14,11">
+              <StackPanel>
+                <Border x:Name="ComposerContext" Background="#0DFFFFFF" CornerRadius="12" Padding="10,7" Margin="0,0,0,8" Visibility="Collapsed">
+                  <Grid>
+                    <StackPanel>
+                      <TextBlock x:Name="ComposerContextTitle" Text="Ответ" FontWeight="Bold" FontSize="11"/>
+                      <TextBlock x:Name="ComposerContextPreview" Text="" Foreground="#8FFFFFFF" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                    <Button Content="×" HorizontalAlignment="Right" Background="Transparent" Foreground="#BFFFFFFF" BorderThickness="0" Click="CancelComposerContext_Click"/>
+                  </Grid>
+                </Border>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/><ColumnDefinition Width="44"/><ColumnDefinition Width="44"/></Grid.ColumnDefinitions>
+                  <Button x:Name="AttachButton" Style="{StaticResource RoundIconButton}" Content="&#xE710;" Width="40" Height="40" Click="Attach_Click" IsEnabled="False"/>
+                  <Border Grid.Column="1" Style="{StaticResource InputShell}" Margin="9,0" MinHeight="44" MaxHeight="130">
+                    <Grid>
+                      <TextBox x:Name="ComposerBox" Style="{StaticResource BareTextBox}" TextWrapping="Wrap" AcceptsReturn="True"
+                               VerticalScrollBarVisibility="Auto" KeyDown="ComposerBox_KeyDown" TextChanged="ComposerBox_TextChanged" IsEnabled="False"/>
+                      <TextBlock x:Name="ComposerHint" Text="Сообщение" Foreground="#65FFFFFF" IsHitTestVisible="False" VerticalAlignment="Center"/>
+                    </Grid>
+                  </Border>
+                  <Button Grid.Column="2" Style="{StaticResource RoundIconButton}" Content="&#xE720;" Width="40" Height="40" ToolTip="Голосовое" IsEnabled="False"/>
+                  <Button x:Name="SendButton" Grid.Column="3" Style="{StaticResource RoundIconButton}" Content="&#xE74A;" Width="40" Height="40"
+                          Background="White" Foreground="Black" Click="Send_Click" IsEnabled="False"/>
+                </Grid>
+                <TextBlock x:Name="PendingAttachmentText" Text="" FontSize="10" Foreground="#7FFFFFFF" Margin="54,6,0,0" Visibility="Collapsed"/>
+              </StackPanel>
             </Border>
           </Grid>
         </Border>
 
-        <!-- PEOPLE -->
+        <!-- people -->
         <Border x:Name="PeopleWorkspace" Style="{StaticResource GlassCard}" Padding="28" CornerRadius="28" Visibility="Collapsed">
           <Grid>
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <StackPanel>
-              <TextBlock Text="Люди" FontSize="36" FontWeight="Black"/>
-              <TextBlock Text="Проверенные контакты VO1D" Foreground="#8FFFFFFF" Margin="0,5,0,0"/>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Grid>
+              <StackPanel>
+                <TextBlock Text="VO1D / PEOPLE" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#76FFFFFF"/>
+                <TextBlock Text="Люди" FontSize="36" FontWeight="Black" Margin="0,4,0,0"/>
+              </StackPanel>
+              <Button Style="{StaticResource RoundIconButton}" Content="&#xE710;" Background="White" Foreground="Black"
+                      HorizontalAlignment="Right" Click="OpenAddContact_Click"/>
+            </Grid>
+            <Border Grid.Row="1" Style="{StaticResource InputShell}" Margin="0,20,0,12">
+              <Grid>
+                <TextBox x:Name="PeopleSearchBox" Style="{StaticResource BareTextBox}" TextChanged="PeopleSearchBox_TextChanged"/>
+                <TextBlock x:Name="PeopleSearchHint" Text="Ник, ID или fingerprint" Foreground="#68FFFFFF" IsHitTestVisible="False" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,13">
+              <Button Style="{StaticResource ChipButton}" Content="ВСЕ" Tag="all" Margin="0,0,7,0" Click="PeopleFilter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="ИЗБРАННЫЕ" Tag="favorite" Margin="0,0,7,0" Click="PeopleFilter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="ПРОВЕРЕННЫЕ" Tag="verified" Margin="0,0,7,0" Click="PeopleFilter_Click"/>
+              <Button Style="{StaticResource ChipButton}" Content="БЛОКИРОВКИ" Tag="blocked" Click="PeopleFilter_Click"/>
             </StackPanel>
-            <Button Grid.Row="1" Style="{StaticResource PrimaryButton}" Content="+ ДОБАВИТЬ ЧЕЛОВЕКА" Width="230" HorizontalAlignment="Left"
-                    Margin="0,22,0,18" Click="OpenAddContact_Click"/>
-            <ListBox x:Name="PeopleList" Grid.Row="2" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource RoomItem}">
+            <ListBox x:Name="PeopleList" Grid.Row="3" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource FlatListItem}">
               <ListBox.ItemTemplate>
                 <DataTemplate>
                   <Border Style="{StaticResource GlassCard}" Margin="0,0,0,10" Padding="16">
-                    <StackPanel Orientation="Horizontal">
+                    <Border.ContextMenu>
+                      <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="Избранное" CommandParameter="{Binding}" Click="ContactFavorite_Click"/>
+                        <MenuItem Header="Проверен / не проверен" CommandParameter="{Binding}" Click="ContactVerify_Click"/>
+                        <MenuItem Header="Блокировать / разблокировать" CommandParameter="{Binding}" Click="ContactBlock_Click"/>
+                      </ContextMenu>
+                    </Border.ContextMenu>
+                    <Grid>
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                       <Border Width="48" Height="48" CornerRadius="16" Background="#14FFFFFF">
                         <TextBlock Text="{Binding Initial}" FontSize="17" FontWeight="Black" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                       </Border>
-                      <StackPanel Margin="14,4,0,0">
-                        <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="15"/>
+                      <StackPanel Grid.Column="1" Margin="14,4,0,0">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="15"/>
+                          <TextBlock Text="{Binding Flags}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#9FFFFFFF" Margin="8,2,0,0"/>
+                        </StackPanel>
                         <TextBlock Text="{Binding Fingerprint}" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" Margin="0,6,0,0"/>
                       </StackPanel>
-                    </StackPanel>
+                      <Button Grid.Column="2" Style="{StaticResource RoundIconButton}" Content="&#xE8BD;" Width="38" Height="38"
+                              CommandParameter="{Binding}" Click="OpenPersonChat_Click"/>
+                    </Grid>
                   </Border>
                 </DataTemplate>
               </ListBox.ItemTemplate>
@@ -342,12 +392,46 @@
           </Grid>
         </Border>
 
-        <!-- SETTINGS -->
+        <!-- tools -->
+        <Border x:Name="ToolsWorkspace" Style="{StaticResource GlassCard}" Padding="28" CornerRadius="28" Visibility="Collapsed">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <StackPanel>
+              <TextBlock Text="VO1D / TOOLS" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#76FFFFFF"/>
+              <TextBlock Text="Инструменты" FontSize="36" FontWeight="Black" Margin="0,4,0,0"/>
+              <TextBlock Text="Черновики, отложенные, закладки и локальное хранилище" Foreground="#8FFFFFFF" Margin="0,6,0,0"/>
+            </StackPanel>
+            <UniformGrid Grid.Row="1" Columns="4" Margin="0,20,0,14">
+              <Border Style="{StaticResource GlassCard}" Margin="0,0,8,0" Padding="14"><StackPanel><TextBlock Text="ЧЕРНОВИКИ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="DraftCount" Text="0" FontSize="27" FontWeight="Black" Margin="0,6,0,0"/></StackPanel></Border>
+              <Border Style="{StaticResource GlassCard}" Margin="0,0,8,0" Padding="14"><StackPanel><TextBlock Text="ОТЛОЖЕННЫЕ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="ScheduledCount" Text="0" FontSize="27" FontWeight="Black" Margin="0,6,0,0"/></StackPanel></Border>
+              <Border Style="{StaticResource GlassCard}" Margin="0,0,8,0" Padding="14"><StackPanel><TextBlock Text="ЗАКЛАДКИ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="BookmarkCount" Text="0" FontSize="27" FontWeight="Black" Margin="0,6,0,0"/></StackPanel></Border>
+              <Border Style="{StaticResource GlassCard}" Padding="14"><StackPanel><TextBlock Text="ХРАНИЛИЩЕ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="StorageCount" Text="0 KB" FontSize="20" FontWeight="Black" Margin="0,9,0,0"/></StackPanel></Border>
+            </UniformGrid>
+            <ListBox x:Name="ToolsList" Grid.Row="2" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource FlatListItem}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border Style="{StaticResource GlassCard}" Margin="0,0,0,9" Padding="14">
+                    <Grid>
+                      <StackPanel>
+                        <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Detail}" Foreground="#82FFFFFF" FontSize="11" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
+                      </StackPanel>
+                      <TextBlock Text="{Binding Meta}" HorizontalAlignment="Right" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#72FFFFFF"/>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </Border>
+
+        <!-- settings -->
         <Border x:Name="SettingsWorkspace" Style="{StaticResource GlassCard}" Padding="28" CornerRadius="28" Visibility="Collapsed">
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel>
-              <TextBlock Text="Настройки" FontSize="36" FontWeight="Black"/>
-              <TextBlock Text="Приватность, сеть и локальное устройство" Foreground="#8FFFFFFF" Margin="0,5,0,22"/>
+              <TextBlock Text="VO1D / PRIVACY" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#76FFFFFF"/>
+              <TextBlock Text="Настройки" FontSize="36" FontWeight="Black" Margin="0,4,0,0"/>
+              <TextBlock Text="Приватность, интерфейс и локальное устройство" Foreground="#8FFFFFFF" Margin="0,5,0,22"/>
 
               <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
                 <Grid>
@@ -355,32 +439,39 @@
                   <StackPanel>
                     <TextBlock Text="ЛИЧНОСТЬ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
                     <TextBlock x:Name="SettingsCode" Text="----" FontFamily="{StaticResource MonoFont}" FontSize="30" FontWeight="Black" Margin="0,10,0,0"/>
-                    <TextBlock x:Name="SettingsFingerprint" Text="..." FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" Margin="0,8,0,0"/>
+                    <TextBlock x:Name="SettingsFingerprint" Text="..." FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" Margin="0,8,0,0" TextTrimming="CharacterEllipsis"/>
                   </StackPanel>
-                  <local:BrandMark Grid.Column="1" Width="72" Height="72"/>
+                  <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                    <local:BrandMark Width="62" Height="62" HorizontalAlignment="Right"/>
+                    <Button Content="СМЕНИТЬ ID" Style="{StaticResource ChipButton}" Margin="0,10,0,0" Click="RotateCode_Click"/>
+                  </StackPanel>
                 </Grid>
               </Border>
 
               <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
                 <StackPanel>
-                  <TextBlock Text="СЕТЬ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
-                  <Grid Margin="0,15,0,0">
-                    <StackPanel>
-                      <TextBlock Text="Production relay" FontWeight="Bold"/>
-                      <TextBlock Text="f-production-bdfe.up.railway.app" Foreground="#8FFFFFFF" FontFamily="{StaticResource MonoFont}" FontSize="10" Margin="0,5,0,0"/>
-                    </StackPanel>
-                    <Border HorizontalAlignment="Right" VerticalAlignment="Center" Background="#12FFFFFF" CornerRadius="14" Padding="12,7">
-                      <TextBlock Text="HTTPS" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#BFFFFFFF"/>
-                    </Border>
-                  </Grid>
+                  <TextBlock Text="ИНТЕРФЕЙС" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
+                  <CheckBox x:Name="CompactRowsToggle" Style="{StaticResource GlassToggle}" Content="Компактные строки чатов" Margin="0,10,0,0" Click="Preference_Click"/>
+                  <CheckBox x:Name="HideMediaToggle" Style="{StaticResource GlassToggle}" Content="Скрывать медиа до нажатия" Click="Preference_Click"/>
+                  <CheckBox x:Name="ProtectCaptureToggle" Style="{StaticResource GlassToggle}" Content="Защищать содержимое при записи экрана" Click="Preference_Click"/>
+                </StackPanel>
+              </Border>
+
+              <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
+                <StackPanel>
+                  <TextBlock Text="СЕТЬ И СОДЕРЖИМОЕ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
+                  <CheckBox x:Name="LowDataToggle" Style="{StaticResource GlassToggle}" Content="Экономия трафика" Margin="0,10,0,0" Click="Preference_Click"/>
+                  <CheckBox x:Name="ConfirmLinksToggle" Style="{StaticResource GlassToggle}" Content="Подтверждать внешние ссылки" Click="Preference_Click"/>
+                  <CheckBox x:Name="CleanLinksToggle" Style="{StaticResource GlassToggle}" Content="Очищать tracking-параметры ссылок" Click="Preference_Click"/>
+                  <CheckBox x:Name="QuietHoursToggle" Style="{StaticResource GlassToggle}" Content="Тихие часы" Click="Preference_Click"/>
                 </StackPanel>
               </Border>
 
               <Border Style="{StaticResource GlassCard}">
                 <StackPanel>
-                  <TextBlock Text="WINDOWS BETA" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
-                  <TextBlock Text="Desktop слой" FontWeight="Bold" FontSize="16" Margin="0,13,0,0"/>
-                  <TextBlock Text="UI теперь повторяет визуальную систему iOS. Полный внутренний libsignal-v2 слой для iPhone ↔ Windows переносится отдельно — без небезопасного downgrade."
+                  <TextBlock Text="СОСТОЯНИЕ WINDOWS" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
+                  <TextBlock x:Name="ProtocolStatus" Text="VO1D outer envelope · Signal v2 integration pending" FontWeight="Bold" FontSize="15" Margin="0,13,0,0"/>
+                  <TextBlock Text="Desktop не делает небезопасный downgrade входящих SignalPacket v2. Следующий слой — официальный libsignal 0.70.0 для полной совместимости iOS ↔ Windows."
                              Foreground="#8FFFFFFF" TextWrapping="Wrap" LineHeight="21" Margin="0,7,0,0"/>
                 </StackPanel>
               </Border>
@@ -390,84 +481,83 @@
       </Grid>
     </Grid>
 
-    <!-- ONBOARDING -->
+    <!-- onboarding -->
     <Grid x:Name="OnboardingLayer" Background="#FF050505" Visibility="Collapsed" Panel.ZIndex="80">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.9*"/></Grid.ColumnDefinitions>
-      <StackPanel Margin="54" VerticalAlignment="Center">
-        <StackPanel Orientation="Horizontal">
-          <local:BrandMark Width="42" Height="42" Margin="0,0,12,0"/>
-          <StackPanel VerticalAlignment="Center">
-            <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="18" FontWeight="Black"/>
-            <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#83FFFFFF"/>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="0.95*"/></Grid.ColumnDefinitions>
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="52" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal">
+            <local:BrandMark Width="42" Height="42" Margin="0,0,12,0"/>
+            <StackPanel VerticalAlignment="Center"><TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="18" FontWeight="Black"/><TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#83FFFFFF"/></StackPanel>
           </StackPanel>
+          <local:BrandMark Width="138" Height="138" Margin="0,42,0,30" HorizontalAlignment="Left"/>
+          <TextBlock Text="Тише сети.&#x0a;Ближе к своим." FontSize="42" FontWeight="Black" LineHeight="50"/>
+          <TextBlock Text="Без телефона и почты. Ключи создаются на устройстве. Desktop повторяет приватный визуальный язык iOS."
+                     Foreground="#98FFFFFF" FontSize="14" TextWrapping="Wrap" MaxWidth="430" LineHeight="22" HorizontalAlignment="Left" Margin="0,18,0,0"/>
         </StackPanel>
-        <local:BrandMark Width="138" Height="138" Margin="0,42,0,30" HorizontalAlignment="Left"/>
-        <TextBlock Text="Тише сети.&#x0a;Ближе к своим." FontSize="42" FontWeight="Black" LineHeight="51"/>
-        <TextBlock Text="Без телефона и почты. Ключи создаются на устройстве. Desktop сохраняет тот же приватный характер интерфейса."
-                   Foreground="#98FFFFFF" FontSize="14" TextWrapping="Wrap" Width="430" LineHeight="22" HorizontalAlignment="Left" Margin="0,18,0,0"/>
-      </StackPanel>
-      <Border Grid.Column="1" Style="{StaticResource GlassCard}" Width="410" Padding="26" VerticalAlignment="Center" HorizontalAlignment="Center">
+      </ScrollViewer>
+      <Border Grid.Column="1" Style="{StaticResource GlassCard}" MaxWidth="420" Margin="24" Padding="26" VerticalAlignment="Center" HorizontalAlignment="Stretch">
         <StackPanel>
           <TextBlock Text="PRIVATE / E2EE" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#84FFFFFF"/>
           <TextBlock Text="Добро пожаловать." FontSize="30" FontWeight="Black" Margin="0,14,0,0"/>
           <TextBlock Text="Как тебя будут видеть в VO1D?" Foreground="#8FFFFFFF" Margin="0,7,0,22"/>
-          <TextBox x:Name="NicknameBox" Style="{StaticResource VoidTextBox}" Height="54"/>
+          <Border Style="{StaticResource InputShell}" Height="54"><TextBox x:Name="NicknameBox" Style="{StaticResource BareTextBox}"/></Border>
           <Border Style="{StaticResource GlassCard}" Margin="0,14,0,14" Padding="16">
-            <Grid>
-              <StackPanel>
-                <TextBlock Text="МАРШРУТ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/>
-                <TextBlock Text="Production relay · HTTPS" FontWeight="SemiBold" Margin="0,7,0,0"/>
-              </StackPanel>
-              <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="#BFFFFFFF"/>
-            </Grid>
+            <Grid><StackPanel><TextBlock Text="МАРШРУТ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock Text="Production relay · HTTPS" FontWeight="SemiBold" Margin="0,7,0,0"/></StackPanel><TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="#BFFFFFFF"/></Grid>
           </Border>
           <Button Style="{StaticResource PrimaryButton}" Content="ВОЙТИ В VO1D   ↗" Click="FinishOnboarding_Click"/>
-          <TextBlock Text="Ключи хранятся локально и защищаются Windows DPAPI + AES-GCM." Foreground="#68FFFFFF" FontSize="10"
-                     TextWrapping="Wrap" Margin="0,14,0,0"/>
+          <TextBlock Text="Локальный vault: Windows DPAPI + AES-GCM." Foreground="#68FFFFFF" FontSize="10" TextWrapping="Wrap" Margin="0,14,0,0"/>
         </StackPanel>
       </Border>
     </Grid>
 
-    <!-- ADD CONTACT MODAL -->
-    <Grid x:Name="ModalLayer" Background="#B3000000" Visibility="Collapsed" Panel.ZIndex="90" MouseDown="ModalLayer_MouseDown">
-      <Border x:Name="AddCard" Style="{StaticResource GlassCard}" Width="470" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center"
+    <!-- add contact -->
+    <Grid x:Name="ModalLayer" Background="#C3000000" Visibility="Collapsed" Panel.ZIndex="90" MouseDown="ModalLayer_MouseDown">
+      <Border x:Name="AddCard" Style="{StaticResource GlassCard}" MaxWidth="480" Margin="24" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center"
               MouseDown="AddCard_MouseDown" RenderTransformOrigin="0.5,0.5">
         <Border.RenderTransform><ScaleTransform x:Name="AddCardScale" ScaleX="0.96" ScaleY="0.96"/></Border.RenderTransform>
         <StackPanel>
-          <StackPanel Orientation="Horizontal">
-            <local:BrandMark Width="34" Height="34" Margin="0,0,11,0"/>
-            <StackPanel>
-              <TextBlock Text="НОВЫЙ КОНТАКТ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
-              <TextBlock Text="Найти человека" FontSize="25" FontWeight="Black" Margin="0,5,0,0"/>
-            </StackPanel>
-          </StackPanel>
+          <StackPanel Orientation="Horizontal"><local:BrandMark Width="34" Height="34" Margin="0,0,11,0"/><StackPanel><TextBlock Text="НОВЫЙ КОНТАКТ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/><TextBlock Text="Найти человека" FontSize="25" FontWeight="Black" Margin="0,5,0,0"/></StackPanel></StackPanel>
           <TextBlock Text="4-символьный VO1D ID, @username или полный fingerprint." Foreground="#8FFFFFFF" Margin="0,18,0,12"/>
-          <TextBox x:Name="AddContactBox" Style="{StaticResource VoidTextBox}" Height="54"/>
-          <TextBlock x:Name="AddError" Foreground="#E0FFFFFF" FontSize="11" Margin="2,10,0,0" Visibility="Collapsed"/>
-          <Grid Margin="0,18,0,0">
-            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
-            <Button Style="{StaticResource ChipButton}" Content="ОТМЕНА" Click="CloseModal_Click"/>
-            <Button x:Name="AddContactButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="ДОБАВИТЬ" Click="AddContact_Click"/>
-          </Grid>
+          <Border Style="{StaticResource InputShell}" Height="54"><TextBox x:Name="AddContactBox" Style="{StaticResource BareTextBox}"/></Border>
+          <TextBlock x:Name="AddError" Foreground="#E0FFFFFF" FontSize="11" Margin="2,10,0,0" Visibility="Collapsed" TextWrapping="Wrap"/>
+          <Grid Margin="0,18,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><Button Style="{StaticResource ChipButton}" Content="ОТМЕНА" Click="CloseModal_Click"/><Button x:Name="AddContactButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="ДОБАВИТЬ" Click="AddContact_Click"/></Grid>
         </StackPanel>
       </Border>
     </Grid>
 
-    <!-- SPLASH -->
+    <!-- compose group/channel -->
+    <Grid x:Name="ComposeLayer" Background="#C3000000" Visibility="Collapsed" Panel.ZIndex="91" MouseDown="ComposeLayer_MouseDown">
+      <Border x:Name="ComposeCard" Style="{StaticResource GlassCard}" MaxWidth="560" MaxHeight="680" Margin="24" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center" MouseDown="ComposeCard_MouseDown">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <StackPanel><TextBlock Text="НОВЫЙ РАЗГОВОР" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/><TextBlock Text="Создать" FontSize="28" FontWeight="Black" Margin="0,5,0,0"/></StackPanel>
+          <ComboBox x:Name="ComposeType" Grid.Row="1" Margin="0,18,0,10" SelectedIndex="0">
+            <ComboBoxItem Content="Личный чат"/><ComboBoxItem Content="Группа"/><ComboBoxItem Content="Канал"/>
+          </ComboBox>
+          <Border Grid.Row="2" Style="{StaticResource InputShell}" Margin="0,0,0,12"><TextBox x:Name="ComposeTitleBox" Style="{StaticResource BareTextBox}"/></Border>
+          <ListBox x:Name="ComposePeopleList" Grid.Row="3" Background="Transparent" BorderThickness="0" SelectionMode="Multiple" ItemContainerStyle="{StaticResource FlatListItem}">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Border Style="{StaticResource GlassCard}" Margin="0,0,0,8" Padding="12">
+                  <StackPanel Orientation="Horizontal"><Border Width="38" Height="38" CornerRadius="13" Background="#14FFFFFF"><TextBlock Text="{Binding Initial}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Black"/></Border><StackPanel Margin="12,2,0,0"><TextBlock Text="{Binding Title}" FontWeight="Bold"/><TextBlock Text="{Binding Fingerprint}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF" Margin="0,4,0,0"/></StackPanel></StackPanel>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Grid Grid.Row="4" Margin="0,16,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><Button Style="{StaticResource ChipButton}" Content="ОТМЕНА" Click="CloseCompose_Click"/><Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="СОЗДАТЬ" Click="CreateRoom_Click"/></Grid>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- splash -->
     <Grid x:Name="SplashLayer" Background="#FF050505" Panel.ZIndex="100">
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
         <StackPanel.RenderTransform><ScaleTransform x:Name="SplashScale" ScaleX="0.78" ScaleY="0.78"/></StackPanel.RenderTransform>
         <local:BrandMark Width="132" Height="132" HorizontalAlignment="Center"/>
-        <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="34" FontWeight="Black"
-                   HorizontalAlignment="Center" Margin="0,24,0,0"/>
-        <TextBlock Text="PRIVATE MESSAGING LAYER" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#83FFFFFF"
-                   HorizontalAlignment="Center" Margin="0,7,0,0"/>
-        <Grid Width="180" Height="2" Margin="0,28,0,0" ClipToBounds="True">
-          <Border Background="#18FFFFFF" CornerRadius="1"/>
-          <Border x:Name="ScanLine" Width="50" Background="White" CornerRadius="1" HorizontalAlignment="Left">
-            <Border.RenderTransform><TranslateTransform x:Name="ScanTransform" X="-60"/></Border.RenderTransform>
-          </Border>
-        </Grid>
+        <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="34" FontWeight="Black" HorizontalAlignment="Center" Margin="0,24,0,0"/>
+        <TextBlock Text="PRIVATE MESSAGING LAYER" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#83FFFFFF" HorizontalAlignment="Center" Margin="0,7,0,0"/>
+        <Grid Width="180" Height="2" Margin="0,28,0,0" ClipToBounds="True"><Border Background="#18FFFFFF" CornerRadius="1"/><Border Width="50" Background="White" CornerRadius="1" HorizontalAlignment="Left"><Border.RenderTransform><TranslateTransform x:Name="ScanTransform" X="-60"/></Border.RenderTransform></Border></Grid>
       </StackPanel>
     </Grid>
   </Grid>
