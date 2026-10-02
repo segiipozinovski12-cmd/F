@@ -151,7 +151,8 @@ jobs:
 
           [Win32Capture]::ShowWindowAsync($p.MainWindowHandle, 9) | Out-Null
           [Win32Capture]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-          Start-Sleep -Milliseconds 800
+          # Wait for splash/network preview state and entrance animations to settle.
+          Start-Sleep -Seconds 4
 
           $rect = New-Object Win32Capture+RECT
           if (![Win32Capture]::GetWindowRect($p.MainWindowHandle, [ref]$rect)) { throw "Could not read VO1D window bounds" }
