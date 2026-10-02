@@ -706,7 +706,12 @@ public partial class MainWindow : Window
         {
             ContactCard card;
             string name;
-            if (value.Length == 4)
+            if (value.Length == 43 && value.All(ch => char.IsLetterOrDigit(ch) || ch is '_' or '-'))
+            {
+                card = await api.RedeemInviteAsync(value);
+                name = "Invite " + card.Id[..6].ToUpperInvariant();
+            }
+            else if (value.Length == 4)
             {
                 card = await api.LookupCodeAsync(value);
                 name = "Ghost " + card.Id[..6].ToUpperInvariant();
