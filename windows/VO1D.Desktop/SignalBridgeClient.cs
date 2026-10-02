@@ -60,7 +60,7 @@ internal sealed class SignalBridgeClient : IDisposable
         });
     }
 
-    private static string Quote(string value) => """ + value.Replace(""", "\"") + """;
+    private static string Quote(string value) => "\"" + value.Replace("\"", "\\\"") + "\"";
 
     private static string EnsureRuntime()
     {
