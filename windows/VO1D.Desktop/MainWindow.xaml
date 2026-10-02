@@ -115,7 +115,7 @@
                   <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" Foreground="#86FFFFFF" FontSize="7"/>
                 </StackPanel>
               </StackPanel>
-              <TextBlock x:Name="RoomsTitle" Text="Сообщения" FontSize="32" FontWeight="Black" Margin="0,17,104,0" TextTrimming="CharacterEllipsis"/>
+              <TextBlock x:Name="RoomsTitle" Text="Сообщения" FontSize="28" FontWeight="Black" Margin="0,17,88,0" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
               <Button x:Name="SavedButton" Style="{StaticResource RoundIconButton}" Content="&#xE8A4;" Width="40" Height="40" Margin="0,0,7,3"
