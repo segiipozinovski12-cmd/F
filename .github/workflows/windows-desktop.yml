@@ -1,4 +1,5 @@
 name: Windows Desktop EXE
+# parity-validation
 
 on:
   push:
