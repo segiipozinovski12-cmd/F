@@ -53,6 +53,7 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => ApplyWindowsBackdrop();
         poll.Tick += async (_, _) =>
         {
+            ExpireMessages();
             await FlushScheduledAsync();
             await SyncAsync();
         };
@@ -1056,6 +1057,8 @@ public partial class MainWindow : Window
         var target = root.TryGetProperty("target", out var targetEl) && targetEl.ValueKind == JsonValueKind.String ? targetEl.GetString() : null;
         var value = root.TryGetProperty("value", out var valueEl) && valueEl.ValueKind == JsonValueKind.String ? valueEl.GetString() : null;
 
+        if (HandleParityIncoming(kind, room, target, value, sender)) return;
+
         if (kind == "message" && room != null && root.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.Object)
         {
             var id = GetString(m, "id") ?? Guid.NewGuid().ToString();
@@ -1376,6 +1379,7 @@ public partial class MainWindow : Window
         selectedRoom.Draft = ComposerBox.Text;
         Save();
         RefreshTools();
+        _ = SendTypingPulseAsync();
     }
 
     private void Filter_Click(object sender, RoutedEventArgs e)
@@ -1402,6 +1406,7 @@ public partial class MainWindow : Window
         selectedRoom = vm.Room;
         selected = PeerFor(selectedRoom);
         RenderSelected();
+        _ = MarkSelectedRoomReadAsync();
     }
 
     private void OpenPersonChat_Click(object sender, RoutedEventArgs e)
@@ -1740,7 +1745,7 @@ internal sealed class PersonVm
     public string Flags { get; set; } = "";
 }
 
-internal sealed class MessageVm
+internal sealed partial class MessageVm
 {
     public LocalMessage Source { get; set; } = new();
     public string Text => Source.Text;
