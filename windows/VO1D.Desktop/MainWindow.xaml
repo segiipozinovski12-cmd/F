@@ -115,7 +115,7 @@
                   <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" Foreground="#86FFFFFF" FontSize="7"/>
                 </StackPanel>
               </StackPanel>
-              <TextBlock x:Name="RoomsTitle" Text="Сообщения" FontSize="28" FontWeight="Black" Margin="0,17,88,0" TextTrimming="CharacterEllipsis"/>
+              <TextBlock x:Name="RoomsTitle" Text="Сообщения" FontSize="28" FontWeight="Black" Margin="0,17,88,0"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
               <Button x:Name="SavedButton" Style="{StaticResource RoundIconButton}" Content="&#xE8A4;" Width="40" Height="40" Margin="0,0,7,3"
@@ -183,22 +183,24 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                           </Grid.ColumnDefinitions>
-                          <Grid MinWidth="0">
-                            <Grid.ColumnDefinitions>
-                              <ColumnDefinition Width="*"/>
-                              <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" Foreground="White"
-                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="1" Text="{Binding Badge}" FontFamily="{StaticResource MonoFont}"
-                                       FontSize="8" Foreground="#BFFFFFFF" Margin="7,2,0,0" VerticalAlignment="Center"/>
-                          </Grid>
-                          <TextBlock Grid.Column="1" Text="{Binding Time}" Margin="8,0,0,0" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#78FFFFFF" VerticalAlignment="Center"/>
+                          <TextBlock Text="{Binding Title}" FontSize="14.5" FontWeight="Bold" Foreground="White"
+                                     TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Time}" Margin="8,0,0,0" FontFamily="{StaticResource MonoFont}"
+                                     FontSize="8.5" Foreground="#78FFFFFF" VerticalAlignment="Center"/>
                         </Grid>
                         <Grid Grid.Row="1" Margin="0,7,0,0">
-                          <TextBlock Text="{Binding Preview}" Foreground="#8FFFFFFF" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,0,34,0"/>
-                          <Border Width="24" Height="24" CornerRadius="12" Background="White" HorizontalAlignment="Right" Visibility="{Binding UnreadVisibility}">
-                            <TextBlock Text="{Binding Unread}" Foreground="Black" FontWeight="Bold" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="{Binding Preview}" Foreground="#8FFFFFFF" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Badge}" FontFamily="{StaticResource MonoFont}"
+                                     FontSize="7.5" Foreground="#AFFFFFFF" Margin="8,2,0,0" VerticalAlignment="Center"/>
+                          <Border Grid.Column="2" Width="24" Height="24" CornerRadius="12" Background="White" Margin="8,0,0,0"
+                                  Visibility="{Binding UnreadVisibility}">
+                            <TextBlock Text="{Binding Unread}" Foreground="Black" FontWeight="Bold" FontSize="10"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                           </Border>
                         </Grid>
                       </Grid>
