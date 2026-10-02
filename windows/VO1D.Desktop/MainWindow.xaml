@@ -532,7 +532,7 @@
 
     <!-- add contact -->
     <Grid x:Name="ModalLayer" Background="#C3000000" Visibility="Collapsed" Panel.ZIndex="90" MouseDown="ModalLayer_MouseDown">
-      <Border x:Name="AddCard" Style="{StaticResource GlassCard}" Width="440" MaxWidth="92%" Margin="20" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center"
+      <Border x:Name="AddCard" Style="{StaticResource GlassCard}" Width="440" MaxWidth="760" Margin="20" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center"
               MouseDown="AddCard_MouseDown" RenderTransformOrigin="0.5,0.5">
         <Border.RenderTransform><ScaleTransform x:Name="AddCardScale" ScaleX="0.96" ScaleY="0.96"/></Border.RenderTransform>
         <StackPanel>
@@ -547,7 +547,7 @@
 
     <!-- compose group/channel -->
     <Grid x:Name="ComposeLayer" Background="#C3000000" Visibility="Collapsed" Panel.ZIndex="91" MouseDown="ComposeLayer_MouseDown">
-      <Border x:Name="ComposeCard" Style="{StaticResource GlassCard}" Width="520" MaxWidth="92%" MaxHeight="82%" Margin="20" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center" MouseDown="ComposeCard_MouseDown">
+      <Border x:Name="ComposeCard" Style="{StaticResource GlassCard}" Width="520" MaxWidth="760" MaxHeight="680" Margin="20" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center" MouseDown="ComposeCard_MouseDown">
         <Grid>
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <StackPanel><TextBlock Text="НОВЫЙ РАЗГОВОР" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/><TextBlock Text="Создать" FontSize="28" FontWeight="Black" Margin="0,5,0,0"/></StackPanel>
