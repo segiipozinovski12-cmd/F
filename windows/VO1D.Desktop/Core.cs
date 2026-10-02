@@ -69,6 +69,22 @@ internal sealed class AttachmentState
     public int? ViewSeconds { get; set; }
 }
 
+internal sealed class PollOptionState
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string Text { get; set; } = "";
+    public List<string> VoterIDs { get; set; } = new();
+}
+
+internal sealed class PollState
+{
+    public string Question { get; set; } = "";
+    public bool? PrivateVotes { get; set; }
+    public Dictionary<string, int>? PrivateCounts { get; set; }
+    public List<PollOptionState> Options { get; set; } = new();
+    public bool Closed { get; set; }
+}
+
 internal sealed class LocalMessage
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
@@ -89,6 +105,12 @@ internal sealed class LocalMessage
     public long? ScheduledAt { get; set; }
     public bool Silent { get; set; }
     public List<string> EditHistory { get; set; } = new();
+    public List<string> ReadBy { get; set; } = new();
+    public List<string> DeliveredTo { get; set; } = new();
+    public long? OpenedAt { get; set; }
+    public string? ForwardedFrom { get; set; }
+    public PollState? Poll { get; set; }
+    public string? Topic { get; set; }
 }
 
 internal sealed class RoomState
