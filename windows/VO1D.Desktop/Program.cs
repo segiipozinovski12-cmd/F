@@ -149,7 +149,7 @@ internal sealed class IdentityCrypto : IDisposable
             throw new InvalidDataException("Повреждённая карточка контакта");
         if (!Convert.ToHexString(SHA256.HashData(sign)).ToLowerInvariant().Equals(card.Id, StringComparison.Ordinal))
             throw new InvalidDataException("Отпечаток контакта не совпадает");
-        using var pub = PublicKey.Import(Ed, sign, KeyBlobFormat.RawPublicKey);
+        var pub = PublicKey.Import(Ed, sign, KeyBlobFormat.RawPublicKey);
         if (!Ed.Verify(pub, CardBytes(card), binding))
             throw new InvalidDataException("Подпись контакта не прошла проверку");
     }
@@ -159,7 +159,7 @@ internal sealed class IdentityCrypto : IDisposable
         Validate(recipient);
         var own = Card;
         using var ephemeral = new Key(X, Exportable());
-        using var remote = PublicKey.Import(X, Convert.FromBase64String(recipient.AgreementKey), KeyBlobFormat.RawPublicKey);
+        var remote = PublicKey.Import(X, Convert.FromBase64String(recipient.AgreementKey), KeyBlobFormat.RawPublicKey);
         using var shared = X.Agree(ephemeral, remote) ?? throw new CryptographicException("X25519 key agreement failed");
 
         var env = new Envelope
@@ -215,13 +215,11 @@ internal sealed class IdentityCrypto : IDisposable
         signed[env.Header.Length] = 10;
         Buffer.BlockCopy(combined, 0, signed, env.Header.Length + 1, combined.Length);
 
-        using (var signPub = PublicKey.Import(Ed, Convert.FromBase64String(sender.SigningKey), KeyBlobFormat.RawPublicKey))
-        {
-            if (!Ed.Verify(signPub, signed, Convert.FromBase64String(env.Signature)))
-                throw new InvalidDataException("Подпись сообщения не прошла проверку");
-        }
+        var signPub = PublicKey.Import(Ed, Convert.FromBase64String(sender.SigningKey), KeyBlobFormat.RawPublicKey);
+        if (!Ed.Verify(signPub, signed, Convert.FromBase64String(env.Signature)))
+            throw new InvalidDataException("Подпись сообщения не прошла проверку");
 
-        using var eph = PublicKey.Import(X, Convert.FromBase64String(env.EphemeralKey), KeyBlobFormat.RawPublicKey);
+        var eph = PublicKey.Import(X, Convert.FromBase64String(env.EphemeralKey), KeyBlobFormat.RawPublicKey);
         using var shared = X.Agree(agreement, eph) ?? throw new CryptographicException("X25519 key agreement failed");
         var key = KeyDerivationAlgorithm.HkdfSha256.DeriveBytes(
             shared,
