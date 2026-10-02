@@ -507,7 +507,7 @@
                   <StackPanel Grid.Column="1" HorizontalAlignment="Right">
                     <local:BrandMark Width="62" Height="62" HorizontalAlignment="Right"/>
                     <Button Content="СМЕНИТЬ ID" Style="{StaticResource ChipButton}" Margin="0,10,0,0" Click="RotateCode_Click"/>
-                    <Button Content="USERNAME" Style="{StaticResource ChipButton}" Margin="0,7,0,0" Click="ManageUsername_Click"/>
+
                   </StackPanel>
                 </Grid>
               </Border>
@@ -568,20 +568,6 @@
                   <CheckBox x:Name="ConfirmLinksToggle" Style="{StaticResource GlassToggle}" Content="Подтверждать внешние ссылки" Click="Preference_Click"/>
                   <CheckBox x:Name="CleanLinksToggle" Style="{StaticResource GlassToggle}" Content="Очищать tracking-параметры ссылок" Click="Preference_Click"/>
                   <CheckBox x:Name="QuietHoursToggle" Style="{StaticResource GlassToggle}" Content="Тихие часы" Click="Preference_Click"/>
-                </StackPanel>
-              </Border>
-
-              <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
-                <StackPanel>
-                  <TextBlock Text="RELAY / ACCOUNT" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
-                  <WrapPanel Margin="0,13,0,0">
-                    <Button Style="{StaticResource ChipButton}" Content="ПРИВАТНОСТЬ" Margin="0,0,8,8" Click="ManageServerPrivacy_Click"/>
-                    <Button Style="{StaticResource ChipButton}" Content="INVITES" Margin="0,0,8,8" Click="ManageInvites_Click"/>
-                    <Button Style="{StaticResource ChipButton}" Content="СЕССИИ" Margin="0,0,8,8" Click="ManageSessions_Click"/>
-                    <Button Style="{StaticResource ChipButton}" Content="STORAGE" Margin="0,0,8,8" Click="ShowRelayStorage_Click"/>
-                  </WrapPanel>
-                  <TextBlock Text="Эти параметры читаются и изменяются прямо на production relay."
-                             Foreground="#78FFFFFF" TextWrapping="Wrap" FontSize="10.5" Margin="0,4,0,0"/>
                 </StackPanel>
               </Border>
 
