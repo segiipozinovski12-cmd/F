@@ -94,6 +94,14 @@ public partial class MainWindow : Window
             RoomsColumn.Width = new GridLength(285);
             GapOne.Width = new GridLength(8);
             GapTwo.Width = new GridLength(8);
+
+            if (RoomsTitle != null)
+            {
+                RoomsTitle.FontSize = 23;
+                RoomsTitle.Margin = new Thickness(0, 17, 78, 0);
+            }
+            if (SavedButton != null) { SavedButton.Width = 36; SavedButton.Height = 36; }
+            if (ComposeButton != null) { ComposeButton.Width = 42; ComposeButton.Height = 42; }
         }
         else if (ActualWidth < 1160)
         {
@@ -101,6 +109,14 @@ public partial class MainWindow : Window
             RoomsColumn.Width = new GridLength(330);
             GapOne.Width = new GridLength(10);
             GapTwo.Width = new GridLength(10);
+
+            if (RoomsTitle != null)
+            {
+                RoomsTitle.FontSize = 26;
+                RoomsTitle.Margin = new Thickness(0, 17, 84, 0);
+            }
+            if (SavedButton != null) { SavedButton.Width = 38; SavedButton.Height = 38; }
+            if (ComposeButton != null) { ComposeButton.Width = 44; ComposeButton.Height = 44; }
         }
         else
         {
@@ -108,6 +124,14 @@ public partial class MainWindow : Window
             RoomsColumn.Width = new GridLength(370);
             GapOne.Width = new GridLength(12);
             GapTwo.Width = new GridLength(12);
+
+            if (RoomsTitle != null)
+            {
+                RoomsTitle.FontSize = 28;
+                RoomsTitle.Margin = new Thickness(0, 17, 88, 0);
+            }
+            if (SavedButton != null) { SavedButton.Width = 40; SavedButton.Height = 40; }
+            if (ComposeButton != null) { ComposeButton.Width = 46; ComposeButton.Height = 46; }
         }
     }
 
