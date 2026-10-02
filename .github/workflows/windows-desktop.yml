@@ -60,6 +60,58 @@ jobs:
           Start-Sleep -Seconds 5
           if ($p.HasExited) { throw "VO1D.exe exited during launch smoke-test with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
+      - name: Interactive composer smoke-test
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName UIAutomationTypes
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class Win32Focus {
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+            [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+          }
+          "@
+          $env:VO1D_UI_PREVIEW = "1"
+          $p = Start-Process -FilePath "artifacts/VO1D-Windows/VO1D.exe" -PassThru
+          try {
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Milliseconds 500
+              $p.Refresh()
+              if ($p.MainWindowHandle -ne 0) { break }
+            }
+            if ($p.HasExited) { throw "VO1D.exe exited before UI automation" }
+            if ($p.MainWindowHandle -eq 0) { throw "VO1D main window was not found" }
+            [Win32Focus]::ShowWindow($p.MainWindowHandle, 9) | Out-Null
+            [Win32Focus]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+            Start-Sleep -Seconds 2
+
+            $root = [System.Windows.Automation.AutomationElement]::RootElement
+            $windowCond = New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $p.Id)
+            $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $windowCond)
+            if ($null -eq $window) { throw "VO1D automation window not found" }
+
+            $composerCond = New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::AutomationIdProperty, "VO1D_Composer")
+            $composer = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $composerCond)
+            if ($null -eq $composer) { throw "VO1D composer automation element not found" }
+
+            $pattern = $composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+            $probe = "VO1D composer input smoke test 2026"
+            $pattern.SetValue($probe)
+            Start-Sleep -Milliseconds 400
+            $readBack = $composer.GetCurrentPropertyValue([System.Windows.Automation.ValuePattern]::ValueProperty)
+            if ($readBack -ne $probe) { throw "Composer input mismatch: '$readBack'" }
+
+            New-Item -ItemType Directory -Force "artifacts/VO1D-Windows" | Out-Null
+            Set-Content -Path "artifacts/VO1D-Windows/VO1D-ui-smoke.txt" -Value "COMPOSER_OK=$readBack"
+          }
+          finally {
+            if (!$p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
+
       - name: Capture UI preview
         continue-on-error: true
         shell: pwsh
@@ -112,4 +164,5 @@ jobs:
           path: |
             artifacts/VO1D-Windows/VO1D.exe
             artifacts/VO1D-Windows/VO1D-preview.png
+            artifacts/VO1D-Windows/VO1D-ui-smoke.txt
           if-no-files-found: error
