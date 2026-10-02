@@ -480,6 +480,14 @@ public partial class MainWindow : Window
         ConfirmLinksToggle.IsChecked = state.Preferences.ConfirmLinks;
         CleanLinksToggle.IsChecked = state.Preferences.CleanLinks;
         QuietHoursToggle.IsChecked = state.Preferences.QuietHours;
+
+        if (RelayUsernameBox != null)
+        {
+            RelayUsernameBox.Text = state.Username ?? "";
+            RelayUsernameStatus.Text = string.IsNullOrWhiteSpace(state.Username)
+                ? "Не установлен"
+                : "@" + state.Username + " · установлен";
+        }
     }
 
     private void RefreshAll()
