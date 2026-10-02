@@ -26,7 +26,7 @@ jobs:
       - name: Install official libsignal runtime
         shell: pwsh
         run: |
-          npm install --prefix windows/VO1D.SignalBridge --omit=dev --no-audit --no-fund
+          npm --prefix windows/VO1D.SignalBridge install --omit=dev --no-audit --no-fund
           node windows/VO1D.SignalBridge/bridge.js --selftest
       - name: Embed Signal runtime
         shell: pwsh
