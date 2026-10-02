@@ -142,6 +142,22 @@ internal sealed class ChatFolderState
     public List<string> RoomIds { get; set; } = new();
 }
 
+internal sealed class LocalReminderState
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string MessageId { get; set; } = "";
+    public string RoomId { get; set; } = "";
+    public long At { get; set; }
+    public bool Fired { get; set; }
+}
+
+internal sealed class TextSnippetState
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string Title { get; set; } = "";
+    public string Text { get; set; } = "";
+}
+
 internal sealed class DesktopPreferences
 {
     public bool CompactRows { get; set; }
@@ -154,6 +170,11 @@ internal sealed class DesktopPreferences
     public bool ReadReceipts { get; set; } = true;
     public int TextScale { get; set; } = 100;
     public int FileLimitMb { get; set; } = 25;
+    public int DefaultRetentionDays { get; set; }
+    public int AutoLockSeconds { get; set; }
+    public bool KeepEditHistory { get; set; }
+    public bool TypingSignals { get; set; } = true;
+    public bool AnonymizeFilenames { get; set; } = true;
 }
 
 internal sealed class VaultState
@@ -167,6 +188,11 @@ internal sealed class VaultState
     public HashSet<string> Processed { get; set; } = new();
     public HashSet<string> HiddenRooms { get; set; } = new();
     public List<ChatFolderState> Folders { get; set; } = new();
+    public List<LocalReminderState> Reminders { get; set; } = new();
+    public List<TextSnippetState> Snippets { get; set; } = new();
+    public Dictionary<string, int> RoomRetentionDays { get; set; } = new();
+    public Dictionary<string, int> RoomTextScale { get; set; } = new();
+    public Dictionary<string, string> RoomNotes { get; set; } = new();
     public DesktopPreferences Preferences { get; set; } = new();
     public string? SignalSnapshotJson { get; set; }
     public bool AppLock { get; set; }
