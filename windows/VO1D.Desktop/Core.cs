@@ -578,6 +578,45 @@ internal sealed class Vo1dApi : IDisposable
     public Task<OkResponse> SetBlockedAsync(string id, bool blocked) =>
         SendAsync<OkResponse>(HttpMethod.Post, "v1/block", new { id, blocked });
 
+    public Task<ServerPrivacyDto> GetPrivacyAsync() =>
+        SendAsync<ServerPrivacyDto>(HttpMethod.Get, "v1/privacy");
+
+    public Task<OkResponse> SetPrivacyAsync(bool discoverable, int inactivityDays, bool trustedCalls) =>
+        SendAsync<OkResponse>(HttpMethod.Post, "v1/privacy", new { discoverable, inactivityDays, trustedCalls });
+
+    public Task<UsernameCheckDto> CheckUsernameAsync(string username) =>
+        SendAsync<UsernameCheckDto>(HttpMethod.Get, "v1/username/check/" + Uri.EscapeDataString(username.Trim().ToLowerInvariant()));
+
+    public Task<UsernameSetDto> SetUsernameAsync(string username) =>
+        SendAsync<UsernameSetDto>(HttpMethod.Post, "v1/username", new { username = username.Trim().ToLowerInvariant() });
+
+    public Task<OkResponse> ReleaseUsernameAsync() =>
+        SendAsync<OkResponse>(HttpMethod.Delete, "v1/username");
+
+    public Task<OkResponse> SetTrustedAsync(string id, bool trusted) =>
+        SendAsync<OkResponse>(HttpMethod.Post, "v1/trust", new { id, trusted });
+
+    public Task<InviteReceiptDto> CreateInviteAsync(int seconds, int uses) =>
+        SendAsync<InviteReceiptDto>(HttpMethod.Post, "v1/invites", new { seconds, uses });
+
+    public async Task<List<InviteReceiptDto>> ListInvitesAsync() =>
+        (await SendAsync<InviteListDto>(HttpMethod.Get, "v1/invites")).Invites ?? new();
+
+    public Task<OkResponse> RevokeInviteAsync(string id) =>
+        SendAsync<OkResponse>(HttpMethod.Delete, "v1/invites/" + Uri.EscapeDataString(id));
+
+    public async Task<ContactCard> RedeemInviteAsync(string token) =>
+        (await SendAsync<InviteRedeemDto>(HttpMethod.Post, "v1/invites/redeem", new { token })).Card;
+
+    public async Task<List<RelaySessionDto>> ListSessionsAsync() =>
+        (await SendAsync<RelaySessionListDto>(HttpMethod.Get, "v1/sessions")).Sessions ?? new();
+
+    public Task<OkResponse> RevokeOtherSessionsAsync() =>
+        SendAsync<OkResponse>(HttpMethod.Post, "v1/sessions/revoke", new { });
+
+    public Task<RelayStorageDto> StorageAsync() =>
+        SendAsync<RelayStorageDto>(HttpMethod.Get, "v1/storage");
+
     public Task<OkResponse> PublishPrekeysAsync(SignalPublicationDto publication) =>
         SendAsync<OkResponse>(HttpMethod.Post, "v2/prekeys", publication);
 
@@ -605,4 +644,40 @@ internal sealed class Vo1dApi : IDisposable
     internal sealed class UsernameLookup { public string Username { get; set; } = ""; public ContactCard Card { get; set; } = new(); }
     internal sealed class InboxResponse { public List<Envelope>? Envelopes { get; set; } }
     internal sealed class PrekeyCountResponse { public int Available { get; set; } }
+    internal sealed class ServerPrivacyDto
+    {
+        public bool Discoverable { get; set; } = true;
+        public int InactivityDays { get; set; }
+        public bool TrustedCalls { get; set; }
+    }
+    internal sealed class UsernameCheckDto
+    {
+        public string Username { get; set; } = "";
+        public bool Available { get; set; }
+        public bool Valid { get; set; }
+    }
+    internal sealed class UsernameSetDto { public string Username { get; set; } = ""; }
+    internal sealed class InviteReceiptDto
+    {
+        public string? Token { get; set; }
+        public string Id { get; set; } = "";
+        public int ExpiresAt { get; set; }
+        public int Remaining { get; set; }
+    }
+    internal sealed class InviteListDto { public List<InviteReceiptDto>? Invites { get; set; } }
+    internal sealed class InviteRedeemDto { public ContactCard Card { get; set; } = new(); }
+    internal sealed class RelaySessionDto
+    {
+        public string Id { get; set; } = "";
+        public int ExpiresAt { get; set; }
+        public bool Current { get; set; }
+    }
+    internal sealed class RelaySessionListDto { public List<RelaySessionDto>? Sessions { get; set; } }
+    internal sealed class RelayStorageDto
+    {
+        public int QueuedMessages { get; set; }
+        public long MailboxBytes { get; set; }
+        public int Files { get; set; }
+        public long FileBytes { get; set; }
+    }
 }
