@@ -3,8 +3,8 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:VO1D.Desktop"
  xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
- Title="VO1D" Width="1380" Height="860" MinWidth="1080" MinHeight="680"
- WindowStartupLocation="CenterScreen" WindowStyle="None" Background="#050505"
+ Title="VO1D" Width="1200" Height="780" MinWidth="900" MinHeight="620"
+ WindowStartupLocation="Manual" WindowStyle="None" Background="#050505"
  Foreground="White" FontFamily="{StaticResource UiFont}">
   <shell:WindowChrome.WindowChrome>
     <shell:WindowChrome CaptionHeight="38" ResizeBorderThickness="7" GlassFrameThickness="0" CornerRadius="0"/>
@@ -391,9 +391,9 @@
     </Grid>
 
     <!-- ONBOARDING -->
-    <Grid x:Name="OnboardingLayer" Background="#F7040404" Visibility="Collapsed" Panel.ZIndex="80">
+    <Grid x:Name="OnboardingLayer" Background="#FF050505" Visibility="Collapsed" Panel.ZIndex="80">
       <Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.9*"/></Grid.ColumnDefinitions>
-      <StackPanel Margin="78" VerticalAlignment="Center">
+      <StackPanel Margin="54" VerticalAlignment="Center">
         <StackPanel Orientation="Horizontal">
           <local:BrandMark Width="42" Height="42" Margin="0,0,12,0"/>
           <StackPanel VerticalAlignment="Center">
@@ -401,12 +401,12 @@
             <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#83FFFFFF"/>
           </StackPanel>
         </StackPanel>
-        <local:BrandMark Width="156" Height="156" Margin="0,55,0,38" HorizontalAlignment="Left"/>
-        <TextBlock Text="Тише сети.&#x0a;Ближе к своим." FontSize="48" FontWeight="Black" LineHeight="51"/>
+        <local:BrandMark Width="138" Height="138" Margin="0,42,0,30" HorizontalAlignment="Left"/>
+        <TextBlock Text="Тише сети.&#x0a;Ближе к своим." FontSize="42" FontWeight="Black" LineHeight="51"/>
         <TextBlock Text="Без телефона и почты. Ключи создаются на устройстве. Desktop сохраняет тот же приватный характер интерфейса."
-                   Foreground="#98FFFFFF" FontSize="14" TextWrapping="Wrap" Width="520" LineHeight="23" HorizontalAlignment="Left" Margin="0,18,0,0"/>
+                   Foreground="#98FFFFFF" FontSize="14" TextWrapping="Wrap" Width="430" LineHeight="22" HorizontalAlignment="Left" Margin="0,18,0,0"/>
       </StackPanel>
-      <Border Grid.Column="1" Style="{StaticResource GlassCard}" Width="470" Padding="28" VerticalAlignment="Center" HorizontalAlignment="Center">
+      <Border Grid.Column="1" Style="{StaticResource GlassCard}" Width="410" Padding="26" VerticalAlignment="Center" HorizontalAlignment="Center">
         <StackPanel>
           <TextBlock Text="PRIVATE / E2EE" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#84FFFFFF"/>
           <TextBlock Text="Добро пожаловать." FontSize="30" FontWeight="Black" Margin="0,14,0,0"/>
