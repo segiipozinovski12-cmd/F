@@ -169,6 +169,8 @@ internal sealed class VaultState
     public List<ChatFolderState> Folders { get; set; } = new();
     public DesktopPreferences Preferences { get; set; } = new();
     public string? SignalSnapshotJson { get; set; }
+    public bool AppLock { get; set; }
+    public string? LockPinHash { get; set; }
 }
 
 internal sealed class SignalBundleDto
@@ -464,6 +466,17 @@ internal sealed class LocalStore
         File.WriteAllBytes(vaultPath, all);
         CryptographicOperations.ZeroMemory(clear);
     }
+    public void ReplaceIdentityAndVault(LocalIdentity identity, VaultState state)
+    {
+        if (identity.Signing.Length == 0 || identity.Agreement.Length == 0 || identity.Storage.Length != 32)
+            throw new InvalidDataException("Backup содержит неверные ключи.");
+
+        var identityJson = JsonSerializer.SerializeToUtf8Bytes(identity, AppJson.Options);
+        File.WriteAllBytes(identityPath, ProtectedData.Protect(identityJson, null, DataProtectionScope.CurrentUser));
+        SaveVault(state, identity.Storage);
+        CryptographicOperations.ZeroMemory(identityJson);
+    }
+
 }
 
 internal sealed class Vo1dApi : IDisposable
