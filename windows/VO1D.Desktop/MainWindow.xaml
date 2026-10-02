@@ -65,7 +65,7 @@
     <!-- custom title bar -->
     <Grid Height="38" VerticalAlignment="Top" Background="#01000000" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
       <TextBlock Text="VO1D / DESKTOP" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"
-                 VerticalAlignment="Center" Margin="18,0,0,0" CharacterSpacing="220"/>
+                 VerticalAlignment="Center" Margin="18,0,0,0"/>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" shell:WindowChrome.IsHitTestVisibleInChrome="True">
         <Button x:Name="MinButton" Width="46" Height="38" Content="&#xE921;" FontFamily="Segoe Fluent Icons" FontSize="11"
                 Background="Transparent" Foreground="#BFFFFFFF" BorderThickness="0" Click="Minimize_Click"/>
@@ -127,11 +127,11 @@
               <StackPanel Orientation="Horizontal">
                 <local:BrandMark Width="28" Height="28" Margin="0,0,9,0"/>
                 <StackPanel VerticalAlignment="Center">
-                  <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontWeight="Black" FontSize="14" CharacterSpacing="350"/>
-                  <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" Foreground="#86FFFFFF" FontSize="7" CharacterSpacing="220"/>
+                  <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontWeight="Black" FontSize="14"/>
+                  <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" Foreground="#86FFFFFF" FontSize="7"/>
                 </StackPanel>
               </StackPanel>
-              <TextBlock Text="Сообщения" FontSize="34" FontWeight="Black" Margin="0,17,0,0" CharacterSpacing="-25"/>
+              <TextBlock Text="Сообщения" FontSize="34" FontWeight="Black" Margin="0,17,0,0"/>
             </StackPanel>
             <Button Style="{StaticResource RoundIconButton}" Content="&#xE710;" Background="White" Foreground="Black"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="50" Height="50" Click="OpenAddContact_Click"/>
@@ -141,10 +141,10 @@
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xEA18;" FontFamily="Segoe Fluent Icons" FontSize="12" Foreground="#A8FFFFFF" VerticalAlignment="Center"/>
               <TextBlock x:Name="ConnectionText" Text="ПОДКЛЮЧЕНИЕ…" FontFamily="{StaticResource MonoFont}" FontSize="9" FontWeight="SemiBold"
-                         Foreground="#A8FFFFFF" Margin="8,0,0,0" VerticalAlignment="Center" CharacterSpacing="120"/>
+                         Foreground="#A8FFFFFF" Margin="8,0,0,0" VerticalAlignment="Center"/>
             </StackPanel>
             <TextBlock x:Name="QueueText" Text="E2EE" HorizontalAlignment="Right" FontFamily="{StaticResource MonoFont}"
-                       FontSize="9" Foreground="#78FFFFFF" CharacterSpacing="120"/>
+                       FontSize="9" Foreground="#78FFFFFF"/>
           </Grid>
 
           <Grid Grid.Row="2">
@@ -222,7 +222,7 @@
 
           <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
             <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="10" Foreground="#72FFFFFF" Margin="0,0,7,0"/>
-            <TextBlock Text="E2EE · ЗАШИФРОВАНО НА УСТРОЙСТВЕ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF" CharacterSpacing="90"/>
+            <TextBlock Text="E2EE · ЗАШИФРОВАНО НА УСТРОЙСТВЕ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/>
           </StackPanel>
         </Grid>
       </Border>
@@ -243,7 +243,7 @@
                     <TextBlock x:Name="ChatTitle" Text="VO1D Desktop" FontWeight="Bold" FontSize="17"/>
                     <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                       <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="10" Foreground="#8FFFFFFF" Margin="0,0,6,0"/>
-                      <TextBlock Text="E2EE · PRIVATE CHANNEL" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#8FFFFFFF" CharacterSpacing="120"/>
+                      <TextBlock Text="E2EE · PRIVATE CHANNEL" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#8FFFFFFF"/>
                     </StackPanel>
                   </StackPanel>
                 </StackPanel>
@@ -353,8 +353,8 @@
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <StackPanel>
-                    <TextBlock Text="ЛИЧНОСТЬ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" CharacterSpacing="160"/>
-                    <TextBlock x:Name="SettingsCode" Text="----" FontFamily="{StaticResource MonoFont}" FontSize="30" FontWeight="Black" CharacterSpacing="220" Margin="0,10,0,0"/>
+                    <TextBlock Text="ЛИЧНОСТЬ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
+                    <TextBlock x:Name="SettingsCode" Text="----" FontFamily="{StaticResource MonoFont}" FontSize="30" FontWeight="Black" Margin="0,10,0,0"/>
                     <TextBlock x:Name="SettingsFingerprint" Text="..." FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" Margin="0,8,0,0"/>
                   </StackPanel>
                   <local:BrandMark Grid.Column="1" Width="72" Height="72"/>
@@ -363,7 +363,7 @@
 
               <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
                 <StackPanel>
-                  <TextBlock Text="СЕТЬ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" CharacterSpacing="160"/>
+                  <TextBlock Text="СЕТЬ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
                   <Grid Margin="0,15,0,0">
                     <StackPanel>
                       <TextBlock Text="Production relay" FontWeight="Bold"/>
@@ -378,7 +378,7 @@
 
               <Border Style="{StaticResource GlassCard}">
                 <StackPanel>
-                  <TextBlock Text="WINDOWS BETA" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" CharacterSpacing="160"/>
+                  <TextBlock Text="WINDOWS BETA" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
                   <TextBlock Text="Desktop слой" FontWeight="Bold" FontSize="16" Margin="0,13,0,0"/>
                   <TextBlock Text="UI теперь повторяет визуальную систему iOS. Полный внутренний libsignal-v2 слой для iPhone ↔ Windows переносится отдельно — без небезопасного downgrade."
                              Foreground="#8FFFFFFF" TextWrapping="Wrap" LineHeight="21" Margin="0,7,0,0"/>
@@ -397,25 +397,25 @@
         <StackPanel Orientation="Horizontal">
           <local:BrandMark Width="42" Height="42" Margin="0,0,12,0"/>
           <StackPanel VerticalAlignment="Center">
-            <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="18" FontWeight="Black" CharacterSpacing="380"/>
-            <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#83FFFFFF" CharacterSpacing="220"/>
+            <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="18" FontWeight="Black"/>
+            <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#83FFFFFF"/>
           </StackPanel>
         </StackPanel>
         <local:BrandMark Width="156" Height="156" Margin="0,55,0,38" HorizontalAlignment="Left"/>
-        <TextBlock Text="Тише сети.&#x0a;Ближе к своим." FontSize="48" FontWeight="Black" CharacterSpacing="-35" LineHeight="51"/>
+        <TextBlock Text="Тише сети.&#x0a;Ближе к своим." FontSize="48" FontWeight="Black" LineHeight="51"/>
         <TextBlock Text="Без телефона и почты. Ключи создаются на устройстве. Desktop сохраняет тот же приватный характер интерфейса."
                    Foreground="#98FFFFFF" FontSize="14" TextWrapping="Wrap" Width="520" LineHeight="23" HorizontalAlignment="Left" Margin="0,18,0,0"/>
       </StackPanel>
       <Border Grid.Column="1" Style="{StaticResource GlassCard}" Width="470" Padding="28" VerticalAlignment="Center" HorizontalAlignment="Center">
         <StackPanel>
-          <TextBlock Text="PRIVATE / E2EE" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#84FFFFFF" CharacterSpacing="170"/>
+          <TextBlock Text="PRIVATE / E2EE" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#84FFFFFF"/>
           <TextBlock Text="Добро пожаловать." FontSize="30" FontWeight="Black" Margin="0,14,0,0"/>
           <TextBlock Text="Как тебя будут видеть в VO1D?" Foreground="#8FFFFFFF" Margin="0,7,0,22"/>
           <TextBox x:Name="NicknameBox" Style="{StaticResource VoidTextBox}" Height="54"/>
           <Border Style="{StaticResource GlassCard}" Margin="0,14,0,14" Padding="16">
             <Grid>
               <StackPanel>
-                <TextBlock Text="МАРШРУТ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF" CharacterSpacing="130"/>
+                <TextBlock Text="МАРШРУТ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/>
                 <TextBlock Text="Production relay · HTTPS" FontWeight="SemiBold" Margin="0,7,0,0"/>
               </StackPanel>
               <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="#BFFFFFFF"/>
@@ -437,7 +437,7 @@
           <StackPanel Orientation="Horizontal">
             <local:BrandMark Width="34" Height="34" Margin="0,0,11,0"/>
             <StackPanel>
-              <TextBlock Text="НОВЫЙ КОНТАКТ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF" CharacterSpacing="160"/>
+              <TextBlock Text="НОВЫЙ КОНТАКТ" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
               <TextBlock Text="Найти человека" FontSize="25" FontWeight="Black" Margin="0,5,0,0"/>
             </StackPanel>
           </StackPanel>
@@ -458,10 +458,10 @@
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
         <StackPanel.RenderTransform><ScaleTransform x:Name="SplashScale" ScaleX="0.78" ScaleY="0.78"/></StackPanel.RenderTransform>
         <local:BrandMark Width="132" Height="132" HorizontalAlignment="Center"/>
-        <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="34" FontWeight="Black" CharacterSpacing="520"
+        <TextBlock Text="VO1D" FontFamily="{StaticResource MonoFont}" FontSize="34" FontWeight="Black"
                    HorizontalAlignment="Center" Margin="0,24,0,0"/>
         <TextBlock Text="PRIVATE MESSAGING LAYER" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#83FFFFFF"
-                   CharacterSpacing="190" HorizontalAlignment="Center" Margin="0,7,0,0"/>
+                   HorizontalAlignment="Center" Margin="0,7,0,0"/>
         <Grid Width="180" Height="2" Margin="0,28,0,0" ClipToBounds="True">
           <Border Background="#18FFFFFF" CornerRadius="1"/>
           <Border x:Name="ScanLine" Width="50" Background="White" CornerRadius="1" HorizontalAlignment="Left">
