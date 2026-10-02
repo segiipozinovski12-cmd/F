@@ -1,0 +1,37 @@
+name: Windows Desktop EXE
+
+on:
+  push:
+    branches:
+      - codex/windows-desktop
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore
+        run: dotnet restore windows/VO1D.Desktop/VO1D.Desktop.csproj
+      - name: Publish single-file EXE
+        run: dotnet publish windows/VO1D.Desktop/VO1D.Desktop.csproj -c Release -r win-x64 --self-contained true -o artifacts/VO1D-Windows
+      - name: Smoke-check artifact
+        shell: pwsh
+        run: |
+          if (!(Test-Path "artifacts/VO1D-Windows/VO1D.exe")) { throw "VO1D.exe was not produced" }
+          Get-Item "artifacts/VO1D-Windows/VO1D.exe" | Format-List Name,Length,LastWriteTime
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: VO1D-Windows-x64
+          path: artifacts/VO1D-Windows/VO1D.exe
+          if-no-files-found: error
