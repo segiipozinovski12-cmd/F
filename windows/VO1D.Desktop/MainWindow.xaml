@@ -115,7 +115,7 @@
                   <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" Foreground="#86FFFFFF" FontSize="7"/>
                 </StackPanel>
               </StackPanel>
-              <TextBlock x:Name="RoomsTitle" Text="Сообщения" FontSize="32" FontWeight="Black" Margin="0,17,0,0" TextTrimming="CharacterEllipsis"/>
+              <TextBlock x:Name="RoomsTitle" Text="Сообщения" FontSize="32" FontWeight="Black" Margin="0,17,104,0" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
               <Button x:Name="SavedButton" Style="{StaticResource RoundIconButton}" Content="&#xE8A4;" Width="40" Height="40" Margin="0,0,7,3"
@@ -183,10 +183,16 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                           </Grid.ColumnDefinitions>
-                          <StackPanel Orientation="Horizontal" MinWidth="0">
-                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" TextTrimming="CharacterEllipsis" MaxWidth="170"/>
-                            <TextBlock Text="{Binding Badge}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#BFFFFFFF" Margin="7,2,0,0"/>
-                          </StackPanel>
+                          <Grid MinWidth="0">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="*"/>
+                              <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" Foreground="White"
+                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="{Binding Badge}" FontFamily="{StaticResource MonoFont}"
+                                       FontSize="8" Foreground="#BFFFFFFF" Margin="7,2,0,0" VerticalAlignment="Center"/>
+                          </Grid>
                           <TextBlock Grid.Column="1" Text="{Binding Time}" Margin="8,0,0,0" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#78FFFFFF" VerticalAlignment="Center"/>
                         </Grid>
                         <Grid Grid.Row="1" Margin="0,7,0,0">
