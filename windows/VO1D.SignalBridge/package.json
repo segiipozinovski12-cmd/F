@@ -1,0 +1,9 @@
+{
+  "name": "vo1d-signal-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@signalapp/libsignal-client": "0.70.0"
+  }
+}
