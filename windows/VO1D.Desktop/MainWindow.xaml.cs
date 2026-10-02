@@ -743,6 +743,7 @@ public partial class MainWindow : Window
             Mine = true,
             Text = text,
             CreatedAt = now,
+            ExpiresAt = selectedRoom.DisappearingSeconds > 0 ? now + selectedRoom.DisappearingSeconds : null,
             ReplyTo = replyingToId,
             Attachment = pendingAttachment,
             State = scheduledAt.HasValue ? "scheduled" : "queued",
@@ -854,15 +855,15 @@ public partial class MainWindow : Window
             state = "sent",
             edited = local.Edited,
             reactions = local.Reactions,
-            readBy = Array.Empty<string>(),
-            deliveredTo = Array.Empty<string>(),
-            openedAt = (long?)null,
-            forwardedFrom = (string?)null,
+            readBy = local.ReadBy,
+            deliveredTo = local.DeliveredTo,
+            openedAt = local.OpenedAt,
+            forwardedFrom = local.ForwardedFrom,
             scheduledAt = local.ScheduledAt,
             silent = local.Silent ? true : (bool?)null,
             editHistory = local.EditHistory.Count == 0 ? null : local.EditHistory.ToArray(),
-            poll = (object?)null,
-            topic = (string?)null,
+            poll = local.Poll,
+            topic = local.Topic,
             call = (object?)null
         };
 
@@ -1078,6 +1079,13 @@ public partial class MainWindow : Window
                 Attachment = attachment,
                 Edited = GetBool(m, "edited"),
                 Reactions = reactions,
+                ReadBy = ParseStringArray(m, "readBy"),
+                DeliveredTo = ParseStringArray(m, "deliveredTo"),
+                OpenedAt = GetInt64(m, "openedAt"),
+                ForwardedFrom = GetString(m, "forwardedFrom"),
+                Poll = ParsePoll(m),
+                Topic = GetString(m, "topic"),
+                ExpiresAt = GetInt64(m, "expiresAt"),
                 State = "sent"
             });
 
@@ -1149,6 +1157,47 @@ public partial class MainWindow : Window
             Data = data,
             ViewSeconds = (int?)GetInt64(a, "viewSeconds")
         };
+    }
+
+    private static List<string> ParseStringArray(JsonElement parent, string name)
+    {
+        var result = new List<string>();
+        if (!parent.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.Array) return result;
+        foreach (var item in el.EnumerateArray())
+            if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } text) result.Add(text);
+        return result;
+    }
+
+    private static PollState? ParsePoll(JsonElement message)
+    {
+        if (!message.TryGetProperty("poll", out var p) || p.ValueKind != JsonValueKind.Object) return null;
+        var poll = new PollState
+        {
+            Question = GetString(p, "question") ?? "",
+            Closed = GetBool(p, "closed")
+        };
+        if (p.TryGetProperty("privateVotes", out var pv) && (pv.ValueKind == JsonValueKind.True || pv.ValueKind == JsonValueKind.False))
+            poll.PrivateVotes = pv.GetBoolean();
+        if (p.TryGetProperty("privateCounts", out var pc) && pc.ValueKind == JsonValueKind.Object)
+        {
+            poll.PrivateCounts = new Dictionary<string, int>();
+            foreach (var item in pc.EnumerateObject())
+                if (item.Value.ValueKind == JsonValueKind.Number && item.Value.TryGetInt32(out var count))
+                    poll.PrivateCounts[item.Name] = count;
+        }
+        if (p.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var option in options.EnumerateArray())
+            {
+                poll.Options.Add(new PollOptionState
+                {
+                    Id = GetString(option, "id") ?? Guid.NewGuid().ToString(),
+                    Text = GetString(option, "text") ?? "",
+                    VoterIDs = ParseStringArray(option, "voterIDs")
+                });
+            }
+        }
+        return poll;
     }
 
     private static Dictionary<string, string> ParseStringDictionary(JsonElement parent, string name)
