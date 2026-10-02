@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -266,11 +267,28 @@ public partial class MainWindow : Window
         }
 
         state.Rooms.RemoveAll(r => string.IsNullOrWhiteSpace(r.Id));
+
+        var savedId = SavedRoomId;
+        if (state.Rooms.All(r => r.Id != savedId))
+        {
+            state.Rooms.Add(new RoomState
+            {
+                Id = savedId,
+                Title = "Сохранённые",
+                MemberIds = new List<string> { own },
+                Creator = own,
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Pinned = true
+            });
+        }
         Save();
     }
 
     private string DmRoomId(string peerId) =>
         "dm:" + string.Join(":", new[] { crypto.Card.Id, peerId }.OrderBy(x => x, StringComparer.Ordinal));
+
+    private string SavedRoomId => "saved:" + crypto.Card.Id;
+    private bool IsSavedRoom(RoomState? room) => room != null && room.Id == SavedRoomId;
 
     private void Save() => disk.SaveVault(state, crypto.Raw.Storage);
 
@@ -460,7 +478,11 @@ public partial class MainWindow : Window
         SendButton.IsEnabled = canPost;
         ChatTitle.Text = ResolveRoomTitle(selectedRoom);
         ChatInitial.Text = string.IsNullOrWhiteSpace(ChatTitle.Text) ? "V" : ChatTitle.Text[..1].ToUpperInvariant();
-        ChatSubtitle.Text = selectedRoom.IsChannel ? "VO1D CHANNEL" : selectedRoom.IsGroup ? $"{selectedRoom.MemberIds.Count} УЧАСТНИКОВ · E2EE" : "E2EE · PRIVATE CHANNEL";
+        ChatSubtitle.Text = IsSavedRoom(selectedRoom)
+            ? "ЛОКАЛЬНО · ТОЛЬКО НА ЭТОМ УСТРОЙСТВЕ"
+            : selectedRoom.IsChannel ? "VO1D CHANNEL"
+            : selectedRoom.IsGroup ? $"{selectedRoom.MemberIds.Count} УЧАСТНИКОВ · E2EE"
+            : "E2EE · PRIVATE CHANNEL";
 
         loadingComposer = true;
         ComposerBox.Text = selectedRoom.Draft;
@@ -563,7 +585,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task SendMessageAsync()
+    private async Task SendMessageAsync(bool silent = false, long? scheduledAt = null)
     {
         if (selectedRoom == null) return;
 
@@ -597,7 +619,9 @@ public partial class MainWindow : Window
             CreatedAt = now,
             ReplyTo = replyingToId,
             Attachment = pendingAttachment,
-            State = "queued"
+            State = scheduledAt.HasValue ? "scheduled" : "queued",
+            ScheduledAt = scheduledAt,
+            Silent = silent
         };
 
         state.Messages.Add(message);
@@ -609,6 +633,22 @@ public partial class MainWindow : Window
         Save();
         RefreshAll();
         AnimateSendButton();
+
+        if (scheduledAt.HasValue)
+        {
+            Save();
+            RefreshAll();
+            ShowToast("СООБЩЕНИЕ ЗАПЛАНИРОВАНО");
+            return;
+        }
+
+        if (IsSavedRoom(selectedRoom))
+        {
+            message.State = "sent";
+            Save();
+            RefreshAll();
+            return;
+        }
 
         try
         {
@@ -719,7 +759,11 @@ public partial class MainWindow : Window
 
         var clear = JsonSerializer.SerializeToUtf8Bytes(ev, AppJson.Options);
         var targets = memberCards.Where(c => c.Id != own.Id).ToList();
-        if (targets.Count == 0) throw new InvalidOperationException("В разговоре нет получателей.");
+        if (targets.Count == 0)
+        {
+            if (IsSavedRoom(selectedRoom)) return;
+            throw new InvalidOperationException("В разговоре нет получателей.");
+        }
 
         foreach (var target in targets)
         {
@@ -990,7 +1034,8 @@ public partial class MainWindow : Window
             selectedRoom = state.Rooms.FirstOrDefault(x => x.Id == message.RoomId);
             try
             {
-                await SendWireMessageAsync(message);
+                if (!IsSavedRoom(selectedRoom))
+                    await SendWireMessageAsync(message);
                 message.State = "sent";
             }
             catch { message.State = "failed"; }
@@ -1190,6 +1235,28 @@ public partial class MainWindow : Window
     }
 
     private async void Send_Click(object sender, RoutedEventArgs e) => await SendMessageAsync();
+
+    private async void SendSilent_Click(object sender, RoutedEventArgs e) =>
+        await SendMessageAsync(silent: true);
+
+    private async void SendInMinute_Click(object sender, RoutedEventArgs e) =>
+        await SendMessageAsync(scheduledAt: DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds());
+
+    private async void SendInTenMinutes_Click(object sender, RoutedEventArgs e) =>
+        await SendMessageAsync(scheduledAt: DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds());
+
+    private async void SendInHour_Click(object sender, RoutedEventArgs e) =>
+        await SendMessageAsync(scheduledAt: DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
+
+    private void OpenSaved_Click(object sender, RoutedEventArgs e)
+    {
+        selectedRoom = state.Rooms.FirstOrDefault(r => r.Id == SavedRoomId);
+        selected = null;
+        SetNav("chats");
+        RefreshAll();
+        ComposerBox.Focus();
+        Keyboard.Focus(ComposerBox);
+    }
 
     private async void ComposerBox_KeyDown(object sender, KeyEventArgs e)
     {
@@ -1495,6 +1562,28 @@ internal sealed class MessageVm
     public Visibility ReplyVisibility => string.IsNullOrWhiteSpace(ReplyPreview) ? Visibility.Collapsed : Visibility.Visible;
     public string AttachmentName => Source.Attachment?.Name ?? "";
     public Visibility AttachmentVisibility => Source.Attachment == null ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility ImageVisibility => Source.Attachment?.Mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true &&
+                                         Source.Attachment.Data.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public ImageSource? ImagePreview
+    {
+        get
+        {
+            if (ImageVisibility != Visibility.Visible || Source.Attachment == null) return null;
+            try
+            {
+                using var ms = new MemoryStream(Source.Attachment.Data);
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.DecodePixelWidth = 720;
+                image.StreamSource = ms;
+                image.EndInit();
+                image.Freeze();
+                return image;
+            }
+            catch { return null; }
+        }
+    }
     public string ReactionsText => Source.Reactions.Count == 0 ? "" : string.Join(" ", Source.Reactions.Values);
     public Visibility ReactionsVisibility => Source.Reactions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     public string EditedText => Source.Edited ? "ИЗМ." : "";
