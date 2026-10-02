@@ -629,7 +629,7 @@
           </RadialGradientBrush>
         </Ellipse.Fill>
       </Ellipse>
-      <Border Style="{StaticResource GlassCard}" Width="410" MaxWidth="90%" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <Border Style="{StaticResource GlassCard}" Width="410" MaxWidth="430" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel>
           <local:BrandMark Width="82" Height="82" HorizontalAlignment="Center"/>
           <TextBlock Text="VO1D LOCKED" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"
