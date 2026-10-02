@@ -458,6 +458,9 @@
                 <Button Style="{StaticResource ChipButton}" Content="ШАБЛОНЫ" Margin="0,0,7,7" Click="ManageSnippets_Click"/>
                 <Button Style="{StaticResource ChipButton}" Content="НАПОМИНАНИЯ" Margin="0,0,7,7" Click="ManageReminders_Click"/>
                 <Button Style="{StaticResource ChipButton}" Content="ПОВТОРИТЬ ОЧЕРЕДЬ" Margin="0,0,7,7" Click="RetryQueue_Click"/>
+                <Button Style="{StaticResource ChipButton}" Content="INVITES" Margin="0,0,7,7" Click="ManageInvites_Click"/>
+                <Button Style="{StaticResource ChipButton}" Content="СЕССИИ" Margin="0,0,7,7" Click="ManageRelaySessions_Click"/>
+                <Button Style="{StaticResource ChipButton}" Content="RELAY STORAGE" Margin="0,0,7,7" Click="ShowRelayStorage_Click"/>
               </WrapPanel>
             </StackPanel>
             <UniformGrid Grid.Row="1" Columns="2" Margin="0,20,0,14">
@@ -507,6 +510,46 @@
                     <Button Content="USERNAME" Style="{StaticResource ChipButton}" Margin="0,7,0,0" Click="ManageUsername_Click"/>
                   </StackPanel>
                 </Grid>
+              </Border>
+
+              <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
+                <StackPanel>
+                  <Grid>
+                    <StackPanel>
+                      <TextBlock Text="RELAY PRIVACY" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
+                      <TextBlock x:Name="RelayPrivacyStatus" Text="Не загружено" FontWeight="Bold" FontSize="15" Margin="0,10,0,0"/>
+                    </StackPanel>
+                    <Button HorizontalAlignment="Right" VerticalAlignment="Top" Style="{StaticResource ChipButton}" Content="ОБНОВИТЬ"
+                            Click="RefreshRelayPrivacy_Click"/>
+                  </Grid>
+                  <CheckBox x:Name="RelayDiscoverableToggle" Style="{StaticResource GlassToggle}" Content="Разрешать поиск по username и короткому ID" Margin="0,14,0,0"/>
+                  <CheckBox x:Name="RelayTrustedCallsToggle" Style="{StaticResource GlassToggle}" Content="Звонки только от доверенных контактов"/>
+                  <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <TextBlock Text="Удаление при неактивности, дней" Foreground="#86FFFFFF" FontSize="11"/>
+                      <TextBox x:Name="RelayInactivityDaysBox" Text="0" Style="{StaticResource BareTextBox}" FontFamily="{StaticResource MonoFont}"
+                               Margin="0,7,14,0" MaxLength="4"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="СОХРАНИТЬ" Padding="18,0"
+                            Click="SaveRelayPrivacy_Click"/>
+                  </Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
+                <StackPanel>
+                  <TextBlock Text="USERNAME" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
+                  <Border Style="{StaticResource InputShell}" Height="48" Margin="0,12,0,0">
+                    <TextBox x:Name="RelayUsernameBox" Style="{StaticResource BareTextBox}" MaxLength="32"/>
+                  </Border>
+                  <TextBlock x:Name="RelayUsernameStatus" Text="Не установлен" Foreground="#78FFFFFF" FontSize="10.5" Margin="2,8,0,0"/>
+                  <WrapPanel Margin="0,12,0,0">
+                    <Button Style="{StaticResource ChipButton}" Content="ПРОВЕРИТЬ" Margin="0,0,8,8" Click="CheckUsername_Click"/>
+                    <Button Style="{StaticResource ChipButton}" Content="УСТАНОВИТЬ" Margin="0,0,8,8" Click="SetUsername_Click"/>
+                    <Button Style="{StaticResource ChipButton}" Content="ОСВОБОДИТЬ" Margin="0,0,8,8" Click="ReleaseUsername_Click"/>
+                  </WrapPanel>
+                </StackPanel>
               </Border>
 
               <Border Style="{StaticResource GlassCard}" Margin="0,0,0,12">
@@ -566,8 +609,8 @@
               <Border Style="{StaticResource GlassCard}">
                 <StackPanel>
                   <TextBlock Text="СОСТОЯНИЕ WINDOWS" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/>
-                  <TextBlock x:Name="ProtocolStatus" Text="VO1D outer envelope · Signal v2 integration pending" FontWeight="Bold" FontSize="15" Margin="0,13,0,0"/>
-                  <TextBlock Text="Desktop не делает небезопасный downgrade входящих SignalPacket v2. Следующий слой — официальный libsignal 0.70.0 для полной совместимости iOS ↔ Windows."
+                  <TextBlock x:Name="ProtocolStatus" Text="Signal v2 · PQXDH + Double Ratchet · libsignal 0.70.0" FontWeight="Bold" FontSize="15" Margin="0,13,0,0"/>
+                  <TextBlock Text="Windows использует встроенный официальный libsignal runtime и не делает незаметный downgrade v2-сообщений."
                              Foreground="#8FFFFFFF" TextWrapping="Wrap" LineHeight="21" Margin="0,7,0,0"/>
                 </StackPanel>
               </Border>
