@@ -205,6 +205,20 @@ public partial class MainWindow : Window
             state = disk.LoadVault(raw.Storage);
             EnsureMigratedState();
 
+            if (state.AppLock && !sessionUnlocked)
+            {
+                SettingsCode.Text = state.PublicCode ?? "----";
+                SettingsFingerprint.Text = crypto.Card.Id.ToUpperInvariant();
+                ApplySettingsToUi();
+                UpdateSecurityUi();
+                RefreshAll();
+                ConnectionText.Text = "ЗАБЛОКИРОВАНО";
+                QueueText.Text = "LOCKED";
+                LockLayer.Visibility = Visibility.Visible;
+                LockPinBox.Focus();
+                return;
+            }
+
             signal = new SignalBridgeClient();
             state.SignalSnapshotJson ??= await signal.CreateSnapshotAsync();
 
@@ -218,6 +232,7 @@ public partial class MainWindow : Window
             ConnectionText.Text = "ПОДКЛЮЧЁН";
             RelayDot.Fill = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255));
             ApplySettingsToUi();
+            UpdateSecurityUi();
             RefreshAll();
             SetNav("chats");
             poll.Interval = state.Preferences.LowData ? TimeSpan.FromSeconds(8) : TimeSpan.FromSeconds(3.5);
