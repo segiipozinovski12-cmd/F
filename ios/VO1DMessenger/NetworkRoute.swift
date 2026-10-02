@@ -26,12 +26,24 @@ extension ChatStore {
             local.privacy.requirePrivateDelivery = true; local.privacy.discoverable = false
             local.privacy.requireRequests = true; local.privacy.typingSignals = false
             local.privacy.deliveryReceipts = false; local.privacy.notificationPreview = false
+            local.privacy.padding = true; local.privacy.batchDelaySeconds = max(2, local.privacy.batchDelaySeconds)
+            local.privacy.cleanLinks = true; local.privacy.confirmLinks = true
+            local.privacy.forwardWithoutName = true; local.privacy.anonymizeFilenames = true
         case .tor:
             local.privacy.embeddedTor = true; local.privacy.requirePrivateDelivery = true
             local.privacy.discoverable = false; local.privacy.requireRequests = true
             local.privacy.typingSignals = false; local.privacy.deliveryReceipts = false
             local.privacy.lowData = true; local.privacy.backgroundCalls = false
+            local.privacy.padding = true; local.privacy.batchDelaySeconds = max(5, local.privacy.batchDelaySeconds)
+            local.privacy.cleanLinks = true; local.privacy.confirmLinks = true
+            local.privacy.clipboardSeconds = min(30, local.privacy.clipboardSeconds)
+            local.privacy.hideMedia = true; local.privacy.forwardWithoutName = true
+            local.privacy.anonymizeFilenames = true; local.privacy.protectRecording = true
+            local.privacy.linkPreviews = false
+            local.privacy.streamIsolation = try Crypto.random(24).base64URL
             state.notificationsEnabled = false
+            state.appLock = true
+            local.privacy.autoLockSeconds = 0
         }
         state.extended = local; try save()
     }
@@ -44,13 +56,13 @@ enum PrivacyProfile: String, CaseIterable, Identifiable {
     case everyday, privateDelivery, tor
     var id: String { rawValue }
     var title: String {
-        switch self { case .everyday: return "Повседневный"; case .privateDelivery: return "Приватная доставка"; case .tor: return "Tor и приватные адреса" }
+        switch self { case .everyday: return "Повседневный"; case .privateDelivery: return "Приватная доставка"; case .tor: return "Максимальная защита" }
     }
     var detail: String {
         switch self {
         case .everyday: return "Сохраняет выбранный маршрут. Новые сообщения используют libsignal; для первого контакта можно использовать код."
         case .privateDelivery: return "Требует приватного приглашения. Скрывает отправителя в очереди; relay продолжает видеть сетевые соединения и время."
-        case .tor: return "Включает встроенный Tor, приватные адреса и работу без APNs. Подключение медленнее, расход батареи выше; фоновые вызовы выключены."
+        case .tor: return "Tor без прямого fallback, приватные адреса, новый сетевой scope, задержка очереди, скрытые медиа и работа без APNs. Метаданные времени полностью не исчезают."
         }
     }
 }

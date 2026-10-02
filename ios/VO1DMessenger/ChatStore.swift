@@ -505,14 +505,22 @@ final class ChatStore: ObservableObject {
             if invite.version == 2 { try importPrivateInvite(invite) }
         } else {
             guard let api else { throw MessengerError.invalid("Нет соединения с VO1D") }
-            let normalized = input.uppercased()
+            let normalized = input.uppercased().filter { $0.isLetter || $0.isNumber }
             let usernameCandidate = input
                 .lowercased()
                 .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            let codeAlphabet = CharacterSet(charactersIn: "23456789ABCDEFGHJKLMNPQRSTUVWXYZ")
+            let looksLikeCode = normalized.count == 4 &&
+                normalized.unicodeScalars.allSatisfy { codeAlphabet.contains($0) }
 
-            if normalized.count == 4 {
-                card = try await api.card(publicCode: normalized)
-                name = "Ghost \(card.shortID.prefix(6))"
+            if looksLikeCode && !input.hasPrefix("@") {
+                do {
+                    card = try await api.card(publicCode: normalized)
+                    name = "Ghost \(card.shortID.prefix(6))"
+                } catch let failure as HTTPFailure where failure.status == 404 && (4...20).contains(usernameCandidate.count) {
+                    card = try await api.card(username: usernameCandidate)
+                    name = "@\(usernameCandidate)"
+                }
             } else if input.hasPrefix("@") || (usernameCandidate.count >= 4 && usernameCandidate.count <= 20 && input.count != 64) {
                 card = try await api.card(username: usernameCandidate)
                 name = "@\(usernameCandidate)"
@@ -627,6 +635,8 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("Выбери от 1 до 15 доступных контактов")
         }
 
+        try validateDeliveryRoutes(for: cleanContacts)
+
         for contact in cleanContacts { try Crypto.validate(contact.card) }
 
         let room = Room(
@@ -647,10 +657,7 @@ final class ChatStore: ObservableObject {
             PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
-        try bindScopedID(room.id,scope:.group)
-        state.rooms.append(room)
-        state.outbox.append(contentsOf: pending)
-        try save()
+        try commitCreatedRoom(room, pending: pending)
         return room
     }
     func createChannel(name: String, contacts: [Contact]) throws -> Room {
@@ -668,6 +675,7 @@ final class ChatStore: ObservableObject {
         guard cleanContacts.count <= 15 else {
             throw MessengerError.invalid("Сейчас канал поддерживает до 16 участников")
         }
+        try validateDeliveryRoutes(for: cleanContacts)
         for contact in cleanContacts { try Crypto.validate(contact.card) }
 
         let room = Room(
@@ -680,6 +688,7 @@ final class ChatStore: ObservableObject {
             admins: [myID],
             onlyAdminsCanPost: true,
             isChannel: true,
+            privateRoster: true,
             topics: [], membershipEpoch: 1
         )
 
@@ -691,11 +700,42 @@ final class ChatStore: ObservableObject {
             PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: nil)
         }
 
-        try bindScopedID(room.id,scope:.group)
-        state.rooms.append(room)
-        state.outbox.append(contentsOf: pending)
-        try save()
+        try commitCreatedRoom(room, pending: pending)
         return room
+    }
+
+    /// Commits the vault and scoped-profile binding as one recoverable operation.
+    /// Keychain and the encrypted vault are separate stores, so every failure path
+    /// explicitly restores both snapshots before returning to the composer.
+    private func commitCreatedRoom(_ room: Room, pending: [PendingDelivery]) throws {
+        let previousState = state
+        let previousRegistry = profileRegistry
+        do {
+            state.rooms.append(room)
+            state.outbox.append(contentsOf: pending)
+            try save()
+            do {
+                try bindScopedID(room.id, scope: .group)
+            } catch {
+                state = previousState
+                try? save()
+                throw error
+            }
+        } catch {
+            state = previousState
+            try? previousRegistry.save()
+            profileRegistry = previousRegistry
+            throw error
+        }
+    }
+
+    private func validateDeliveryRoutes(for contacts: [Contact]) throws {
+        guard preferences.requirePrivateDelivery else { return }
+        let missing = contacts.filter { privateRoute(peerID: $0.id, roomID: "") == nil }
+        guard missing.isEmpty else {
+            let names = missing.prefix(3).map(\.name).joined(separator: ", ")
+            throw MessengerError.invalid("Для приватной группы нужен QR-маршрут каждого участника. Нет маршрута: \(names)")
+        }
     }
 
     func isRoomMuted(_ room: Room) -> Bool {
@@ -1176,6 +1216,15 @@ final class ChatStore: ObservableObject {
             guard message.sender == myID else { return }
         }
 
+        var actionValue = value
+        if kind == "reaction" {
+            let allowed = ["❤️", "👍", "🔥", "😂", "👀"]
+            guard let requested = value, allowed.contains(requested) else {
+                throw MessengerError.invalid("Недоступная реакция")
+            }
+            actionValue = state.messages[index].reactions[myID] == requested ? "" : requested
+        }
+
         if isLocalUtilityRoom(message.roomID) {
             if kind == "edit" {
             var history = state.messages[index].editHistory ?? []
@@ -1188,15 +1237,15 @@ final class ChatStore: ObservableObject {
             state.messages[index].edited = true
         }
             if kind == "delete" { state.messages.remove(at: index) }
-            if kind == "reaction" { state.messages[index].reactions[myID] = value }
+            if kind == "reaction" { state.messages[index].reactions[myID] = actionValue?.isEmpty == true ? nil : actionValue }
             try save()
             return
         }
 
-        try enqueue(ChatEvent(kind: kind, room: room, target: message.id, value: value, senderName: state.nickname), room: room)
-        if kind == "edit" { state.messages[index].text = String((value ?? "").prefix(16000)); state.messages[index].edited = true }
+        try enqueue(ChatEvent(kind: kind, room: room, target: message.id, value: actionValue, senderName: state.nickname), room: room)
+        if kind == "edit" { state.messages[index].text = String((actionValue ?? "").prefix(16000)); state.messages[index].edited = true }
         if kind == "delete" { state.messages.remove(at: index) }
-        if kind == "reaction" { state.messages[index].reactions[myID] = value }
+        if kind == "reaction" { state.messages[index].reactions[myID] = actionValue?.isEmpty == true ? nil : actionValue }
         try save()
     }
     func forward(_ message: ChatMessage, to roomID: String) throws {

@@ -2,6 +2,45 @@ import XCTest
 @testable import VO1DMessenger
 
 final class PrivacyTests: XCTestCase {
+    @MainActor func testMaximumPrivacyProfileEnablesMetadataDefensesTogether() throws {
+        let store = ChatStore()
+        let saved = store.state
+        defer { store.state = saved; try? store.save() }
+
+        try store.selectPrivacyProfile(.tor)
+
+        XCTAssertTrue(store.preferences.embeddedTor)
+        XCTAssertTrue(store.preferences.requirePrivateDelivery)
+        XCTAssertFalse(store.preferences.discoverable)
+        XCTAssertFalse(store.preferences.deliveryReceipts)
+        XCTAssertFalse(store.preferences.typingSignals)
+        XCTAssertTrue(store.preferences.padding)
+        XCTAssertGreaterThanOrEqual(store.preferences.batchDelaySeconds, 5)
+        XCTAssertTrue(store.preferences.hideMedia)
+        XCTAssertTrue(store.preferences.anonymizeFilenames)
+        XCTAssertTrue(store.preferences.protectRecording)
+        XCTAssertFalse(store.state.notificationsEnabled == true)
+        XCTAssertTrue(store.state.appLock)
+        XCTAssertEqual(store.preferences.autoLockSeconds, 0)
+        XCTAssertFalse(store.preferences.streamIsolation.isEmpty)
+    }
+
+    @MainActor func testReactionTapTogglesInsteadOfDuplicatingLike() throws {
+        let store = ChatStore()
+        let saved = store.state
+        defer { store.state = saved; try? store.save() }
+        let room = Room(id: ChatStore.savedRoomID, title: "Saved", members: [], creator: store.myID, isGroup: false, createdAt: Date())
+        let message = ChatMessage(id: UUID().uuidString, roomID: room.id, sender: store.myID, text: "Hello", createdAt: Date(), expiresAt: nil, replyTo: nil)
+        store.state.rooms = [room]
+        store.state.messages = [message]
+
+        try store.action("reaction", message: message, value: "❤️")
+        XCTAssertEqual(store.state.messages[0].reactions[store.myID], "❤️")
+        try store.action("reaction", message: store.state.messages[0], value: "❤️")
+        XCTAssertNil(store.state.messages[0].reactions[store.myID])
+        XCTAssertThrowsError(try store.action("reaction", message: store.state.messages[0], value: "untrusted"))
+    }
+
     func testCallOffersBindIdentitiesAndAudioRejectsReplayAndReflection() throws {
         let alice=try LocalIdentity.create(),bob=try LocalIdentity.create()
         let a=CallSecrets(),b=CallSecrets(),callID=UUID().uuidString

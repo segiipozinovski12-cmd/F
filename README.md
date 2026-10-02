@@ -26,7 +26,7 @@ bash scripts/open_iphone.sh
 - Проверка метаданных, фото без EXIF, редактор закрытия областей и поиска лиц, OCR на устройстве, подтверждение ссылок и удаление известных tracking-параметров.
 - Официальный libsignal, атомарные one-time prekeys, сохранение ratchet state и ciphertext до отправки, запрет downgrade.
 - Встроенный Tor/SOCKS5 для HTTP, файлов и WSS без прямого обхода при ошибке; отдельные scopes для capability соединений.
-- Private QR, отдельные mailbox адреса разговоров, read/write capabilities и encrypted blobs без account bearer. Account bootstrap и звонки всё ещё раскрывают метаданные.
+- Private QR, отдельные ротируемые mailbox адреса разговоров, read/write capabilities и encrypted blobs без account bearer. 4-символьный VO1D ID используется только для поиска людей; для чувствительных контактов нужен private QR. Account bootstrap и звонки всё ещё раскрывают метаданные.
 - До 12 независимых профилей с отдельными ключами; scoped contact/group profiles для раздельных личностей.
 - Групповой pairwise fanout до 16 участников, epochs, подписанные приглашения с audience/expiry/отзывом; MLS не реализован.
 - Режимы encrypted backup identity/history/full без старых ratchet sessions, локальная диагностика, protected temp cleanup и удаление одного профиля.

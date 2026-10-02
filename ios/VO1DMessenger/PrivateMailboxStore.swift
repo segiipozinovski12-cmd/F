@@ -2,6 +2,41 @@ import Foundation
 import CryptoKit
 
 extension ChatStore {
+    var privateMailboxHealth: (active: Int, expiring: Int, expired: Int) {
+        let now = Int(Date().timeIntervalSince1970)
+        let boxes = extended.ownMailboxes
+        return (
+            boxes.filter { $0.registered && $0.address.expiresAt > now + 7 * 86400 }.count,
+            boxes.filter { $0.address.expiresAt > now && $0.address.expiresAt <= now + 7 * 86400 }.count,
+            boxes.filter { $0.address.expiresAt <= now }.count
+        )
+    }
+
+    func rotatePrivateMailboxes() async throws {
+        guard let api else { throw MessengerError.invalid("Сначала подключись к relay") }
+        let expected = generation
+        let scopes = Set(extended.ownMailboxes.compactMap { mailbox -> String? in
+            guard mailbox.peerID != nil else { return nil }
+            return (mailbox.peerID ?? "") + "\n" + (mailbox.roomID ?? "")
+        })
+        for scope in scopes {
+            let pieces = scope.split(separator: "\n", omittingEmptySubsequences: false)
+            guard let peer = pieces.first.map(String.init) else { continue }
+            let room = pieces.count > 1 && !pieces[1].isEmpty ? String(pieces[1]) : nil
+            _ = try await ensurePrivateMailbox(peerID: peer, roomID: room, api: api, generation: expected, fresh: true)
+            guard expected == generation else { throw CancellationError() }
+        }
+    }
+
+    func pruneExpiredPrivateMailboxes(now: Int = Int(Date().timeIntervalSince1970)) throws {
+        let before = extended.ownMailboxes.count
+        var local = extended
+        local.ownMailboxes.removeAll { $0.address.expiresAt <= now }
+        guard local.ownMailboxes.count != before else { return }
+        state.extended = local
+        try save()
+    }
+
     func ensurePrivateMailbox(peerID: String?, roomID: String? = nil, api: APIClient, generation expected: Int, fresh: Bool = false) async throws -> LocalMailbox {
         if !fresh, let mailbox = extended.ownMailboxes.last(where: { $0.peerID == peerID && $0.roomID == roomID && $0.address.expiresAt > Int(Date().timeIntervalSince1970) + 7 * 86400 }) {
             if !mailbox.registered {
@@ -101,6 +136,7 @@ extension ChatStore {
             try save()
             if !ack.isEmpty { try await api.privateAck(ack, mailbox: mailbox) }
         }
+        try pruneExpiredPrivateMailboxes()
     }
     func revokePrivateAddresses(_ peerID: String) async throws {
         guard let api else { return }

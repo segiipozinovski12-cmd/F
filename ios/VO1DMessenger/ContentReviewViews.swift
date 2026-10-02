@@ -145,8 +145,18 @@ struct MessageDetailsView: View {
     @EnvironmentObject var store: ChatStore
     var body: some View {
         List {
-            Text(message.createdAt.formatted())
-            Text("Статус: \(message.state)")
+            Section("Сообщение") {
+                LabeledContent("Создано", value: message.createdAt.formatted())
+                LabeledContent("Состояние", value: statusTitle)
+                if pendingCount > 0 {
+                    LabeledContent("Ожидает отправки", value: "\(pendingCount)")
+                }
+                if issueCount > 0 {
+                    LabeledContent("Ошибки доставки", value: "\(issueCount)")
+                        .foregroundStyle(.orange)
+                }
+            }
+            Section("Получатели") {
             ForEach(store.state.rooms.first { $0.id==message.roomID }?.members.filter { $0.id != store.myID } ?? []) { member in
                 HStack {
                     Text(store.name(member.id)); Spacer()
@@ -154,8 +164,27 @@ struct MessageDetailsView: View {
                         .font(.caption)
                 }
             }
-            Text("Отсутствие подтверждения не доказывает, что сообщение не получено: собеседник может отключить статусы.")
-                .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Text("Отсутствие подтверждения не доказывает, что сообщение не получено: собеседник может отключить статусы.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }.navigationTitle("Доставка сообщения")
+    }
+
+    private var pending: [PendingDelivery] { store.state.outbox.filter { $0.messageID == message.id } }
+    private var pendingCount: Int { pending.count }
+    private var issueCount: Int { pending.filter { store.deliveryIssues[$0.id] != nil }.count }
+    private var statusTitle: String {
+        switch message.state {
+        case "scheduled": return "Запланировано"
+        case "queued": return issueCount > 0 ? "Повторная отправка" : "В очереди"
+        case "sent": return "Передано relay"
+        case "delivered": return "Доставлено"
+        case "read": return "Прочитано"
+        case "failed": return "Ошибка"
+        case "cancelled": return "Отменено"
+        default: return "Ожидает"
+        }
     }
 }

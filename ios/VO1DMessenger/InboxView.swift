@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InboxView: View {
     @EnvironmentObject private var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var search = ""
     @State private var filter = "Все"
     @State private var composing = false
@@ -70,6 +71,10 @@ struct InboxView: View {
                                         roomRow(room)
                                     }
                                     .buttonStyle(.plain)
+                                    .transition(reduceMotion ? .opacity : .asymmetric(
+                                        insertion: .opacity.combined(with: .scale(scale: 0.96)).combined(with: .move(edge: .top)),
+                                        removal: .opacity.combined(with: .scale(scale: 0.96))
+                                    ))
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                         Button {
                                             store.updateRoom(room.id) { $0.archived.toggle() }
@@ -148,6 +153,12 @@ struct InboxView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $composing) { ComposeView() }
+            .onChange(of: store.extended.folders.map(\.id)) { _, folderIDs in
+                let builtIn = ["Все", "Непрочитанные", "Личные", "Группы", "Каналы", "Архив"]
+                guard !builtIn.contains(filter), !folderIDs.contains(filter) else { return }
+                filter = "Все"
+            }
+            .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88), value: rooms.map(\.id))
         }
     }
 
@@ -187,10 +198,11 @@ struct InboxView: View {
 
     private var statusStrip: some View {
         HStack(spacing: 10) {
-            Image(systemName: store.connection == "Подключён" ? "lock.shield.fill" : "circle.dashed")
+            ConnectionGlyph(connected: store.connection == "Подключён")
             Text(store.connection.uppercased())
                 .font(.caption2.monospaced())
                 .tracking(1.5)
+                .contentTransition(.opacity)
             Spacer()
             if !store.state.outbox.isEmpty {
                 Text("QUEUE \(store.state.outbox.count)")
@@ -206,6 +218,17 @@ struct InboxView: View {
         HStack(spacing: 11) {
             Image(systemName: "magnifyingglass").foregroundStyle(Theme.secondary)
             TextField("Найти чат или сообщение", text: $search)
+                .submitLabel(.search)
+            if !search.isEmpty {
+                Button {
+                    search = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Theme.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Очистить поиск")
+            }
         }
         .voidField()
     }
@@ -215,7 +238,7 @@ struct InboxView: View {
             HStack(spacing: 8) {
                 ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы", "Архив"] + store.extended.folders.map(\.id), id: \.self) { item in
                     Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { filter = item }
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86)) { filter = item }
                     } label: {
                         Text((store.extended.folders.first { $0.id==item }?.name ?? item).uppercased())
                             .font(.caption2.monospaced())
@@ -234,19 +257,27 @@ struct InboxView: View {
     private var emptyState: some View {
         VStack(spacing: 18) {
             BrandMark(size: 88)
-            Text(search.isEmpty ? "Здесь пока тихо." : "Ничего не найдено.")
+            Text(search.isEmpty && filter == "Все" ? "Здесь пока тихо." : "Ничего не найдено.")
                 .font(.title3.bold())
-            Text(search.isEmpty
-                 ? "Добавь человека по 4-символьному VO1D ID и начни разговор."
-                 : "Измени запрос или верни фильтр «Все».")
+            Text(search.isEmpty && filter == "Все"
+                 ? "Добавь человека по 4-символьному VO1D ID или приватному QR и начни разговор."
+                 : "Очисти поиск или верни фильтр «Все».")
                 .font(.subheadline)
                 .foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
 
-            if search.isEmpty {
+            if search.isEmpty && filter == "Все" {
                 Button("НОВЫЙ РАЗГОВОР") { composing = true }
                     .buttonStyle(PrimaryButton())
+            } else {
+                Button("СБРОСИТЬ ФИЛЬТРЫ") {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86)) {
+                        search = ""
+                        filter = "Все"
+                    }
+                }
+                .buttonStyle(GhostButton())
             }
         }
         .frame(maxWidth: .infinity)
@@ -334,6 +365,7 @@ struct InboxView: View {
 struct ComposeView: View {
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var add = false
     @State private var mode = 0
@@ -349,6 +381,10 @@ struct ComposeView: View {
         store.state.contacts.filter {
             !$0.blocked && (!isMulti || !store.isBuiltinBot($0.id))
         }
+    }
+
+    private func hasDeliveryRoute(_ contact: Contact) -> Bool {
+        !store.preferences.requirePrivateDelivery || store.privateRoute(peerID: contact.id, roomID: "") != nil
     }
 
     var body: some View {
@@ -388,6 +424,7 @@ struct ComposeView: View {
 
                                 HStack {
                                     Label("\(selected.count) выбрано", systemImage: isChannel ? "megaphone.fill" : "person.2.fill")
+                                        .contentTransition(.numericText(value: Double(selected.count)))
                                     Spacer()
                                     Text("до 15")
                                 }
@@ -425,10 +462,22 @@ struct ComposeView: View {
                                 ForEach(visibleContacts) { contact in
                                     Button {
                                         if isMulti {
+                                            guard hasDeliveryRoute(contact) else {
+                                                store.error = "Строгая приватная доставка требует QR-маршрут этого контакта"
+                                                return
+                                            }
                                             if selected.contains(contact.id) {
-                                                selected.remove(contact.id)
+                                                withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.82)) {
+                                                    selected.remove(contact.id)
+                                                }
                                             } else {
-                                                selected.insert(contact.id)
+                                                guard selected.count < 15 else {
+                                                    store.error = "В группе или канале может быть до 15 приглашённых участников"
+                                                    return
+                                                }
+                                                withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.82)) {
+                                                    selected.insert(contact.id)
+                                                }
                                             }
                                         } else {
                                             do {
@@ -452,7 +501,13 @@ struct ComposeView: View {
                                             Spacer()
 
                                             if isMulti {
-                                                Image(systemName: selected.contains(contact.id) ? "checkmark.circle.fill" : "circle")
+                                                if !hasDeliveryRoute(contact) {
+                                                    Label("Нужен QR", systemImage: "lock.trianglebadge.exclamationmark")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(Theme.secondary)
+                                                } else {
+                                                    SelectionMark(selected: selected.contains(contact.id))
+                                                }
                                             } else {
                                                 Image(systemName: "arrow.up.right")
                                             }
@@ -528,4 +583,3 @@ struct ComposeView: View {
         .presentationDragIndicator(.visible)
     }
 }
-

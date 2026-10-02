@@ -2,6 +2,61 @@ import XCTest
 @testable import VO1DMessenger
 
 final class GroupSecurityTests: XCTestCase {
+    @MainActor func testNewChannelsHideSubscriberRosterByDefault() throws {
+        let store = ChatStore()
+        let saved = store.state
+        defer { store.state = saved; try? store.save() }
+
+        let room = try store.createChannel(name: "Private channel", contacts: [])
+        XCTAssertEqual(room.privateRoster, true)
+        XCTAssertEqual(room.onlyAdminsCanPost, true)
+        XCTAssertEqual(room.members.map(\.id), [store.myID])
+    }
+
+    @MainActor func testStrictDeliveryExplainsMissingGroupRouteWithoutMutation() throws {
+        let store = ChatStore()
+        let saved = store.state
+        defer { store.state = saved; try? store.save() }
+        let peer = try LocalIdentity.create().card
+        let contact = Contact(card: peer, name: "No private route")
+        var local = store.extended
+        local.privacy.requirePrivateDelivery = true
+        local.peerMailboxes = [:]
+        store.state.extended = local
+        let rooms = store.state.rooms.count, queued = store.state.outbox.count
+
+        XCTAssertThrowsError(try store.createGroup(name: "Must stay private", contacts: [contact])) { error in
+            XCTAssertTrue(error.localizedDescription.contains("QR-маршрут"))
+        }
+        XCTAssertEqual(store.state.rooms.count, rooms)
+        XCTAssertEqual(store.state.outbox.count, queued)
+    }
+
+    @MainActor func testRejectedScopedGroupDoesNotLeaveRoomOrQueuedInvites() throws {
+        let store = ChatStore()
+        let savedState = store.state, savedRegistry = store.profileRegistry
+        defer {
+            store.state = savedState
+            store.profileRegistry = savedRegistry
+            try? savedRegistry.save()
+            try? store.save()
+        }
+        let peer = try LocalIdentity.create().card
+        let contact = Contact(card: peer, name: "Peer")
+        guard let index = store.profileRegistry.profiles.firstIndex(where: { $0.id == store.profileID }) else {
+            return XCTFail("Active profile missing")
+        }
+        var registry = store.profileRegistry
+        registry.profiles[index].scope = .group
+        registry.profiles[index].boundID = UUID().uuidString
+        store.profileRegistry = registry
+        let rooms = store.state.rooms.count, queued = store.state.outbox.count
+
+        XCTAssertThrowsError(try store.createGroup(name: "Cannot bind", contacts: [contact]))
+        XCTAssertEqual(store.state.rooms.count, rooms)
+        XCTAssertEqual(store.state.outbox.count, queued)
+    }
+
     func testMembershipCannotDowngradeOrAcceptStaleUpdates() throws {
         let a = try LocalIdentity.create().card, b = try LocalIdentity.create().card
         var room = Room(id:UUID().uuidString,title:"Group",members:[a,b],creator:a.id,isGroup:true,createdAt:Date())

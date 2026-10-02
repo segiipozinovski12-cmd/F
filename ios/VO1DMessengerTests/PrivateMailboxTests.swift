@@ -2,6 +2,23 @@ import XCTest
 @testable import VO1DMessenger
 
 final class PrivateMailboxTests: XCTestCase {
+    @MainActor func testExpiredMailboxPruningKeepsOverlapRoutes() throws {
+        let store = ChatStore()
+        let saved = store.state
+        defer { store.state = saved; try? store.save() }
+        let now = Int(Date().timeIntervalSince1970)
+        var expired = try mailbox(), overlap = try mailbox()
+        expired.address.expiresAt = now - 1
+        overlap.address.expiresAt = now + 60
+        var local = store.extended
+        local.ownMailboxes = [expired, overlap]
+        store.state.extended = local
+
+        try store.pruneExpiredPrivateMailboxes(now: now)
+
+        XCTAssertEqual(store.extended.ownMailboxes.map(\.id), [overlap.id])
+    }
+
     private func mailbox() throws -> LocalMailbox {
         LocalMailbox(address: MailboxAddress(id: try Crypto.random(32).base64URL, writeToken: try Crypto.random(32).base64URL,
             expiresAt: Int(Date().timeIntervalSince1970) + 86400), readToken: try Crypto.random(32).base64URL, peerID: nil, proof: "0")

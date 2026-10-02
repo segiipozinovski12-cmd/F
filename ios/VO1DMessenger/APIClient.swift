@@ -248,7 +248,7 @@ final class APIClient {
     }
 
     func card(publicCode: String) async throws -> ContactCard {
-        let code = publicCode.uppercased()
+        let code = publicCode.uppercased().filter { $0.isLetter || $0.isNumber }
         guard code.count == 4 else { throw MessengerError.invalid("VO1D ID должен состоять из 4 символов") }
         let result: ContactCard = try await request("v1/code/\(code)")
         try Crypto.validate(result)

@@ -14,6 +14,7 @@ struct PrivacyDiagnosticsView: View {
     @State private var integrity = "Ещё не проверено"
     @State private var transientCount = 0
     @State private var deletingFiles = false
+    @State private var rotatingMailboxes = false
     var body: some View {
         List {
             Section("Текущее соединение") {
@@ -28,6 +29,21 @@ struct PrivacyDiagnosticsView: View {
                 Text("Сессии v2: \(store.extended.signal?.sessions.count ?? 0)")
                 Text("Одноразовые ключи: \(store.extended.signal?.prekeys.count ?? 0)")
                 Text("Приватные адреса: \(store.extended.ownMailboxes.count)")
+                let mailboxHealth = store.privateMailboxHealth
+                Text("Активные: \(mailboxHealth.active) · скоро истекут: \(mailboxHealth.expiring) · истекли: \(mailboxHealth.expired)")
+                    .font(.caption)
+                    .foregroundStyle(mailboxHealth.expiring + mailboxHealth.expired > 0 ? .orange : .secondary)
+                Button(rotatingMailboxes ? "Подготавливаем адреса…" : "Подготовить новые приватные адреса") {
+                    rotatingMailboxes = true
+                    Task {
+                        do { try await store.rotatePrivateMailboxes() }
+                        catch { store.error = error.localizedDescription }
+                        rotatingMailboxes = false
+                    }
+                }
+                .disabled(rotatingMailboxes || store.api == nil)
+                Text("Старые адреса остаются принимающими до истечения. Новый адрес передаётся собеседнику внутри следующего E2EE-события — без публичной привязки аккаунта.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text(integrity).font(.caption)
                 Button("Проверить подписи и локальные записи") { do { integrity = try store.integrityReport() } catch { integrity = error.localizedDescription } }
             }

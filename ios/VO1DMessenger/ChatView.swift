@@ -7,6 +7,7 @@ struct ChatView: View {
     let roomID: String
     var initialMessageID: String? = nil
     @EnvironmentObject var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var text = ""
     @State private var messageLimit = 80
     @State private var authorFilter = ""
@@ -761,10 +762,47 @@ struct ChatView: View {
                             .accessibilityLabel(message.state)
                     }
                 }.font(.system(size: 10)).opacity(0.55).frame(maxWidth: .infinity, alignment: .trailing)
-                if !message.reactions.isEmpty {
-                    Text(message.reactions.values.sorted().joined(separator: " ")).font(.subheadline).padding(.horizontal, 8).padding(.vertical, 4).background(.black.opacity(0.08), in: Capsule())
+                reactionBar(message, mine: mine)
+            }
+    }
+
+    @ViewBuilder
+    private func reactionBar(_ message: ChatMessage, mine: Bool) -> some View {
+        let grouped = Dictionary(grouping: message.reactions.values, by: { $0 })
+        let emojis = ["❤️", "👍", "🔥", "😂", "👀"].filter { grouped[$0] != nil }
+        if !emojis.isEmpty {
+            HStack(spacing: 5) {
+                ForEach(emojis, id: \.self) { emoji in
+                    let selected = message.reactions[store.myID] == emoji
+                    Button {
+                        perform { try store.action("reaction", message: message, value: emoji) }
+                        Haptics.light()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(emoji)
+                            if let count = grouped[emoji]?.count, count > 1 {
+                                Text("\(count)")
+                                    .font(.caption2.bold())
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText(value: Double(count)))
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(selected ? Color.white.opacity(mine ? 0.52 : 0.18) : Color.black.opacity(mine ? 0.08 : 0.22), in: Capsule())
+                        .overlay(Capsule().stroke(selected ? Color.white.opacity(0.7) : Color.white.opacity(0.08)))
+                        .scaleEffect(selected && !reduceMotion ? 1.06 : 1)
+                        .shadow(color: selected ? Color.white.opacity(0.18) : .clear, radius: 8)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(emoji), реакций \(grouped[emoji]?.count ?? 1)")
+                    .accessibilityHint(selected ? "Убрать свою реакцию" : "Добавить свою реакцию")
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.85)))
+            .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.72), value: message.reactions)
+        }
     }
     func callTitle(_ call: CallMessageData) -> String {
         switch call.status {
