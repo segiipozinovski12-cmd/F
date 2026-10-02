@@ -186,6 +186,18 @@ public partial class MainWindow : Window
             ConnectionText.Text = "ЗАЩИЩАЕМ ЛОКАЛЬНЫЕ КЛЮЧИ…";
             var raw = disk.LoadOrCreateIdentity();
             crypto = new IdentityCrypto(raw);
+
+            if (Environment.GetEnvironmentVariable("VO1D_UI_PREVIEW") == "1")
+            {
+                SeedUiPreview();
+                ApplySettingsToUi();
+                RefreshAll();
+                SetNav("chats");
+                ConnectionText.Text = "ПОДКЛЮЧЁН";
+                RelayDot.Fill = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255));
+                return;
+            }
+
             state = disk.LoadVault(raw.Storage);
             EnsureMigratedState();
 
@@ -229,6 +241,68 @@ public partial class MainWindow : Window
             }
             catch { }
         }
+    }
+
+    private void SeedUiPreview()
+    {
+        var own = crypto.Card.Id;
+        state = new VaultState
+        {
+            Nickname = "VO1D",
+            PublicCode = "V01D",
+            Preferences = new DesktopPreferences { TextScale = 100 }
+        };
+
+        var room = new RoomState
+        {
+            Id = "preview:room",
+            Title = "VO1D Design QA",
+            MemberIds = new List<string> { own },
+            Creator = own,
+            IsGroup = true,
+            CreatedAt = DateTimeOffset.UtcNow.AddHours(-2).ToUnixTimeSeconds(),
+            Pinned = true
+        };
+        state.Rooms.Add(room);
+
+        state.Messages.AddRange(new[]
+        {
+            new LocalMessage
+            {
+                Id = "preview-1",
+                RoomId = room.Id,
+                SenderId = "preview",
+                Mine = false,
+                Text = "Windows теперь проверяется по реальному рендеру, а не только по сборке.",
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-18).ToUnixTimeSeconds(),
+                State = "sent"
+            },
+            new LocalMessage
+            {
+                Id = "preview-2",
+                RoomId = room.Id,
+                SenderId = own,
+                Mine = true,
+                Text = "Супер. Composer, bubbles, карточки, стекло и адаптивность должны выглядеть не хуже iOS.",
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-16).ToUnixTimeSeconds(),
+                State = "sent",
+                Reactions = new Dictionary<string,string> { ["preview"] = "🔥" }
+            },
+            new LocalMessage
+            {
+                Id = "preview-3",
+                RoomId = room.Id,
+                SenderId = "preview",
+                Mine = false,
+                Text = "Reply, edit, reactions, attachments, saved messages и scheduled send уже в Windows ветке.",
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-8).ToUnixTimeSeconds(),
+                State = "sent",
+                ReplyTo = "preview-2"
+            }
+        });
+
+        selectedRoom = room;
+        selected = null;
     }
 
     private void EnsureMigratedState()
