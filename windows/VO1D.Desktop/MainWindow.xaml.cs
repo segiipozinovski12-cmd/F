@@ -372,6 +372,52 @@ public partial class MainWindow : Window
 
     private void Save() => disk.SaveVault(state, crypto.Raw.Storage);
 
+    private async Task EnsureSignalReadyAsync()
+    {
+        if (signal == null) throw new InvalidOperationException("Signal runtime не запущен.");
+        state.SignalSnapshotJson ??= await signal.CreateSnapshotAsync();
+
+        var count = await api.PrekeyCountAsync();
+        if (count < 8)
+        {
+            var publication = await signal.PublicationAsync(state.SignalSnapshotJson, crypto.Card.Id, 24);
+            foreach (var bundle in publication.Bundles)
+                crypto.CompleteSignalBundle(bundle);
+
+            await api.PublishPrekeysAsync(new SignalPublicationDto { Bundles = publication.Bundles });
+            state.SignalSnapshotJson = publication.SnapshotJson;
+            Save();
+        }
+
+        ProtocolStatus.Text = "Signal v2 · PQXDH + Double Ratchet · libsignal 0.70.0";
+        QueueText.Text = "SIGNAL V2";
+    }
+
+    private async Task<Envelope> SealSignalAsync(byte[] clear, ContactCard target)
+    {
+        if (signal == null) throw new InvalidOperationException("Signal runtime не запущен.");
+        state.SignalSnapshotJson ??= await signal.CreateSnapshotAsync();
+
+        var session = await signal.HasSessionAsync(state.SignalSnapshotJson, target.Id);
+        state.SignalSnapshotJson = session.SnapshotJson;
+
+        SignalBundleDto? bundle = null;
+        if (!session.HasSession)
+        {
+            bundle = await api.ClaimPrekeyAsync(target.Id);
+            IdentityCrypto.ValidateSignalBundle(bundle, target);
+        }
+
+        var encrypted = await signal.EncryptAsync(state.SignalSnapshotJson, target.Id, clear, bundle);
+        state.SignalSnapshotJson = encrypted.SnapshotJson;
+        crypto.CompleteSignalPacket(encrypted.Packet);
+
+        var packetBytes = JsonSerializer.SerializeToUtf8Bytes(encrypted.Packet, AppJson.Options);
+        var envelope = crypto.Seal(packetBytes, target);
+        Save();
+        return envelope;
+    }
+
     private void ApplySettingsToUi()
     {
         SettingsCode.Text = state.PublicCode ?? "----";
