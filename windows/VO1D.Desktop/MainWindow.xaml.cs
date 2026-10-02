@@ -60,6 +60,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             poll.Stop();
+            VoiceCleanup();
             signal?.Dispose();
             api?.Dispose();
             crypto?.Dispose();
@@ -589,6 +590,7 @@ public partial class MainWindow : Window
             NoChat.Visibility = Visibility.Visible;
             ComposerBox.IsEnabled = false;
             AttachButton.IsEnabled = false;
+            VoiceButton.IsEnabled = false;
             SendButton.IsEnabled = false;
             ChatTitle.Text = "VO1D Desktop";
             ChatInitial.Text = "V";
@@ -602,6 +604,7 @@ public partial class MainWindow : Window
         var canPost = !selectedRoom.OnlyAdminsCanPost || selectedRoom.Admins.Contains(crypto.Card.Id);
         ComposerBox.IsEnabled = canPost;
         AttachButton.IsEnabled = canPost;
+        VoiceButton.IsEnabled = canPost;
         SendButton.IsEnabled = canPost;
         ChatTitle.Text = ResolveRoomTitle(selectedRoom);
         ChatInitial.Text = string.IsNullOrWhiteSpace(ChatTitle.Text) ? "V" : ChatTitle.Text[..1].ToUpperInvariant();
@@ -1497,6 +1500,9 @@ public partial class MainWindow : Window
         ".pdf" => "application/pdf",
         ".txt" => "text/plain",
         ".json" => "application/json",
+        ".wav" => "audio/wav",
+        ".mp3" => "audio/mpeg",
+        ".m4a" => "audio/mp4",
         _ => "application/octet-stream"
     };
 
