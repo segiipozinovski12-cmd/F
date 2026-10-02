@@ -276,22 +276,30 @@
                           <Border.ContextMenu>
                             <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                               <MenuItem Header="Ответить" CommandParameter="{Binding}" Click="MessageReply_Click"/>
+                              <MenuItem Header="Переслать" CommandParameter="{Binding}" Click="MessageForward_Click"/>
                               <MenuItem Header="Копировать" CommandParameter="{Binding}" Click="MessageCopy_Click"/>
                               <MenuItem Header="❤️ Реакция" CommandParameter="{Binding}" Click="MessageReact_Click"/>
                               <MenuItem Header="Закладка" CommandParameter="{Binding}" Click="MessageBookmark_Click"/>
                               <MenuItem Header="Закрепить" CommandParameter="{Binding}" Click="MessagePin_Click"/>
+                              <MenuItem Header="Голосовать в опросе" CommandParameter="{Binding}" Click="MessageVotePoll_Click"/>
+                              <MenuItem Header="Закрыть опрос" CommandParameter="{Binding}" Click="MessageClosePoll_Click"/>
                               <Separator/>
                               <MenuItem Header="Редактировать" CommandParameter="{Binding}" Click="MessageEdit_Click"/>
                               <MenuItem Header="Удалить" CommandParameter="{Binding}" Click="MessageDelete_Click"/>
                             </ContextMenu>
                           </Border.ContextMenu>
                           <StackPanel>
+                            <TextBlock Text="{Binding ForwardedText}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="{Binding MetaBrush}" Margin="0,0,0,7" Visibility="{Binding ForwardedVisibility}"/>
                             <Border Background="#0F7F7F7F" CornerRadius="8" Padding="8,5" Margin="0,0,0,8" Visibility="{Binding ReplyVisibility}">
                               <TextBlock Text="{Binding ReplyPreview}" FontSize="11" Foreground="{Binding MetaBrush}" TextTrimming="CharacterEllipsis"/>
                             </Border>
                             <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="{Binding FontSize}" Foreground="{Binding ForegroundBrush}"/>
+                            <Border Background="#0DFFFFFF" CornerRadius="14" Padding="11" Margin="0,8,0,0" Visibility="{Binding PollVisibility}">
+                              <TextBlock Text="{Binding PollText}" TextWrapping="Wrap" Foreground="{Binding ForegroundBrush}" LineHeight="20"/>
+                            </Border>
+                            <TextBlock Text="{Binding EphemeralText}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="{Binding MetaBrush}" Margin="0,8,0,0" Visibility="{Binding EphemeralVisibility}"/>
                             <Border Margin="0,8,0,0" CornerRadius="16" ClipToBounds="True" Visibility="{Binding ImageVisibility}">
-                              <Image Source="{Binding ImagePreview}" MaxWidth="520" MaxHeight="330" Stretch="Uniform"/>
+                              <Image Source="{Binding ImagePreview}" MaxWidth="520" MaxHeight="330" Stretch="Uniform" MouseLeftButtonDown="MessageMedia_Click"/>
                             </Border>
                             <Border Background="#0DFFFFFF" CornerRadius="10" Padding="9,7" Margin="0,8,0,0" Visibility="{Binding AttachmentVisibility}">
                               <Grid>
@@ -336,7 +344,15 @@
                 </Border>
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/><ColumnDefinition Width="44"/><ColumnDefinition Width="44"/></Grid.ColumnDefinitions>
-                  <Button x:Name="AttachButton" Style="{StaticResource RoundIconButton}" Content="&#xE710;" Width="40" Height="40" Click="Attach_Click" IsEnabled="False"/>
+                  <Button x:Name="AttachButton" Style="{StaticResource RoundIconButton}" Content="&#xE710;" Width="40" Height="40" Click="AttachMenu_Click" IsEnabled="False">
+                    <Button.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="Файл или фото" Click="AttachFile_Click"/>
+                        <MenuItem Header="Фото с таймером" Click="AttachEphemeral_Click"/>
+                        <MenuItem Header="Опрос" Click="CreatePoll_Click"/>
+                      </ContextMenu>
+                    </Button.ContextMenu>
+                  </Button>
                   <Border Grid.Column="1" Style="{StaticResource InputShell}" Margin="9,0" MinHeight="44" MaxHeight="130">
                     <Grid>
                       <TextBox x:Name="ComposerBox" Style="{StaticResource BareTextBox}" TextWrapping="Wrap" AcceptsReturn="True"
