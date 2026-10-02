@@ -250,6 +250,7 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                   <Button Style="{StaticResource RoundIconButton}" Content="&#xE721;" Margin="0,0,8,0" ToolTip="Поиск" Click="FocusChatSearch_Click"/>
                   <Button Style="{StaticResource RoundIconButton}" Content="&#xE717;" Margin="0,0,8,0" ToolTip="Звонок"/>
+                  <Button Style="{StaticResource RoundIconButton}" Content="&#xE713;" Margin="0,0,8,0" ToolTip="Локальные настройки чата" Click="RoomLocalSettings_Click"/>
                   <Button Style="{StaticResource RoundIconButton}" Content="&#xE946;" ToolTip="Информация" Click="OpenRoomInfo_Click"/>
                 </StackPanel>
               </Grid>
@@ -282,6 +283,7 @@
                               <MenuItem Header="Копировать" CommandParameter="{Binding}" Click="MessageCopy_Click"/>
                               <MenuItem Header="❤️ Реакция" CommandParameter="{Binding}" Click="MessageReact_Click"/>
                               <MenuItem Header="Закладка" CommandParameter="{Binding}" Click="MessageBookmark_Click"/>
+                              <MenuItem Header="Напомнить" CommandParameter="{Binding}" Click="MessageReminder_Click"/>
                               <MenuItem Header="Закрепить" CommandParameter="{Binding}" Click="MessagePin_Click"/>
                               <MenuItem Header="Голосовать в опросе" CommandParameter="{Binding}" Click="MessageVotePoll_Click"/>
                               <MenuItem Header="Закрыть опрос" CommandParameter="{Binding}" Click="MessageClosePoll_Click"/>
@@ -415,6 +417,7 @@
                   <Border Style="{StaticResource GlassCard}" Margin="0,0,0,10" Padding="16">
                     <Border.ContextMenu>
                       <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="Псевдоним / заметка" CommandParameter="{Binding}" Click="ContactAliasNote_Click"/>
                         <MenuItem Header="Избранное" CommandParameter="{Binding}" Click="ContactFavorite_Click"/>
                         <MenuItem Header="Проверен / не проверен" CommandParameter="{Binding}" Click="ContactVerify_Click"/>
                         <MenuItem Header="Блокировать / разблокировать" CommandParameter="{Binding}" Click="ContactBlock_Click"/>
@@ -450,6 +453,12 @@
               <TextBlock Text="VO1D / TOOLS" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#76FFFFFF"/>
               <TextBlock Text="Инструменты" FontSize="36" FontWeight="Black" Margin="0,4,0,0"/>
               <TextBlock Text="Черновики, отложенные, закладки и локальное хранилище" Foreground="#8FFFFFFF" Margin="0,6,0,0"/>
+              <WrapPanel Margin="0,14,0,0">
+                <Button Style="{StaticResource ChipButton}" Content="ПАПКИ" Margin="0,0,7,7" Click="ManageFolders_Click"/>
+                <Button Style="{StaticResource ChipButton}" Content="ШАБЛОНЫ" Margin="0,0,7,7" Click="ManageSnippets_Click"/>
+                <Button Style="{StaticResource ChipButton}" Content="НАПОМИНАНИЯ" Margin="0,0,7,7" Click="ManageReminders_Click"/>
+                <Button Style="{StaticResource ChipButton}" Content="ПОВТОРИТЬ ОЧЕРЕДЬ" Margin="0,0,7,7" Click="RetryQueue_Click"/>
+              </WrapPanel>
             </StackPanel>
             <UniformGrid Grid.Row="1" Columns="2" Margin="0,20,0,14">
               <Border Style="{StaticResource GlassCard}" Margin="0,0,8,0" Padding="14"><StackPanel><TextBlock Text="ЧЕРНОВИКИ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="DraftCount" Text="0" FontSize="27" FontWeight="Black" Margin="0,6,0,0"/></StackPanel></Border>
