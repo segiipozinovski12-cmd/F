@@ -115,13 +115,13 @@
                   <TextBlock Text="MESSENGER" FontFamily="{StaticResource MonoFont}" Foreground="#86FFFFFF" FontSize="7"/>
                 </StackPanel>
               </StackPanel>
-              <TextBlock Text="Сообщения" FontSize="34" FontWeight="Black" Margin="0,17,0,0"/>
+              <TextBlock x:Name="RoomsTitle" Text="Сообщения" FontSize="32" FontWeight="Black" Margin="0,17,0,0" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
-              <Button Style="{StaticResource RoundIconButton}" Content="&#xE8A4;" Width="44" Height="44" Margin="0,0,8,3"
+              <Button x:Name="SavedButton" Style="{StaticResource RoundIconButton}" Content="&#xE8A4;" Width="40" Height="40" Margin="0,0,7,3"
                       ToolTip="Сохранённые сообщения" Click="OpenSaved_Click"/>
-              <Button Style="{StaticResource RoundIconButton}" Content="&#xE710;" Background="White" Foreground="Black"
-                      Width="50" Height="50" Click="OpenCompose_Click"/>
+              <Button x:Name="ComposeButton" Style="{StaticResource RoundIconButton}" Content="&#xE710;" Background="White" Foreground="Black"
+                      Width="46" Height="46" Click="OpenCompose_Click"/>
             </StackPanel>
           </Grid>
 
@@ -179,11 +179,15 @@
                       <Grid Grid.Column="1" Margin="13,0,0,0">
                         <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                         <Grid>
-                          <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                          </Grid.ColumnDefinitions>
+                          <StackPanel Orientation="Horizontal" MinWidth="0">
+                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" TextTrimming="CharacterEllipsis" MaxWidth="170"/>
                             <TextBlock Text="{Binding Badge}" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#BFFFFFFF" Margin="7,2,0,0"/>
                           </StackPanel>
-                          <TextBlock Text="{Binding Time}" HorizontalAlignment="Right" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#78FFFFFF"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Time}" Margin="8,0,0,0" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#78FFFFFF" VerticalAlignment="Center"/>
                         </Grid>
                         <Grid Grid.Row="1" Margin="0,7,0,0">
                           <TextBlock Text="{Binding Preview}" Foreground="#8FFFFFFF" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,0,34,0"/>
@@ -256,12 +260,12 @@
             </Border>
 
             <Grid Grid.Row="2">
-              <ScrollViewer x:Name="MessageScroll" VerticalScrollBarVisibility="Auto" Padding="24,20">
+              <ScrollViewer x:Name="MessageScroll" VerticalScrollBarVisibility="Auto" Padding="28,22">
                 <ItemsControl x:Name="MessageList">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Grid Margin="0,5">
-                        <Border MaxWidth="650" CornerRadius="21" Padding="14,11" HorizontalAlignment="{Binding Align}"
+                        <Border MaxWidth="620" CornerRadius="22" Padding="15,12" HorizontalAlignment="{Binding Align}"
                                 Background="{Binding BubbleBrush}" BorderBrush="#18FFFFFF" BorderThickness="1">
                           <Border.ContextMenu>
                             <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
