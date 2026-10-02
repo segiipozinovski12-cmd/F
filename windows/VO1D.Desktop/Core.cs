@@ -230,6 +230,62 @@ internal sealed class IdentityCrypto : IDisposable
 
     public byte[] Sign(ReadOnlySpan<byte> data) => Ed.Sign(signing, data);
 
+    public static byte[] SignalBindingBytes(string identityKey, string owner) =>
+        Encoding.UTF8.GetBytes($"VO1D-SIGNAL-IDENTITY-2\n{owner}\n{identityKey}");
+
+    public static byte[] BundleBytes(SignalBundleDto bundle) =>
+        Encoding.UTF8.GetBytes(
+            $"VO1D-PREKEY-2\n{bundle.Owner}\n{bundle.IdentityKey}\n{bundle.IdentityBinding}\n{bundle.RegistrationId}\n{bundle.DeviceId}\n{bundle.SignedPrekeyId}\n{bundle.SignedPrekey}\n{bundle.SignedPrekeySignature}\n{bundle.PrekeyId}\n{bundle.Prekey}\n{bundle.KyberPrekeyId}\n{bundle.KyberPrekey}\n{bundle.KyberPrekeySignature}\n{bundle.ExpiresAt}");
+
+    public void CompleteSignalBundle(SignalBundleDto bundle)
+    {
+        bundle.IdentityBinding = Convert.ToBase64String(Sign(SignalBindingBytes(bundle.IdentityKey, Card.Id)));
+        bundle.Signature = Convert.ToBase64String(Sign(BundleBytes(bundle)));
+    }
+
+    public void CompleteSignalPacket(SignalPacketDto packet)
+    {
+        packet.IdentityBinding = Convert.ToBase64String(Sign(SignalBindingBytes(packet.IdentityKey, Card.Id)));
+    }
+
+    private static bool VerifyOuter(ContactCard card, ReadOnlySpan<byte> data, byte[] signature)
+    {
+        var pub = PublicKey.Import(Ed, Convert.FromBase64String(card.SigningKey), KeyBlobFormat.RawPublicKey);
+        return Ed.Verify(pub, data, signature);
+    }
+
+    public static void ValidateSignalBinding(string identityKey, string binding, ContactCard card)
+    {
+        Validate(card);
+        var key = Convert.FromBase64String(identityKey);
+        var sig = Convert.FromBase64String(binding);
+        if (key.Length != 33 || sig.Length != 64 ||
+            !VerifyOuter(card, SignalBindingBytes(identityKey, card.Id), sig))
+            throw new InvalidDataException("Неверная привязка ключа Signal.");
+    }
+
+    public static void ValidateSignalBundle(SignalBundleDto bundle, ContactCard card)
+    {
+        ValidateSignalBinding(bundle.IdentityKey, bundle.IdentityBinding, card);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (!bundle.Owner.Equals(card.Id, StringComparison.Ordinal) ||
+            bundle.DeviceId != 1 ||
+            bundle.ExpiresAt <= now ||
+            bundle.ExpiresAt > now + 8 * 86400)
+            throw new InvalidDataException("Неверный или истёкший набор ключей Signal.");
+
+        var signature = Convert.FromBase64String(bundle.Signature);
+        if (signature.Length != 64 || !VerifyOuter(card, BundleBytes(bundle), signature))
+            throw new InvalidDataException("Подмена набора ключей Signal.");
+    }
+
+    public static void ValidateSignalPacket(SignalPacketDto packet, ContactCard sender)
+    {
+        if (packet.Version != 2 || packet.Ciphertext.Length > 7 * 1024 * 1024)
+            throw new InvalidDataException("Неподдерживаемый пакет Signal.");
+        ValidateSignalBinding(packet.IdentityKey, packet.IdentityBinding, sender);
+    }
+
     public static byte[] CardBytes(ContactCard card) =>
         Encoding.UTF8.GetBytes($"VO1D-CARD-1\n{card.Id}\n{card.SigningKey}\n{card.AgreementKey}");
 
