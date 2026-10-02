@@ -29,6 +29,13 @@ jobs:
         run: |
           if (!(Test-Path "artifacts/VO1D-Windows/VO1D.exe")) { throw "VO1D.exe was not produced" }
           Get-Item "artifacts/VO1D-Windows/VO1D.exe" | Format-List Name,Length,LastWriteTime
+      - name: Launch smoke-test
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "artifacts/VO1D-Windows/VO1D.exe" -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "VO1D.exe exited during launch smoke-test with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
