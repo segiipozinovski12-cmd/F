@@ -42,6 +42,7 @@ jobs:
         run: |
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
+          $env:VO1D_UI_PREVIEW = "1"
           $p = Start-Process -FilePath "artifacts/VO1D-Windows/VO1D.exe" -PassThru
           Start-Sleep -Seconds 5
           $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
