@@ -25,6 +25,7 @@ public partial class MainWindow : Window
 
     private IdentityCrypto crypto = null!;
     private Vo1dApi api = null!;
+    private SignalBridgeClient? signal;
     private VaultState state = new();
     private RoomState? selectedRoom;
     private ContactState? selected;
@@ -58,6 +59,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             poll.Stop();
+            signal?.Dispose();
             api?.Dispose();
             crypto?.Dispose();
         };
@@ -201,10 +203,14 @@ public partial class MainWindow : Window
             state = disk.LoadVault(raw.Storage);
             EnsureMigratedState();
 
+            signal = new SignalBridgeClient();
+            state.SignalSnapshotJson ??= await signal.CreateSnapshotAsync();
+
             api = new Vo1dApi(crypto);
             ConnectionText.Text = "ПОДКЛЮЧЕНИЕ К VO1D…";
             await api.AuthenticateAsync();
             state.PublicCode ??= await api.EnsureCodeAsync();
+            await EnsureSignalReadyAsync();
             Save();
 
             ConnectionText.Text = "ПОДКЛЮЧЁН";
@@ -843,7 +849,7 @@ public partial class MainWindow : Window
         {
             var contact = state.Contacts.FirstOrDefault(x => x.Card.Id == target.Id);
             if (contact?.Blocked == true) continue;
-            var envelope = crypto.Seal(clear, target);
+            var envelope = await SealSignalAsync(clear, target);
             await api.SendEnvelopeAsync(envelope);
         }
     }
@@ -898,7 +904,10 @@ public partial class MainWindow : Window
 
         var clear = JsonSerializer.SerializeToUtf8Bytes(ev, AppJson.Options);
         foreach (var target in cards.Where(c => c.Id != own.Id))
-            await api.SendEnvelopeAsync(crypto.Seal(clear, target));
+        {
+            var envelope = await SealSignalAsync(clear, target);
+            await api.SendEnvelopeAsync(envelope);
+        }
     }
 
     private async Task SyncAsync()
@@ -934,21 +943,35 @@ public partial class MainWindow : Window
                         state.Contacts.Add(contact);
                     }
 
-                    var clear = crypto.Open(env, sender);
-                    using var doc = JsonDocument.Parse(clear);
-                    var root = doc.RootElement;
+                    var outerClear = crypto.Open(env, sender);
+                    byte[] eventClear = outerClear;
 
-                    if (root.TryGetProperty("version", out var version) &&
-                        version.ValueKind == JsonValueKind.Number &&
-                        version.GetInt32() == 2 &&
-                        root.TryGetProperty("ciphertext", out _))
+                    using (var outerDoc = JsonDocument.Parse(outerClear))
                     {
-                        QueueText.Text = "SIGNAL V2";
-                        ProtocolStatus.Text = "Получен SignalPacket v2 · ожидает libsignal";
-                        continue;
+                        var outerRoot = outerDoc.RootElement;
+                        if (outerRoot.TryGetProperty("version", out var version) &&
+                            version.ValueKind == JsonValueKind.Number &&
+                            version.GetInt32() == 2 &&
+                            outerRoot.TryGetProperty("ciphertext", out _))
+                        {
+                            if (signal == null) throw new InvalidOperationException("Signal runtime не запущен.");
+                            state.SignalSnapshotJson ??= await signal.CreateSnapshotAsync();
+
+                            var packet = JsonSerializer.Deserialize<SignalPacketDto>(
+                                outerRoot.GetRawText(), AppJson.Options)
+                                ?? throw new InvalidDataException("Повреждённый SignalPacket.");
+
+                            IdentityCrypto.ValidateSignalPacket(packet, sender);
+                            var decrypted = await signal.DecryptAsync(state.SignalSnapshotJson, sender.Id, packet);
+                            state.SignalSnapshotJson = decrypted.SnapshotJson;
+                            eventClear = decrypted.Clear;
+                            ProtocolStatus.Text = "Signal v2 · PQXDH + Double Ratchet · libsignal 0.70.0";
+                            QueueText.Text = "SIGNAL V2";
+                        }
                     }
 
-                    ApplyIncomingEvent(root, sender);
+                    using var doc = JsonDocument.Parse(eventClear);
+                    ApplyIncomingEvent(doc.RootElement, sender);
                     state.Processed.Add(env.Id);
                     ack.Add(env.Id);
                 }
