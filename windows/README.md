@@ -1,29 +1,62 @@
 # VO1D Desktop for Windows
 
-Windows desktop port of the `codex/anonymous-v2` branch.
+Windows desktop port of the `codex/anonymous-v2` messenger.
 
-## What this build includes
+## Current implementation
 
-- native Windows WinForms shell, black/white VO1D UI;
-- same production relay as the iOS app;
-- Ed25519 identity + X25519 agreement compatible with the outer VO1D v1 envelope;
-- server registration, challenge/session auth, compact 4-character VO1D ID;
-- contact lookup by compact ID, username, or full identity;
-- encrypted local identity (Windows DPAPI) and AES-GCM local vault;
-- direct-message desktop UI and authenticated outer-envelope send/receive;
-- single-file self-contained win-x64 publish.
+- native WPF desktop client for Windows x64;
+- production relay: `https://f-production-bdfe.up.railway.app`;
+- Ed25519 identity + X25519 outer VO1D envelope;
+- official `@signalapp/libsignal-client 0.70.0` packaged into the app runtime;
+- Signal v2 session bootstrap, signed prekeys, PQXDH + Double Ratchet transport and persisted Signal state;
+- direct messages, groups and channels;
+- text, files, images, voice messages, replies, edits, reactions, forwarding and polls;
+- typing/read/delivery state, scheduled send, queue/retry, saved messages and ephemeral media;
+- folders, snippets/templates, bookmarks, drafts, reminders and local per-room settings;
+- encrypted local vault using Windows DPAPI + AES-GCM;
+- local PIN lock and password-encrypted backup/restore;
+- username management, relay privacy controls, one-time invites, server session management and storage statistics;
+- lookup by compact VO1D ID, username, full identity or invite token;
+- single-file self-contained win-x64 build.
 
-## Important protocol boundary
+## Still not parity-complete with iOS
 
-The iOS branch now uses libsignal v2 (PQXDH + Double Ratchet) inside the VO1D transport. This first Windows build deliberately does **not** pretend that the inner libsignal-v2 layer has already been ported. It can validate/decrypt the outer VO1D envelope and recognizes a v2 SignalPacket, but full iOS↔Windows message interoperability requires the next step: port `SignalProtocol.swift` to the desktop libsignal bindings and persist the session/prekey state.
+The Windows client is no longer the old transport-only beta, but several iOS-specific/private-network features are still not fully ported:
 
-That boundary is intentional: silently downgrading to the old protocol would weaken the design.
+- private capability mailboxes and private invitation transport;
+- embedded Tor / SOCKS routing and stream isolation;
+- device-link / limited history archive transfer;
+- live encrypted audio calls;
+- APNs/PushKit equivalents are platform-specific and are not applicable as-is on Windows;
+- OCR, photo redaction / EXIF privacy tooling and some advanced content-review tools;
+- full multi-device live sync is not complete on iOS either.
 
-## Build locally
+Do not describe the project as independently audited or as guaranteeing anonymity.
+
+## Build
+
+The GitHub workflow `Windows Desktop EXE` performs:
+
+1. install and self-test official libsignal runtime;
+2. embed the Signal runtime;
+3. restore and publish a self-contained single-file EXE;
+4. launch smoke-test;
+5. Windows UI Automation composer input test;
+6. UI screenshot capture;
+7. artifact upload.
+
+Local build:
 
 ```powershell
+cd .\windows\VO1D.SignalBridge
+npm install --omit=dev
+node bridge.js --selftest
+cd ..\..
+
+# CI also embeds Node + bridge + node_modules into Resources/SignalBridge.zip
+# before publishing the desktop project.
 dotnet restore .\windows\VO1D.Desktop\VO1D.Desktop.csproj
 dotnet publish .\windows\VO1D.Desktop\VO1D.Desktop.csproj -c Release -r win-x64 --self-contained true
 ```
 
-The GitHub workflow builds the executable automatically.
+For the reproducible packaged build, prefer the GitHub Actions artifact because it includes the embedded Signal runtime.
