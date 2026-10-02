@@ -54,6 +54,8 @@ public partial class MainWindow : Window
         poll.Tick += async (_, _) =>
         {
             ExpireMessages();
+            ApplyLocalRetention();
+            CheckLocalReminders();
             await FlushScheduledAsync();
             await SyncAsync();
         };
@@ -360,6 +362,11 @@ public partial class MainWindow : Window
         state.Processed ??= new();
         state.HiddenRooms ??= new();
         state.Folders ??= new();
+        state.Reminders ??= new();
+        state.Snippets ??= new();
+        state.RoomRetentionDays ??= new();
+        state.RoomTextScale ??= new();
+        state.RoomNotes ??= new();
         state.Preferences ??= new DesktopPreferences();
 
         var own = crypto.Card.Id;
@@ -559,7 +566,8 @@ public partial class MainWindow : Window
 
         foreach (var contact in source)
         {
-            var title = string.IsNullOrWhiteSpace(contact.Name) ? "Ghost " + contact.Card.Id[..6].ToUpperInvariant() : contact.Name;
+            var baseTitle = string.IsNullOrWhiteSpace(contact.Name) ? "Ghost " + contact.Card.Id[..6].ToUpperInvariant() : contact.Name;
+            var title = string.IsNullOrWhiteSpace(contact.Alias) ? baseTitle : contact.Alias;
             var flags = new List<string>();
             if (contact.Favorite) flags.Add("★");
             if (contact.Verified) flags.Add("VERIFIED");
@@ -608,7 +616,7 @@ public partial class MainWindow : Window
         {
             var peer = room.MemberIds.FirstOrDefault(id => id != crypto.Card.Id);
             var c = state.Contacts.FirstOrDefault(x => x.Card.Id == peer);
-            if (c != null) return c.Name;
+            if (c != null) return string.IsNullOrWhiteSpace(c.Alias) ? c.Name : c.Alias;
         }
         return room.IsChannel ? "Канал" : room.IsGroup ? "Группа" : "Разговор";
     }
@@ -668,7 +676,9 @@ public partial class MainWindow : Window
             var reply = !string.IsNullOrWhiteSpace(m.ReplyTo)
                 ? messages.FirstOrDefault(x => x.Id == m.ReplyTo)?.Text
                 : null;
-            visibleMessages.Add(MessageVm.From(m, reply, state.Preferences.TextScale));
+            var scale = state.RoomTextScale.TryGetValue(selectedRoom.Id, out var roomScale)
+                ? roomScale : state.Preferences.TextScale;
+            visibleMessages.Add(MessageVm.From(m, reply, scale));
         }
 
         var pinId = selectedRoom.PinnedMessageIds.LastOrDefault();
