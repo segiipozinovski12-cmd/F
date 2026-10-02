@@ -356,7 +356,8 @@
                   </Button>
                   <Border Grid.Column="1" Style="{StaticResource InputShell}" Margin="9,0" MinHeight="44" MaxHeight="130">
                     <Grid>
-                      <TextBox x:Name="ComposerBox" Style="{StaticResource BareTextBox}" TextWrapping="Wrap" AcceptsReturn="True"
+                      <TextBox x:Name="ComposerBox" AutomationProperties.AutomationId="VO1D_Composer" AutomationProperties.Name="Message composer"
+                               Style="{StaticResource BareTextBox}" TextWrapping="Wrap" AcceptsReturn="True"
                                VerticalScrollBarVisibility="Auto" KeyDown="ComposerBox_KeyDown" TextChanged="ComposerBox_TextChanged" IsEnabled="False"/>
                       <TextBlock x:Name="ComposerHint" Text="Сообщение" Foreground="#65FFFFFF" IsHitTestVisible="False" VerticalAlignment="Center"/>
                     </Grid>
