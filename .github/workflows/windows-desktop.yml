@@ -64,18 +64,46 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class Win32Capture {
+            [StructLayout(LayoutKind.Sequential)]
+            public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+            [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+          }
+          "@
           $env:VO1D_UI_PREVIEW = "1"
           $p = Start-Process -FilePath "artifacts/VO1D-Windows/VO1D.exe" -PassThru
-          Start-Sleep -Seconds 5
-          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+
+          $deadline = (Get-Date).AddSeconds(15)
+          do {
+            Start-Sleep -Milliseconds 500
+            $p.Refresh()
+          } while (!$p.HasExited -and $p.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline)
+
+          if ($p.HasExited) { throw "VO1D.exe exited before UI capture with code $($p.ExitCode)" }
+          if ($p.MainWindowHandle -eq 0) { throw "VO1D main window was not created in time" }
+
+          [Win32Capture]::ShowWindowAsync($p.MainWindowHandle, 9) | Out-Null
+          [Win32Capture]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+          Start-Sleep -Milliseconds 800
+
+          $rect = New-Object Win32Capture+RECT
+          if (![Win32Capture]::GetWindowRect($p.MainWindowHandle, [ref]$rect)) { throw "Could not read VO1D window bounds" }
+
+          $width = [Math]::Max(1, $rect.Right - $rect.Left)
+          $height = [Math]::Max(1, $rect.Bottom - $rect.Top)
+          $bmp = New-Object System.Drawing.Bitmap $width, $height
           $gfx = [System.Drawing.Graphics]::FromImage($bmp)
-          $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+          $gfx.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing.Size $width, $height))
           $bmp.Save((Join-Path $PWD "artifacts/VO1D-Windows/VO1D-preview.png"), [System.Drawing.Imaging.ImageFormat]::Png)
           $gfx.Dispose()
           $bmp.Dispose()
+
           if (!$p.HasExited) { Stop-Process -Id $p.Id -Force }
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
