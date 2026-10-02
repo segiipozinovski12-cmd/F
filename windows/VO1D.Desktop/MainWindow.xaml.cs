@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        FitWindowToWorkArea();
         RoomList.ItemsSource = rooms;
         PeopleList.ItemsSource = people;
         MessageList.ItemsSource = visibleMessages;
@@ -51,6 +52,15 @@ public partial class MainWindow : Window
         await BootAsync();
         await Task.Delay(720);
         HideSplash();
+    }
+
+    private void FitWindowToWorkArea()
+    {
+        var work = SystemParameters.WorkArea;
+        Width = Math.Max(MinWidth, Math.Min(1200, work.Width - 28));
+        Height = Math.Max(MinHeight, Math.Min(780, work.Height - 28));
+        Left = work.Left + Math.Max(0, (work.Width - Width) / 2);
+        Top = work.Top + Math.Max(0, (work.Height - Height) / 2);
     }
 
     private void ApplyWindowsBackdrop()
