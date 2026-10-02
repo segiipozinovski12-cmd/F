@@ -89,7 +89,7 @@ internal sealed class IdentityCrypto : IDisposable
 {
     private static readonly SignatureAlgorithm Ed = SignatureAlgorithm.Ed25519;
     private static readonly KeyAgreementAlgorithm X = KeyAgreementAlgorithm.X25519;
-    private static readonly KeyCreationParameters Exportable = new()
+    private static KeyCreationParameters Exportable() => new()
     {
         ExportPolicy = KeyExportPolicies.AllowPlaintextExport
     };
@@ -101,14 +101,14 @@ internal sealed class IdentityCrypto : IDisposable
     public IdentityCrypto(LocalIdentity raw)
     {
         Raw = raw;
-        signing = Key.Import(Ed, raw.Signing, KeyBlobFormat.RawPrivateKey, Exportable);
-        agreement = Key.Import(X, raw.Agreement, KeyBlobFormat.RawPrivateKey, Exportable);
+        signing = Key.Import(Ed, raw.Signing, KeyBlobFormat.RawPrivateKey, Exportable());
+        agreement = Key.Import(X, raw.Agreement, KeyBlobFormat.RawPrivateKey, Exportable());
     }
 
     public static LocalIdentity Create()
     {
-        using var sign = new Key(Ed, Exportable);
-        using var agree = new Key(X, Exportable);
+        using var sign = new Key(Ed, Exportable());
+        using var agree = new Key(X, Exportable());
         return new LocalIdentity
         {
             Signing = sign.Export(KeyBlobFormat.RawPrivateKey),
@@ -158,7 +158,7 @@ internal sealed class IdentityCrypto : IDisposable
     {
         Validate(recipient);
         var own = Card;
-        using var ephemeral = new Key(X, Exportable);
+        using var ephemeral = new Key(X, Exportable());
         using var remote = PublicKey.Import(X, Convert.FromBase64String(recipient.AgreementKey), KeyBlobFormat.RawPublicKey);
         using var shared = X.Agree(ephemeral, remote) ?? throw new CryptographicException("X25519 key agreement failed");
 
