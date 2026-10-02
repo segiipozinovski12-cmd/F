@@ -19,4 +19,9 @@
     <PackageReference Include="NSec.Cryptography" Version="24.4.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\SignalBridge.zip"
+                      Condition="Exists('Resources\SignalBridge.zip')"
+                      LogicalName="VO1D.SignalBridge.zip" />
+  </ItemGroup>
 </Project>
