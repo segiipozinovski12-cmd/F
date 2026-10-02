@@ -117,8 +117,12 @@
               </StackPanel>
               <TextBlock Text="Сообщения" FontSize="34" FontWeight="Black" Margin="0,17,0,0"/>
             </StackPanel>
-            <Button Style="{StaticResource RoundIconButton}" Content="&#xE710;" Background="White" Foreground="Black"
-                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="50" Height="50" Click="OpenCompose_Click"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+              <Button Style="{StaticResource RoundIconButton}" Content="&#xE8A4;" Width="44" Height="44" Margin="0,0,8,3"
+                      ToolTip="Сохранённые сообщения" Click="OpenSaved_Click"/>
+              <Button Style="{StaticResource RoundIconButton}" Content="&#xE710;" Background="White" Foreground="Black"
+                      Width="50" Height="50" Click="OpenCompose_Click"/>
+            </StackPanel>
           </Grid>
 
           <Grid Grid.Row="1" Margin="2,15,2,13">
@@ -218,18 +222,19 @@
             <Grid.RowDefinitions><RowDefinition Height="78"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Border BorderBrush="#14FFFFFF" BorderThickness="0,0,0,1" Padding="20,14">
               <Grid>
-                <StackPanel Orientation="Horizontal">
+                <Grid Margin="0,0,150,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="50"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                   <Border Width="50" Height="50" CornerRadius="17" Background="#14FFFFFF" BorderBrush="#24FFFFFF" BorderThickness="1">
                     <TextBlock x:Name="ChatInitial" Text="V" FontWeight="Black" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                   </Border>
-                  <StackPanel Margin="13,4,0,0">
+                  <StackPanel Grid.Column="1" Margin="13,4,0,0">
                     <TextBlock x:Name="ChatTitle" Text="VO1D Desktop" FontWeight="Bold" FontSize="17" TextTrimming="CharacterEllipsis"/>
                     <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
                       <TextBlock Text="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="10" Foreground="#8FFFFFFF" Margin="0,0,6,0"/>
                       <TextBlock x:Name="ChatSubtitle" Text="E2EE · PRIVATE CHANNEL" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#8FFFFFFF"/>
                     </StackPanel>
                   </StackPanel>
-                </StackPanel>
+                </Grid>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                   <Button Style="{StaticResource RoundIconButton}" Content="&#xE721;" Margin="0,0,8,0" ToolTip="Поиск" Click="FocusChatSearch_Click"/>
                   <Button Style="{StaticResource RoundIconButton}" Content="&#xE717;" Margin="0,0,8,0" ToolTip="Звонок"/>
@@ -275,11 +280,15 @@
                               <TextBlock Text="{Binding ReplyPreview}" FontSize="11" Foreground="{Binding MetaBrush}" TextTrimming="CharacterEllipsis"/>
                             </Border>
                             <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="{Binding FontSize}" Foreground="{Binding ForegroundBrush}"/>
+                            <Border Margin="0,8,0,0" CornerRadius="16" ClipToBounds="True" Visibility="{Binding ImageVisibility}">
+                              <Image Source="{Binding ImagePreview}" MaxWidth="520" MaxHeight="330" Stretch="Uniform"/>
+                            </Border>
                             <Border Background="#0DFFFFFF" CornerRadius="10" Padding="9,7" Margin="0,8,0,0" Visibility="{Binding AttachmentVisibility}">
-                              <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE8A5;" FontFamily="Segoe Fluent Icons" Margin="0,0,8,0" Foreground="{Binding MetaBrush}"/>
-                                <TextBlock Text="{Binding AttachmentName}" FontSize="11" Foreground="{Binding ForegroundBrush}" TextTrimming="CharacterEllipsis"/>
-                              </StackPanel>
+                              <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE8A5;" FontFamily="Segoe Fluent Icons" Foreground="{Binding MetaBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="{Binding AttachmentName}" FontSize="11" Foreground="{Binding ForegroundBrush}" TextTrimming="CharacterEllipsis"/>
+                              </Grid>
                             </Border>
                             <TextBlock Text="{Binding ReactionsText}" FontSize="11" Margin="0,7,0,0" Visibility="{Binding ReactionsVisibility}" Foreground="{Binding ForegroundBrush}"/>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="8,7,0,0">
@@ -327,7 +336,17 @@
                   </Border>
                   <Button Grid.Column="2" Style="{StaticResource RoundIconButton}" Content="&#xE720;" Width="40" Height="40" ToolTip="Голосовое" IsEnabled="False"/>
                   <Button x:Name="SendButton" Grid.Column="3" Style="{StaticResource RoundIconButton}" Content="&#xE74A;" Width="40" Height="40"
-                          Background="White" Foreground="Black" Click="Send_Click" IsEnabled="False"/>
+                          Background="White" Foreground="Black" Click="Send_Click" IsEnabled="False">
+                    <Button.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="Отправить без звука" Click="SendSilent_Click"/>
+                        <Separator/>
+                        <MenuItem Header="Через 1 минуту" Click="SendInMinute_Click"/>
+                        <MenuItem Header="Через 10 минут" Click="SendInTenMinutes_Click"/>
+                        <MenuItem Header="Через 1 час" Click="SendInHour_Click"/>
+                      </ContextMenu>
+                    </Button.ContextMenu>
+                  </Button>
                 </Grid>
                 <TextBlock x:Name="PendingAttachmentText" Text="" FontSize="10" Foreground="#7FFFFFFF" Margin="54,6,0,0" Visibility="Collapsed"/>
               </StackPanel>
@@ -401,7 +420,7 @@
               <TextBlock Text="Инструменты" FontSize="36" FontWeight="Black" Margin="0,4,0,0"/>
               <TextBlock Text="Черновики, отложенные, закладки и локальное хранилище" Foreground="#8FFFFFFF" Margin="0,6,0,0"/>
             </StackPanel>
-            <UniformGrid Grid.Row="1" Columns="4" Margin="0,20,0,14">
+            <UniformGrid Grid.Row="1" Columns="2" Margin="0,20,0,14">
               <Border Style="{StaticResource GlassCard}" Margin="0,0,8,0" Padding="14"><StackPanel><TextBlock Text="ЧЕРНОВИКИ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="DraftCount" Text="0" FontSize="27" FontWeight="Black" Margin="0,6,0,0"/></StackPanel></Border>
               <Border Style="{StaticResource GlassCard}" Margin="0,0,8,0" Padding="14"><StackPanel><TextBlock Text="ОТЛОЖЕННЫЕ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="ScheduledCount" Text="0" FontSize="27" FontWeight="Black" Margin="0,6,0,0"/></StackPanel></Border>
               <Border Style="{StaticResource GlassCard}" Margin="0,0,8,0" Padding="14"><StackPanel><TextBlock Text="ЗАКЛАДКИ" FontFamily="{StaticResource MonoFont}" FontSize="8" Foreground="#72FFFFFF"/><TextBlock x:Name="BookmarkCount" Text="0" FontSize="27" FontWeight="Black" Margin="0,6,0,0"/></StackPanel></Border>
@@ -513,7 +532,7 @@
 
     <!-- add contact -->
     <Grid x:Name="ModalLayer" Background="#C3000000" Visibility="Collapsed" Panel.ZIndex="90" MouseDown="ModalLayer_MouseDown">
-      <Border x:Name="AddCard" Style="{StaticResource GlassCard}" MaxWidth="480" Margin="24" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center"
+      <Border x:Name="AddCard" Style="{StaticResource GlassCard}" Width="440" MaxWidth="92%" Margin="20" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center"
               MouseDown="AddCard_MouseDown" RenderTransformOrigin="0.5,0.5">
         <Border.RenderTransform><ScaleTransform x:Name="AddCardScale" ScaleX="0.96" ScaleY="0.96"/></Border.RenderTransform>
         <StackPanel>
@@ -528,7 +547,7 @@
 
     <!-- compose group/channel -->
     <Grid x:Name="ComposeLayer" Background="#C3000000" Visibility="Collapsed" Panel.ZIndex="91" MouseDown="ComposeLayer_MouseDown">
-      <Border x:Name="ComposeCard" Style="{StaticResource GlassCard}" MaxWidth="560" MaxHeight="680" Margin="24" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center" MouseDown="ComposeCard_MouseDown">
+      <Border x:Name="ComposeCard" Style="{StaticResource GlassCard}" Width="520" MaxWidth="92%" MaxHeight="82%" Margin="20" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center" MouseDown="ComposeCard_MouseDown">
         <Grid>
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <StackPanel><TextBlock Text="НОВЫЙ РАЗГОВОР" FontFamily="{StaticResource MonoFont}" FontSize="9" Foreground="#7FFFFFFF"/><TextBlock Text="Создать" FontSize="28" FontWeight="Black" Margin="0,5,0,0"/></StackPanel>
