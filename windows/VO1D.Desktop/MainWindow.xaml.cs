@@ -469,6 +469,7 @@ public partial class MainWindow : Window
     private void ApplySettingsToUi()
     {
         SettingsCode.Text = state.PublicCode ?? "----";
+        SettingsUsername.Text = string.IsNullOrWhiteSpace(state.Username) ? "@—" : "@" + state.Username;
         SettingsFingerprint.Text = crypto.Card.Id.ToUpperInvariant();
         MiniInitial.Text = string.IsNullOrWhiteSpace(state.Nickname) ? "V" : state.Nickname[..1].ToUpperInvariant();
 
