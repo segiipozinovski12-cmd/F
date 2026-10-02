@@ -301,7 +301,8 @@
                             <Border Margin="0,8,0,0" CornerRadius="16" ClipToBounds="True" Visibility="{Binding ImageVisibility}">
                               <Image Source="{Binding ImagePreview}" MaxWidth="520" MaxHeight="330" Stretch="Uniform" MouseLeftButtonDown="MessageMedia_Click"/>
                             </Border>
-                            <Border Background="#0DFFFFFF" CornerRadius="10" Padding="9,7" Margin="0,8,0,0" Visibility="{Binding AttachmentVisibility}">
+                            <Border Background="#0DFFFFFF" CornerRadius="10" Padding="9,7" Margin="0,8,0,0" Visibility="{Binding AttachmentVisibility}"
+                                    MouseLeftButtonDown="MessageAttachment_Click" Cursor="Hand">
                               <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <TextBlock Text="&#xE8A5;" FontFamily="Segoe Fluent Icons" Foreground="{Binding MetaBrush}" VerticalAlignment="Center"/>
@@ -360,7 +361,8 @@
                       <TextBlock x:Name="ComposerHint" Text="Сообщение" Foreground="#65FFFFFF" IsHitTestVisible="False" VerticalAlignment="Center"/>
                     </Grid>
                   </Border>
-                  <Button Grid.Column="2" Style="{StaticResource RoundIconButton}" Content="&#xE720;" Width="40" Height="40" ToolTip="Голосовое" IsEnabled="False"/>
+                  <Button x:Name="VoiceButton" Grid.Column="2" Style="{StaticResource RoundIconButton}" Content="&#xE720;" Width="40" Height="40"
+                          ToolTip="Голосовое" Click="Voice_Click" IsEnabled="False"/>
                   <Button x:Name="SendButton" Grid.Column="3" Style="{StaticResource RoundIconButton}" Content="&#xE74A;" Width="40" Height="40"
                           Background="White" Foreground="Black" Click="Send_Click" IsEnabled="False">
                     <Button.ContextMenu>
