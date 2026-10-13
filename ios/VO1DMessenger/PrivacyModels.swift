@@ -215,7 +215,7 @@ struct RelayStorage: Codable {
     var fileBytes: Int
 }
 
-struct DeliveryIssue: Identifiable {
+struct DeliveryIssue: Codable, Identifiable {
     var id: String
     var detail: String
     var attempts: Int

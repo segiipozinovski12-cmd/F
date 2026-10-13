@@ -22,6 +22,7 @@ struct Contact: Codable, Identifiable, Hashable {
     var name: String
     var verified = false
     var blocked = false
+    var isBot: Bool? = nil
     var id: String { card.id }
 }
 
@@ -162,6 +163,12 @@ struct PendingDelivery: Codable, Identifiable {
 }
 
 struct VaultState: Codable {
+    var managedBots: [ManagedBot]? = nil
+    var secureNotes: [SecureNote]? = nil
+    var pendingReports: [PendingReport]? = nil
+    var submittedReports: [ReportReceipt]? = nil
+    var moderationPins: [String: ContactCard]? = nil
+    var deliveryRetryState: [String: DeliveryIssue]? = nil
     var extended: ExtendedState? = nil
     var nickname = "Ghost"
     var server = ""

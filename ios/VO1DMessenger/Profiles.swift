@@ -72,7 +72,7 @@ extension ChatStore {
         CallManager.shared.disconnect(); api?.invalidate(); api = nil
         BackgroundCalls.clear(); MediaFiles.clear(); ResumableDownload.clear(); NotificationCoordinator.shared.clearAll()
         profileRegistry = registry; identity = nextIdentity; ownCard = try nextIdentity.card; vault = nextVault; state = nextState
-        deliveryIssues = [:]; typing = [:]; activeRoomID = nil; notificationRoomID = nil
+        deliveryIssues = nextState.deliveryRetryState ?? [:]; typing = [:]; activeRoomID = nil; notificationRoomID = nil
         revealedHiddenRooms = false; locked = state.appLock; sessionUnlocked = !state.onboarded; error = nil
         connection = state.onboarded ? "Подключение…" : "Новая независимая личность"
         if state.onboarded { await connectProductionRelay() }

@@ -37,6 +37,18 @@ struct SettingsView: View {
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
                         }.buttonStyle(.plain)
                         keysCard
+                        NavigationLink { BotFatherView() } label: {
+                            Label("@vo1d_bot_father · МОИ БОТЫ", systemImage: "terminal")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(.plain)
+                        NavigationLink { ReportCenterView() } label: {
+                            Label("ЖАЛОБЫ И МОДЕРАЦИЯ", systemImage: "flag")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(.plain)
+                        NavigationLink { NextSecurityCenterView() } label: {
+                            Label("SECURITY CHECK И TRUST CIRCLE", systemImage: "checkmark.shield")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(.plain)
                         NavigationLink {
                             ToolsCenterView()
                         } label: {

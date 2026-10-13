@@ -20,6 +20,20 @@ enum SafeContent {
         return components.url ?? url
     }
 
+    static func linkWarnings(_ url: URL) -> [String] {
+        var warnings: [String] = []
+        let host = (url.host ?? "").lowercased()
+        if url.scheme?.lowercased() == "http" { warnings.append("Соединение с сайтом не защищено HTTPS") }
+        if url.user != nil || url.password != nil { warnings.append("В адресе встроены учётные данные") }
+        if host.contains("xn--") || host.unicodeScalars.contains(where: { $0.value > 127 }) { warnings.append("Международное имя может выглядеть как другой домен") }
+        if host.contains(":") || host.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) != nil { warnings.append("Адрес использует IP вместо имени сайта") }
+        if ["bit.ly", "t.co", "tinyurl.com", "is.gd", "cutt.ly"].contains(host) { warnings.append("Короткая ссылка скрывает конечный сайт") }
+        if let port = url.port, ![80,443].contains(port) { warnings.append("Необычный порт подключения") }
+        let decoded = url.absoluteString.removingPercentEncoding ?? url.absoluteString
+        if decoded.unicodeScalars.contains(where: { (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) || (0x200B...0x200F).contains($0.value) }) { warnings.append("В адресе есть невидимые или меняющие направление текста символы") }
+        return warnings
+    }
+
     static func links(in text: String) -> [URL] {
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return [] }
         return detector.matches(in: text, range: NSRange(text.startIndex..., in: text))

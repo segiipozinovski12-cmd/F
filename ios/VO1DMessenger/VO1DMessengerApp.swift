@@ -106,12 +106,12 @@ struct RootView: View {
         .environment(\.openURL,OpenURLAction { url in
             guard ["http","https"].contains(url.scheme?.lowercased() ?? ""), url.user==nil, url.password==nil else { return .discarded }
             let clean=store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url
-            if store.preferences.confirmLinks || store.preferences.proxyEnabled || store.preferences.embeddedTor { pendingLink=clean; return .handled }
+            if store.preferences.confirmLinks || store.preferences.proxyEnabled || store.preferences.embeddedTor || !SafeContent.linkWarnings(clean).isEmpty { pendingLink=clean; return .handled }
             return .systemAction(clean)
         })
         .confirmationDialog("Открыть внешний сайт?",isPresented:Binding(get:{ pendingLink != nil },set:{ if !$0 { pendingLink=nil } }),titleVisibility:.visible) {
             if let url=pendingLink { Button("Открыть \(url.host ?? "сайт")") { UIApplication.shared.open(url); pendingLink=nil } }
-        } message: { Text("Сайт увидит адрес подключения браузера. Прокси VO1D не распространяется на браузер.") }
+        } message: { Text((["Сайт увидит адрес подключения браузера. Прокси VO1D не распространяется на браузер."] + (pendingLink.map { SafeContent.linkWarnings($0) } ?? [])).joined(separator: "\n")) }
         .onOpenURL { url in
             if url.scheme=="vo1d", ["contact","invite","private"].contains(url.host ?? "") { incomingContact=url.absoluteString }
         }

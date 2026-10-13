@@ -340,7 +340,12 @@ struct ChatLinksView: View {
             ForEach(store.messages(roomID).filter { !SafeContent.links(in:$0.text).isEmpty }) { message in
                 Section {
                     ForEach(SafeContent.links(in:message.text),id:\.absoluteString) { url in
-                        Link(destination:store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url) { Text(url.host ?? "Ссылка") }
+                        VStack(alignment: .leading, spacing: 5) {
+                            Link(destination:store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url) { Text(url.host ?? "Ссылка") }
+                            ForEach(SafeContent.linkWarnings(url), id: \.self) { warning in
+                                Label(warning, systemImage: "exclamationmark.shield").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     NavigationLink("Перейти к сообщению") { ChatView(roomID:roomID,initialMessageID:message.id) }
                 }

@@ -27,13 +27,16 @@ final class APIClient {
     private var capabilitySessions: [String:URLSession] = [:]
     private let capabilityNamespace = UUID().uuidString
     private let callToken: String?
+    private let botToken: String?
+    private var authenticationTask: Task<Void, Error>?
 
-    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil, botToken: String? = nil) throws {
         base = try Self.validateURL(server,privacy:privacy)
         self.privacy = privacy
         self.identity = identity
         self.authenticationCard = authenticationCard
         self.callToken = callToken
+        self.botToken = botToken
         let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
     }
@@ -53,6 +56,7 @@ final class APIClient {
         return session
     }
     func invalidate() {
+        authenticationTask?.cancel()
         session.invalidateAndCancel()
         for client in capabilitySessions.values { client.invalidateAndCancel() }
         capabilitySessions = [:]
@@ -76,23 +80,25 @@ final class APIClient {
         throw MessengerError.invalid("Для подключения нужен HTTPS. HTTP доступен только для localhost в Debug.")
     }
 
-    private func raw(_ path: String, method: String, body: Data?) async throws -> (Data, Int) {
+    private func raw(_ path: String, method: String, body: Data?, moderationToken: String? = nil) async throws -> (Data, Int) {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let botToken { request.setValue("BotCapability \(botToken)", forHTTPHeaderField: "Authorization") }
+        if let moderationToken { request.setValue(moderationToken, forHTTPHeaderField: "X-Moderation-Token") }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MessengerError.invalid("Нет ответа сервера") }
         return (data, http.statusCode)
     }
 
-    func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true) async throws -> T {
+    func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true, moderationToken: String? = nil) async throws -> T {
         guard callToken == nil else { throw MessengerError.invalid("Фоновое разрешение доступно только для звонков") }
-        let (data, status) = try await raw(path, method: method, body: body)
-        if status == 401 && retry {
+        let (data, status) = try await raw(path, method: method, body: body, moderationToken: moderationToken)
+        if status == 401 && retry && botToken == nil {
             try await authenticate()
-            return try await request(path, method: method, body: body, retry: false)
+            return try await request(path, method: method, body: body, retry: false, moderationToken: moderationToken)
         }
         guard (200..<300).contains(status) else {
             let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка сервера \(status)"
@@ -102,6 +108,15 @@ final class APIClient {
     }
 
     func authenticate() async throws {
+        if let authenticationTask { return try await authenticationTask.value }
+        let task = Task { try await self.performAuthentication() }
+        authenticationTask = task
+        defer { authenticationTask = nil }
+        try await task.value
+    }
+
+    private func performAuthentication() async throws {
+        guard botToken == nil else { throw MessengerError.invalid("Токен бота не авторизует аккаунт владельца") }
         guard callToken == nil else { throw MessengerError.invalid("Разрешение звонков не авторизует аккаунт") }
         token = nil
         let card: ContactCard

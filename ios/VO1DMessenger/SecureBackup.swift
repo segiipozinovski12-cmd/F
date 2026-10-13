@@ -100,8 +100,11 @@ enum SecureBackup {
         local.invitationBundles = [:]; local.pendingEvents = []; local.reminders = []
         local.privacy.streamIsolation = ""
         payload.state.outbox = []; payload.state.processed = []
+        payload.state.pendingReports = nil; payload.state.deliveryRetryState = nil
+        payload.state.managedBots = nil
         payload.state.extended = local
         if mode == .history {
+            payload.state.secureNotes = nil
             payload.identity = nil
             payload.state.accessKey = nil; payload.state.panicCodeHash = nil
             payload.state.publicCode = nil; payload.state.username = nil
@@ -122,7 +125,7 @@ enum SecureBackup {
 
 extension Keychain {
     static func replace(_ identity: LocalIdentity, profileID: String = "default") throws {
-        try Crypto.validate(identity.card)
+        try identity.validate()
         let query: [String:Any] = [kSecClass as String:kSecClassGenericPassword,
             kSecAttrService as String:service,kSecAttrAccount as String:account(profileID)]
         let data=try Wire.encoder.encode(identity)

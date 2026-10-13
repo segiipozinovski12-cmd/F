@@ -22,6 +22,9 @@ final class ChatStore: ObservableObject {
     var vault: Vault?
     var api: APIClient?
     private var syncing = false
+    var botsSyncing = false
+    var botCursor = 0
+    @Published var botStatuses: [String: String] = [:]
     private var connectingGeneration: Int?
     var generation = 0
     @Published var revealedHiddenRooms = false
@@ -61,6 +64,8 @@ final class ChatStore: ObservableObject {
         let vault = try Vault(profileID: profileID)
         self.identity = identity; self.vault = vault; ownCard = try identity.card
         state = try vault.read(key: identity.storage)
+        botStatuses = [:]
+        deliveryIssues = state.deliveryRetryState ?? [:]
         if state.extended == nil {
             var migrated = ExtendedState()
             migrated.trustedIDs = state.contacts.filter { !$0.blocked && !isBuiltinBot($0.id) }.map(\.id)
@@ -96,6 +101,7 @@ final class ChatStore: ObservableObject {
     }
     func save() throws {
         guard fatalError == nil, let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
+        state.deliveryRetryState = deliveryIssues.filter { key, _ in state.outbox.contains(where: { $0.id == key }) }
         try vault.write(state, key: identity.storage)
         BackgroundCalls.save(self)
     }
@@ -529,7 +535,8 @@ final class ChatStore: ObservableObject {
             return existing
         }
         try bindScopedID(card.id,scope:.contact)
-        let contact = Contact(card: card, name: name)
+        let bot = try? await api?.botDirectory(card.id)
+        let contact = Contact(card: card, name: bot?.name ?? name, isBot: bot != nil)
         state.contacts.append(contact)
         changeExtended { if !$0.trustedIDs.contains(card.id) { $0.trustedIDs.append(card.id) } }
         try? await trustOnServer(card.id,trusted:true)
@@ -1398,6 +1405,7 @@ final class ChatStore: ObservableObject {
         syncing = true; let currentGeneration = generation
         defer { syncing = false }
         do {
+            try await flushReports(api: api, generation: currentGeneration)
             processScheduledMessages()
             expire()
             try await maintainSignalPrekeys(api: api, identity: identity, generation: currentGeneration)
@@ -1465,6 +1473,7 @@ final class ChatStore: ObservableObject {
             try save()
             if !ack.isEmpty { try await api.ack(ack) }
             connection = "Подключён"
+            await syncManagedBots(generation: currentGeneration)
         } catch {
             guard currentGeneration == generation else { return }
             connection = "Нет связи · очередь сохранена"

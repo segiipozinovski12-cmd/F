@@ -35,6 +35,7 @@ struct ChatView: View {
     @State private var pollBuilder = false
     @State private var historyMessage: ChatMessage?
     @State private var forwarding: ChatMessage?
+    @State private var reportTarget: ReportTarget?
     @State private var selectedTopic: String?
     @StateObject private var audio = VoiceRecorder()
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
@@ -220,6 +221,13 @@ struct ChatView: View {
                         Button("Фильтр по автору и дате") { filterSheet=true }
                         NavigationLink("Ссылки чата") { ChatLinksView(roomID:roomID) }
                         NavigationLink("Настройки чата") { RoomToolsView(roomID:roomID) }
+                        if let room, !store.isLocalUtilityRoom(roomID) {
+                            Menu("Пожаловаться") {
+                                ForEach(room.members.filter { $0.id != store.myID }) { member in
+                                    Button(store.name(member.id)) { reportTarget = ReportTarget(subject: member.id, source: "chat", roomID: roomID) }
+                                }
+                            }
+                        }
                         Menu("Вставить шаблон") {
                             ForEach(store.extended.snippets,id:\.self) { snippet in Button(String(snippet.prefix(40))) { text += (text.isEmpty ? "" : "\n")+snippet } }
                         }
@@ -266,6 +274,7 @@ struct ChatView: View {
                 }
             }
             .sheet(isPresented: $info) { RoomInfoView(roomID: roomID) }
+            .sheet(item: $reportTarget) { ReportComposerView(target: $0) }
             .sheet(item:$photoDraft) { draft in PhotoPrivacyEditor(draft:draft) { attachment in send(attachment) } }
             .sheet(item:$reviewFile) { review in FileReviewView(review:review) { data,mime,name in
                 Task { await processFileData(data,mime:mime,name:name) }
@@ -532,6 +541,9 @@ struct ChatView: View {
     }
     @ViewBuilder
     func messageActions(_ message: ChatMessage,mine: Bool) -> some View {
+                    if !mine && !store.isLocalUtilityRoom(roomID) {
+                        Button("Пожаловаться", systemImage: "flag") { reportTarget = ReportTarget(subject: message.sender, source: "message", roomID: roomID, messageID: message.id) }
+                    }
 
                     Button(store.extended.bookmarks.contains(message.id) ? "Убрать закладку" : "В закладки",systemImage:"bookmark") { store.toggleBookmark(message.id) }
                     Button("Статусы участников",systemImage:"checkmark.circle") { detailsMessage=message }

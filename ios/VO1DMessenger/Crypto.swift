@@ -6,6 +6,14 @@ struct LocalIdentity: Codable {
     let signing: Data
     let agreement: Data
     let storage: Data
+    func validate() throws {
+        guard signing.count == 32, agreement.count == 32, storage.count == 32 else {
+            throw MessengerError.invalid("Запись ключей повреждена. Восстанови зашифрованную копию личности.")
+        }
+        _ = try signingPrivate
+        _ = try agreementPrivate
+        try Crypto.validate(card)
+    }
     static func create() throws -> LocalIdentity {
         LocalIdentity(signing: Curve25519.Signing.PrivateKey().rawRepresentation,
                       agreement: Curve25519.KeyAgreement.PrivateKey().rawRepresentation,
@@ -119,13 +127,18 @@ enum Keychain {
                                    kSecAttrAccount as String: account(profileID), kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecSuccess, let data = item as? Data { return try Wire.decoder.decode(LocalIdentity.self, from: data) }
+        if status == errSecSuccess, let data = item as? Data {
+            let identity = try Wire.decoder.decode(LocalIdentity.self, from: data)
+            try identity.validate()
+            return identity
+        }
         guard status == errSecItemNotFound else { throw MessengerError.invalid("Keychain недоступен (\(status))") }
         let identity = try LocalIdentity.create()
         let insert: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account(profileID), kSecValueData as String: try Wire.encoder.encode(identity),
                                     kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         let result = SecItemAdd(insert as CFDictionary, nil)
+        if result == errSecDuplicateItem { return try load(profileID: profileID) }
         guard result == errSecSuccess else { throw MessengerError.invalid("Не удалось сохранить ключи (\(result))") }
         return identity
     }

@@ -50,6 +50,9 @@ struct ContactsView: View {
                         Picker("Контакты",selection:$contactFilter) {
                             ForEach(["Все","Избранные","Проверенные","Блокировки"],id:\.self) { Text($0).tag($0) }
                         }.pickerStyle(.segmented)
+                        NavigationLink { BotFatherView() } label: {
+                            Label("@vo1d_bot_father", systemImage: "terminal").frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(.plain)
                         NavigationLink {
                             MyIdentityView()
                         } label: {
@@ -289,6 +292,7 @@ struct ContactDetailView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var room: Room?
     @State private var alias = ""
+    @State private var reporting = false
 
     private var contact: Contact? { store.state.contacts.first { $0.id == contactID } }
 
@@ -320,6 +324,10 @@ struct ContactDetailView: View {
                         .padding(.vertical, 12)
 
                         if !store.isBuiltinBot(contactID) {
+                            if contact.isBot == true {
+                                Text("Это бот. Его владелец и исполнитель могут читать сообщения, которые ты отправишь этому боту. Остальные чаты ему недоступны.")
+                                    .font(.callout).foregroundStyle(Theme.secondary).panel()
+                            }
                             NavigationLink("ПРИВАТНОСТЬ И ПРОВЕРКА QR") { ContactPrivacyView(contactID:contactID) }
                         }
                         Button("НАПИСАТЬ СООБЩЕНИЕ", systemImage: "bubble.left.fill") {
@@ -375,6 +383,8 @@ struct ContactDetailView: View {
                                 Task { await store.toggleBlock(contact) }
                             }
                             .buttonStyle(GhostButton())
+                            Button("ПОЖАЛОВАТЬСЯ", systemImage: "flag") { reporting = true }
+                                .buttonStyle(GhostButton())
                         } else {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("СИСТЕМНЫЙ КОНТАКТ")
@@ -395,6 +405,7 @@ struct ContactDetailView: View {
             }
         }
         .navigationTitle("Контакт")
+        .sheet(isPresented: $reporting) { ReportComposerView(target: ReportTarget(subject: contactID, source: "profile")) }
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { alias = contact?.name ?? "" }
         .navigationDestination(item: $room) { ChatView(roomID: $0.id) }
