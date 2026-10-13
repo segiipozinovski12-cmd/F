@@ -15,6 +15,8 @@ import mailboxes
 import call_authority
 import network_privacy
 import private_blobs
+import moderation
+import bots
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -23,7 +25,7 @@ ID = re.compile(r'^[a-f0-9]{64}$')
 CODE = re.compile(r'^[2-9A-HJ-NP-Z]{4}$')
 CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 USERNAME = re.compile(r'^[a-z0-9_]{4,20}$')
-RESERVED_USERNAMES = {'vo1d','xrosb','admin','administrator','support','system','security','moderator','official'}
+RESERVED_USERNAMES = {'xrosb','vo1d_bot_father','admin','administrator','support','system','security','moderator','official'}
 UUID = re.compile(r'^[A-Za-z0-9-]{16,64}$')
 MAX_BODY = 9 * 1024 * 1024
 MAX_ENVELOPE = 7 * 1024 * 1024
@@ -106,11 +108,15 @@ class Relay:
             mailboxes.install(db)
             call_authority.install(db)
             private_blobs.install(db)
+            moderation.install(db)
+            bots.install(db)
 
     @contextmanager
     def db(self):
         conn = sqlite3.connect(self.path, timeout=20)
         conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA secure_delete=ON')
+        conn.execute('PRAGMA synchronous=FULL')
         try:
             with conn:
                 yield conn
@@ -132,18 +138,27 @@ class Relay:
         privacy.clean(db, now)
         prekeys.clean(db, now)
         mailboxes.clean(db, now)
+        moderation.clean(db, now)
         db.execute('DELETE FROM call_authorities WHERE expires<=?',(now,))
         for table in ('challenges', 'sessions', 'envelopes', 'seen'):
             db.execute(f'DELETE FROM {table} WHERE expires <= ?', (now,))
 
     def user(self, env, db):
         auth = env.get('HTTP_AUTHORIZATION', '')
+        if auth.startswith('BotCapability '):
+            return bots.authorize(db, env, APIError)
         if not auth.startswith('Bearer '):
             raise APIError(401, 'Authentication required')
         digest = hashlib.sha256(auth[7:].encode()).hexdigest()
         row = db.execute('SELECT identity FROM sessions WHERE digest=? AND expires>?', (digest, int(time.time()))).fetchone()
         if not row:
             raise APIError(401, 'Session expired')
+        # Sanctions affect account-authorized sending, never unlock chat content.
+        path = env.get('PATH_INFO', '')
+        if (env.get('REQUEST_METHOD') in ('POST','PUT') and path in
+            ('/v1/envelopes','/v1/blob','/v2/prekeys','/v1/call/authority','/v2/bots')) or path == '/v1/call/socket':
+            moderation.enforce(db, row[0], APIError)
+            bots.enforce(db, row[0], APIError)
         db.execute('UPDATE privacy SET last_active=? WHERE identity=?',(int(time.time()),row[0]))
         return row[0]
 
@@ -154,7 +169,7 @@ class Relay:
         import hmac
         ip_hash = hmac.new(self.rate_secret,network_privacy.client_address(env).encode(),hashlib.sha256).hexdigest()
         if method == 'GET' and path == '/v2/capabilities':
-            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True}
+            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True}
         if method == 'POST' and path == '/v2/blobs/ticket':
             return private_blobs.ticket(self,body,ip_hash,APIError)
         if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
@@ -172,9 +187,19 @@ class Relay:
             if path.startswith(('/v1/code/','/v1/username/','/v1/invites/redeem')) and '/check/' not in path:
                 self.rate('lookup:' + user, 30)
             self.rate('user:' + user, 240)
+            if path.startswith('/v2/moderation/mfa/'):
+                self.rate('moderator-mfa:' + user, 8, 300)
+            if method == 'POST' and path in ('/v2/reports','/v2/appeals'):
+                self.rate('reports:' + user, 30, 3600)
         with self.db() as db:
             self.clean(db)
             if not public:
+                result = bots.handle(db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
+                result = moderation.handle(self,db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
                 result = call_authority.handle(db,user,env,body,APIError,b64)
                 if result is not None:
                     return result
@@ -186,10 +211,17 @@ class Relay:
                     return result
             if method == 'POST' and path == '/v1/register':
                 card = verify_card(body)
+                admin = moderation.owner(db)
+                if admin and admin['owner'] == card['id']:
+                    pinned = json.loads(admin['card'])
+                    if b64(pinned['agreementKey'],32) != b64(card['agreementKey'],32):
+                        raise APIError(409, 'Permanent administrator encryption key is pinned; migration required')
                 old = db.execute('SELECT card FROM identities WHERE id=?', (card['id'],)).fetchone()
                 encoded_card = json.dumps(card)
                 if old:
                     previous = json.loads(old[0])
+                    if db.execute('SELECT 1 FROM bots WHERE identity=?', (card['id'],)).fetchone() and b64(previous['agreementKey'],32) != b64(card['agreementKey'],32):
+                        raise APIError(409, 'Bot encryption key is pinned; migration required')
                     # The identity ID is derived from the signing key. A valid new card
                     # with the same signing key proves continuity, so an agreement-key
                     # rotation from old prerelease clients can be recovered safely.
@@ -256,8 +288,14 @@ class Relay:
                 if not USERNAME.fullmatch(username) or username in RESERVED_USERNAMES:
                     return {'username': username, 'available': False, 'valid': False}
                 row = db.execute('SELECT identity FROM usernames WHERE username=?', (username,)).fetchone()
+                if username == 'vo1d':
+                    admin = moderation.owner(db)
+                    if admin:
+                        return {'username': username, 'available': admin['owner'] == user, 'valid': True}
                 return {'username': username, 'available': row is None or row[0] == user, 'valid': True}
             if method == 'POST' and path == '/v1/username':
+                if db.execute('SELECT 1 FROM bots WHERE identity=?', (user,)).fetchone():
+                    raise APIError(409, 'Bot usernames are managed by their owner')
                 username = body.get('username', '')
                 if not isinstance(username, str):
                     raise APIError(400, 'Invalid username')
@@ -266,6 +304,7 @@ class Relay:
                     raise APIError(400, 'Username must be 4-20 characters: a-z, 0-9, underscore')
                 if username in RESERVED_USERNAMES:
                     raise APIError(409, 'Username is reserved')
+                moderation.claim(db, user, username, now, APIError)
                 owner = db.execute('SELECT identity FROM usernames WHERE username=?', (username,)).fetchone()
                 if owner and owner[0] != user:
                     raise APIError(409, 'Username is already taken')
@@ -377,13 +416,13 @@ class Relay:
             status = 200
         except APIError as e:
             result, status = {'error': e.message}, e.status
-        except (ValueError, TypeError, KeyError, UnicodeError):
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
             result, status = {'error': 'Invalid request'}, 400
         except Exception:
             # No raw requests, tokens, identifiers or traceback are logged.
             result, status = {'error': 'Relay unavailable'}, 500
         payload = json.dumps(result, separators=(',', ':')).encode()
-        reason = {200:'OK',400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',409:'Conflict',413:'Payload Too Large',415:'Unsupported Media Type',429:'Too Many Requests',500:'Internal Server Error'}[status]
+        reason = {200:'OK',400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',409:'Conflict',410:'Gone',413:'Payload Too Large',415:'Unsupported Media Type',429:'Too Many Requests',500:'Internal Server Error',503:'Service Unavailable'}[status]
         start_response(f'{status} {reason}', [('Content-Type','application/json'),('Content-Length',str(len(payload))),('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')])
         return [payload]
 

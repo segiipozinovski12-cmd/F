@@ -25,6 +25,18 @@ bundle = load('validate_ios_bundle')
 isolate = load('isolate_signal')
 
 
+def require_symlinks(case):
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory) / 'target'
+        target.touch()
+        try:
+            (Path(directory) / 'probe').symlink_to(target)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                case.skipTest('Windows account lacks symlink privileges; exercised on macOS/Linux CI')
+            raise
+
+
 def archive_member(name, data, long_name=False):
     prefix = name.encode() if long_name else b''
     stored_name = ('#1/' + str(len(prefix))) if long_name else name + '/'
@@ -94,6 +106,7 @@ class NativeSetupTests(unittest.TestCase):
                     signal.read_archive_member(tar, 'target/libsignal_ffi.a')
 
     def test_flattens_current_version_and_preserves_executable_and_headers(self):
+        require_symlinks(self)
         with tempfile.TemporaryDirectory() as directory:
             framework = Path(directory) / 'tor.framework'
             for version in ('A', 'B'):
@@ -152,6 +165,7 @@ class NativeSetupTests(unittest.TestCase):
                 tor.safe_extract_with_symlinks(archive, root / 'extract')
 
     def test_keeps_internal_framework_symlinks(self):
+        require_symlinks(self)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / 'safe.zip'

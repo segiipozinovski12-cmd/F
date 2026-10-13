@@ -28,6 +28,10 @@ def install(db):
 
 def erase(db, identity):
     import prekeys
+    import moderation
+    import bots
+    bots.erase(db, identity)
+    moderation.erase(db, identity)
     prekeys.erase(db, identity)
     db.execute('DELETE FROM call_authorities WHERE owner=?',(identity,))
     db.execute('DELETE FROM envelopes WHERE sender=? OR recipient=?', (identity, identity))
@@ -127,6 +131,12 @@ def handle(relay, db, user, env, body, error):
             return {'code':code}
         raise error(500,'Unable to rotate code')
     if method == 'DELETE' and path == '/v1/username':
+        import moderation
+        admin = moderation.owner(db)
+        if admin and admin['owner'] == user:
+            raise error(409, 'The permanent administrator username cannot be released')
+        if db.execute('SELECT 1 FROM bots WHERE identity=?', (user,)).fetchone():
+            raise error(409, 'Bot usernames are managed by their owner')
         db.execute('DELETE FROM usernames WHERE identity=?',(user,))
         return {'ok':True}
     if method == 'GET' and path == '/v1/sessions':

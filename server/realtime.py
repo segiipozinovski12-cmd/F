@@ -20,6 +20,7 @@ from push import PushService
 import call_authority
 import private_blobs
 import network_privacy
+import moderation
 from app import APIError, ID, MAX_BODY, UUID, Relay
 
 CALL_MAX_AUDIO = 96 * 1024
@@ -49,6 +50,7 @@ class RealtimeGateway:
             "REMOTE_ADDR": request.remote or "",
             "HTTP_AUTHORIZATION": request.headers.get("Authorization", ""),
             "HTTP_X_FORWARDED_FOR": request.headers.get("X-Forwarded-For", ""),
+            "HTTP_X_MODERATION_TOKEN": request.headers.get("X-Moderation-Token", ""),
         }
 
     def _user(self, request):
@@ -389,6 +391,7 @@ class RealtimeGateway:
             else:
                 user = self._user(request)
             with self.relay.db() as db:
+                moderation.enforce(db, user, APIError)
                 own_card=db.execute('SELECT card FROM identities WHERE id=?',(user,)).fetchone()
             if own_card is None: raise APIError(401,'Identity unavailable')
             extra={'card':base64.b64encode(own_card[0].encode()).decode()}
@@ -418,6 +421,12 @@ class RealtimeGateway:
 
         try:
             async for message in ws:
+                try:
+                    with self.relay.db() as db:
+                        moderation.enforce(db, user, APIError)
+                except APIError:
+                    await ws.close(code=4003, message=b'account restricted')
+                    break
                 if delegated is not None:
                     try:
                         with self.relay.db() as db: call_authority.authorize(db,auth,APIError)
@@ -623,7 +632,9 @@ def create_app():
                     gateway.relay.clean(db)
                 gateway._cleanup_blobs(include_orphans=True)
                 for call_id,route in list(gateway.calls.items()):
-                    if (not route["accepted"] and time.monotonic()-route.get("created",0)>60) or (route.get("resumeDeadline",float("inf")) < time.monotonic()):
+                    with gateway.relay.db() as db:
+                        restricted = db.execute("SELECT 1 FROM sanctions WHERE subject IN (?,?) AND action IN ('restrict','ban') AND expires>?", (route['a'],route['b'],int(time.time()))).fetchone() is not None
+                    if restricted or (not route["accepted"] and time.monotonic()-route.get("created",0)>60) or (route.get("resumeDeadline",float("inf")) < time.monotonic()):
                         gateway.calls.pop(call_id,None)
                         for user in (route["a"],route["b"]):
                             await gateway._forward(user,{"type":"end","from":gateway._peer_for(route,user),"callID":call_id,"reason":"timeout"})
