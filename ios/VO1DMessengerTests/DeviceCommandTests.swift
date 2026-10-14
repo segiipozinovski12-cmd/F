@@ -84,6 +84,15 @@ final class DeviceCommandTests: XCTestCase {
         command.createdAt = Date().addingTimeInterval(-8*86400); XCTAssertThrowsError(try command.validate())
         command.createdAt = Date(); command.text = String(repeating: "x",count: 16001); XCTAssertThrowsError(try command.validate())
     }
+    func testFileTransferPolicyHidesOriginalNameAndBoundsImportedNumbers() {
+        var privacy = PrivacyPreferences(); privacy.maxUploadMB = Int.max
+        XCTAssertEqual(FileTransferPolicy.limitBytes(privacy),50*1024*1024)
+        privacy.maxUploadMB = Int.min; XCTAssertEqual(FileTransferPolicy.limitBytes(privacy),1024*1024)
+        XCTAssertEqual(FileTransferPolicy.name("PERSONAL-NAME.pdf",preferences: privacy),"File.pdf")
+        XCTAssertEqual(FileTransferPolicy.name("SECRET",preferences: privacy),"File.bin")
+        privacy.anonymizeFilenames = false
+        XCTAssertEqual(FileTransferPolicy.name("chosen.txt",preferences: privacy),"chosen.txt")
+    }
     @MainActor func testDelegatedLinkRevocationUsesOnlyHashedReferenceAndIsIdempotent() throws {
         let issuer = try LocalIdentity.create(), device = try LocalIdentity.create(), cert = try certificate(issuer: issuer, device: device.card)
         let store = try configured(issuer: issuer, device: device, certificate: cert); defer { try? store.vault?.delete() }

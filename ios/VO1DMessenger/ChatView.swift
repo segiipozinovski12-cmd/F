@@ -854,7 +854,7 @@ struct ChatView: View {
     @MainActor
     func processFileData(_ data: Data,mime: String,name: String) async {
         do {
-            guard data.count<=store.preferences.maxUploadMB*1024*1024 else { throw MessengerError.invalid("Файл превышает выбранный лимит") }
+            guard data.count<=FileTransferPolicy.limitBytes(store.preferences) else { throw MessengerError.invalid("Файл превышает выбранный лимит") }
             if data.count>3*1024*1024 && store.preferences.wifiOnlyUploads && !NetworkState.shared.wifi { throw MessengerError.invalid("Для загрузки включи Wi-Fi или отключи ограничение в приватности") }
             let name=store.preferences.anonymizeFilenames ? "File." + (URL(fileURLWithPath:name).pathExtension.isEmpty ? "bin" : URL(fileURLWithPath:name).pathExtension) : name
             if data.count <= 3 * 1024 * 1024 {

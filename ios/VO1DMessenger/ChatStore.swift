@@ -957,16 +957,18 @@ final class ChatStore: ObservableObject {
         guard let api else {
             throw MessengerError.invalid("Нет соединения с VO1D")
         }
+        let uploadProfile = profileID, uploadGeneration = generation
         guard data.count > 0,
-              data.count <= 50 * 1024 * 1024 else {
-            throw MessengerError.invalid("Вложение должно быть до 50 МБ")
+              data.count <= FileTransferPolicy.limitBytes(preferences) else {
+            throw MessengerError.invalid("Вложение превышает выбранный лимит")
         }
+        guard !preferences.wifiOnlyUploads || NetworkState.shared.wifi else { throw MessengerError.invalid("Для загрузки включи Wi-Fi или отключи ограничение в приватности") }
         guard (preview?.count ?? 0) <= 320 * 1024 else {
             throw MessengerError.invalid("Preview слишком большой")
         }
 
         let plainSize = data.count
-        let safeName = String(name.prefix(180))
+        let safeName = FileTransferPolicy.name(name, preferences: preferences)
         let safeMime = String(mime.prefix(120))
 
         let encrypted = try await Task.detached(priority: .userInitiated) {
@@ -980,10 +982,11 @@ final class ChatStore: ObservableObject {
             return (keyData, combined)
         }.value
 
+        guard uploadProfile == profileID, uploadGeneration == generation, !locked else { throw CancellationError() }
+
         let localDigest = Crypto.hex(SHA256.hash(data: encrypted.1))
-        let uploadProfile = profileID
         let receipt = try await api.uploadPrivateBlob(encrypted.1)
-        guard profileID == uploadProfile else {
+        guard profileID == uploadProfile, uploadGeneration == generation, !locked else {
             if let token = receipt.deleteToken { try? await api.deletePrivateBlob(receipt.id,token:token) }
             throw MessengerError.invalid("Профиль изменился во время загрузки")
         }

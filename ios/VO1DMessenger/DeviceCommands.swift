@@ -173,7 +173,7 @@ struct LinkedDeviceComposer: View {
                     defer { busy = false }; let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
                     do {
                         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                        guard size > 0, size <= 50*1024*1024 else { throw MessengerError.invalid("Файл должен быть до 50 МБ") }
+                        guard size > 0, size <= FileTransferPolicy.limitBytes(store.preferences) else { throw MessengerError.invalid("Файл превышает выбранный лимит") }
                         let data = try Data(contentsOf: url), attachment = try await store.prepareRemoteAttachment(name: url.lastPathComponent, mime: "application/octet-stream", data: data)
                         guard expected == store.generation else { throw CancellationError() }
                         submit(link: link, attachment: attachment)
