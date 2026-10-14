@@ -168,4 +168,28 @@ final class NextSecurityTests: XCTestCase {
         let backup = try SecureBackup.sanitized(BackupPayload(identity: keys, state: state, mode: .full))
         XCTAssertTrue(backup.state.extended?.privateLinks.isEmpty == true)
     }
+    func testSeededContactAndEnvelopeMutationsNeverAuthenticate() throws {
+        let sender = try LocalIdentity.create(), recipient = try LocalIdentity.create()
+        let cardData = try Wire.encoder.encode(sender.card)
+        let original = try XCTUnwrap(JSONSerialization.jsonObject(with: cardData) as? [String: Any])
+        let fields = ["id", "signingKey", "agreementKey", "binding"]
+        var seed: UInt64 = 0x564F31444E455854
+        let values: [Any] = ["", true, NSNull(), ["unexpected"], 42, String(repeating: "A", count: 200)]
+        for _ in 0..<256 {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            var input = original
+            input[fields[Int((seed >> 32) % 4)]] = values[Int(seed % UInt64(values.count))]
+            let data = try JSONSerialization.data(withJSONObject: input)
+            if let decoded = try? Wire.decoder.decode(ContactCard.self, from: data) { XCTAssertThrowsError(try Crypto.validate(decoded)) }
+        }
+        let sealed = try Crypto.sealPayload(Data("VALID_CONTROL".utf8), from: sender, to: recipient.card)
+        XCTAssertEqual(try Crypto.openPayload(sealed, identity: recipient, sender: sender.card), Data("VALID_CONTROL".utf8))
+        for index in 0..<128 {
+            var changed = sealed
+            var ciphertext = try Crypto.decode(changed.ciphertext)
+            ciphertext[index % ciphertext.count] ^= UInt8(index % 255 + 1)
+            changed.ciphertext = ciphertext.base64EncodedString()
+            XCTAssertThrowsError(try Crypto.openPayload(changed, identity: recipient, sender: sender.card))
+        }
+    }
 }

@@ -4,6 +4,7 @@ import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -11,8 +12,11 @@ from pathlib import Path
 import statistics
 import sys
 import tempfile
+import threading
 import time
 import uuid
+from socketserver import ThreadingMixIn
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'server'))
 from app import Relay, card_bytes, header_bytes
@@ -62,6 +66,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--samples', type=int, default=100)
     parser.add_argument('--workers', type=int, default=8)
+    parser.add_argument('--transport', choices=('wsgi', 'http'), default='wsgi')
     args = parser.parse_args()
     if not 1 <= args.samples <= 2000 or not 1 <= args.workers <= 32:
         parser.error('samples must be 1..2000; workers 1..32')
@@ -87,24 +92,52 @@ def main():
             cipher = nonce + AESGCM(key).encrypt(nonce, json.dumps(content).encode(), header_bytes(e))
             e['ciphertext'] = encode(cipher); e['signature'] = encode(private.sign(header_bytes(e) + b'\n' + cipher))
             fixtures.append((remote, token, dict(subject=subject, reason='other', source='profile', consent=True, envelope=e)))
+        class QuietHandler(WSGIRequestHandler):
+            def log_message(self, *args):
+                pass
+        class LocalServer(ThreadingMixIn, WSGIServer):
+            daemon_threads = True
+            request_queue_size = 64
+        server = None
+        if args.transport == 'http':
+            # Deliberately bind only loopback and choose an ephemeral port.
+            # No endpoint override or proxy-header identity spoofing is allowed.
+            server = make_server('127.0.0.1', 0, relay, server_class=LocalServer, handler_class=QuietHandler)
+            thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .05}, daemon=True)
+            thread.start()
         def submit(fixture):
             remote, token, body = fixture
             start = time.perf_counter()
-            status, _ = request(relay, '/v2/reports', 'POST', body, remote, token)
+            if server is None:
+                status, _ = request(relay, '/v2/reports', 'POST', body, remote, token)
+            else:
+                connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=30)
+                try:
+                    connection.request('POST', '/v2/reports', json.dumps(body).encode(), {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token})
+                    response = connection.getresponse(); response.read()
+                    status = response.status
+                except (OSError, http.client.HTTPException):
+                    status = 0
+                finally:
+                    connection.close()
             return status, (time.perf_counter() - start) * 1000
         start = time.perf_counter()
-        with ThreadPoolExecutor(args.workers) as pool:
-            results = list(pool.map(submit, fixtures))
+        try:
+            with ThreadPoolExecutor(args.workers) as pool:
+                results = list(pool.map(submit, fixtures))
+        finally:
+            if server is not None:
+                server.shutdown(); server.server_close(); thread.join(timeout=5)
         elapsed = time.perf_counter() - start
         durations = sorted(r[1] for r in results)
         failures = sum(status != 200 for status, _ in results)
         with relay.db() as db:
             stored = db.execute('SELECT count(*) FROM reports').fetchone()[0]
             chat_rows = db.execute('SELECT count(*) FROM envelopes').fetchone()[0]
-        result = dict(samples=args.samples, workers=args.workers, seconds=round(elapsed, 3),
+        result = dict(samples=args.samples, workers=args.workers, transport=args.transport, seconds=round(elapsed, 3),
                       p50_ms=round(statistics.median(durations), 3), p95_ms=round(durations[min(len(durations)-1, int(len(durations)*.95))], 3),
                       failures=failures, stored_reports=stored, chat_envelopes=chat_rows,
-                      boundary='Local WSGI, signature validation and SQLite; excludes network, Tor, iOS, APNs and production capacity')
+                      boundary=('Loopback HTTP, WSGI, signatures and SQLite; excludes TLS, Tor, iOS, APNs, fixture setup and production capacity' if server is not None else 'Local WSGI, signatures and SQLite; excludes network, Tor, iOS, APNs, fixture setup and production capacity'))
         print(json.dumps(result, indent=2))
         return 0 if failures == 0 and stored == args.samples and chat_rows == 0 else 1
 

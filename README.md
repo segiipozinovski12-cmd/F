@@ -1,13 +1,13 @@
 # VO1D Messenger 2 · work branch
 
-VO1D NEXT is developed on `codex/vo1d-next`: permanent first-claim `@vo1d`, opt-in encrypted reports/MFA moderation, real `@vo1d_bot_father` bots, local Security Check, Private Spaces and Secure Notes. [Implementation and remaining release gates](docs/VO1D-NEXT.md), [moderation](docs/MODERATION.md), [bots](docs/BOTS.md). This branch is not a completed P0–P4 release.
+VO1D NEXT is developed on `codex/vo1d-next`: permanent first-claim `@vo1d`, opt-in encrypted reports/MFA moderation, real `@vo1d_bot_father` bots, local Security Check, Private Spaces, Secure Notes, revocable private links, one-view text and automatic text archives between linked devices. [Implementation and remaining work](docs/VO1D-NEXT.md), [moderation](docs/MODERATION.md), [bots](docs/BOTS.md), [private links](docs/PRIVATE-LINKS.md), [device sync](docs/DEVICE-SYNC.md), [one-view text](docs/GHOST-TEXT.md). This branch is not a completed P0–P4 release.
 
 Нативный мессенджер для iPhone и iPad, SwiftUI, iOS 17+. Личность без номера, почты и загрузки адресной книги. Новые сообщения используют официальный libsignal PQXDH/Double Ratchet; есть встроенный Tor и private capability delivery. Интерфейс — глубокий чёрный и белый. Независимый аудит не проводился, полная анонимность не гарантируется.
 
 ## Запуск
 
 ```bash
-git clone --recurse-submodules --branch codex/anonymous-v2 https://github.com/segiipozinovski12-cmd/F.git VO1D-Messenger
+git clone --recurse-submodules --branch codex/vo1d-next https://github.com/segiipozinovski12-cmd/F.git VO1D-Messenger
 cd VO1D-Messenger
 bash scripts/open_iphone.sh
 ```
