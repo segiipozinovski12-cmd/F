@@ -38,10 +38,12 @@ All endpoints require normal account authentication. Moderator operations additi
 | `POST /v2/moderation/mfa/verify` | TOTP verification and a 15-minute session |
 | `POST /v2/moderation/logout` | Revoke moderator sessions |
 | `GET /v2/moderation/queue` | Bounded queue metadata |
+| `POST /v2/moderation/assign` | Revision-checked assignment or release |
 | `GET /v2/moderation/report/{id}` | Owner-only sealed selected evidence |
 | `GET /v2/moderation/appeals` | Appeal queue metadata |
 | `GET /v2/moderation/appeal/{id}` | Owner-only sealed appeal |
 | `POST /v2/moderation/decision` | Status and optional explicit sanction |
+| `POST /v2/moderation/appeal-decision` | Independent appeal outcome, scoped to the original case |
 | `GET, POST /v2/moderation/roles` | Owner-only moderator management |
 | `GET /v2/moderation/audit` | Last 200 hash-linked events |
 | `GET /v2/moderation/metrics` | Aggregate counts, age and evidence storage |
@@ -73,3 +75,11 @@ Never commit the result. Back up this secret independently with the database and
 - Logical SQLite deletion does not guarantee erasure of WAL, filesystem snapshots, recipient copies or files a moderator explicitly saved.
 
 Complete operator recovery drills, hardware MFA/lock QA, privacy disclosures and independent review before treating this as a production moderation service.
+
+## Queue and review workflow
+
+Queues support `limit=1..100`, an opaque `cursor` and status filtering. Reports additionally accept `reason`, an ID-prefix `search` (8–64 characters), and `assignment=all|mine|unassigned`. Cases are traversed by immutable `(created,id)` ordering, including equal timestamps. `nextCursor=null` ends a traversal; new arrivals and changed filters require a refresh. Cursors are bound to the filters and requesting moderator, and confer no authorization. Metadata pages contain neither reporter ID nor evidence. The iOS dashboard defaults to active cases, loads 50 at a time and offers both report and appeal continuation.
+
+`POST /v2/moderation/assign` takes `{report,assignee,expectedUpdated}`, with explicit JSON null to release. Reviewers may claim free cases or release their own; administrators can assign any active moderator. Closed cases cannot be assigned. Role revocation releases that person's cases and advances their revisions. Reviewers cannot change cases assigned to someone else. Assignment and decisions share the same monotonically advancing revision.
+
+`POST /v2/moderation/appeal-decision` takes `{appeal,outcome,expectedUpdated}`; outcome is `upheld` or `overturned`. Only admins/owner may decide. The original sanction author cannot review their own decision, except the permanent owner who must explicitly send `acknowledgeSelfReview:true`; this exception is named in the audit. The author is recorded in case metadata so expiry or replacement of a sanction does not erase the separation check. Overturning removes only a sanction whose subject **and original report ID** match: a newer independent sanction stays active. Repeated/stale/closed decisions return 409. Delegated review still has metadata access only; evidence remains encrypted solely for @vo1d.

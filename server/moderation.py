@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import time
+from urllib.parse import parse_qs
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -58,6 +59,20 @@ def install(db):
     db.execute('''INSERT OR IGNORE INTO permanent_admin
       SELECT 1,u.identity,i.card,u.updated FROM usernames u JOIN identities i
       ON i.id=u.identity WHERE u.username='vo1d' ''')
+    # Additive migration: old reports and clients remain readable.
+    columns = {r[1] for r in db.execute('PRAGMA table_info(reports)')}
+    if 'assignee' not in columns:
+        db.execute('ALTER TABLE reports ADD COLUMN assignee TEXT')
+    if 'decision_actor' not in columns:
+        db.execute('ALTER TABLE reports ADD COLUMN decision_actor TEXT')
+        db.execute('UPDATE reports SET decision_actor=(SELECT actor FROM sanctions WHERE sanctions.report=reports.id)')
+    columns = {r[1] for r in db.execute('PRAGMA table_info(report_appeals)')}
+    if 'updated' not in columns:
+        db.execute('ALTER TABLE report_appeals ADD COLUMN updated INTEGER NOT NULL DEFAULT 0')
+        db.execute('UPDATE report_appeals SET updated=created')
+    db.execute('CREATE INDEX IF NOT EXISTS report_scan ON reports(created,id)')
+    db.execute('CREATE INDEX IF NOT EXISTS report_assignment ON reports(assignee,status,created,id)')
+    db.execute('CREATE INDEX IF NOT EXISTS appeal_scan ON report_appeals(created,id)')
 
 
 def owner(db):
@@ -113,6 +128,7 @@ def erase(db, user):
         db.execute(f'DELETE FROM {table} WHERE identity=?', (user,))
     db.execute('DELETE FROM reports WHERE reporter=?', (user,))
     db.execute('DELETE FROM report_appeals WHERE identity=?', (user,))
+    db.execute('UPDATE reports SET assignee=NULL,updated=updated+1 WHERE assignee=?', (user,))
 
 
 def enforce(db, user, error):
@@ -208,6 +224,68 @@ def evidence_bytes(db):
     return db.execute('SELECT coalesce(sum(length(envelope)),0) FROM (SELECT envelope FROM reports UNION ALL SELECT envelope FROM report_appeals)').fetchone()[0]
 
 
+def page(db, env, user, appeals, error):
+    raw = env.get('QUERY_STRING', '')
+    if len(raw) > 2048:
+        raise error(400, 'Queue query is too long')
+    query = parse_qs(raw, keep_blank_values=True, max_num_fields=12)
+    allowed = {'limit', 'cursor', 'status'} if appeals else {'limit', 'cursor', 'status', 'reason', 'search', 'assignment'}
+    if set(query) - allowed or any(len(v) != 1 for v in query.values()):
+        raise error(400, 'Invalid queue filters')
+    values = {k: v[0] for k, v in query.items()}
+    limit = values.get('limit', '100')
+    if not re.fullmatch(r'[0-9]{1,3}', limit) or not 1 <= int(limit) <= 100:
+        raise error(400, 'Page size must be between 1 and 100')
+    status = values.get('status', 'all')
+    statuses = {'all', 'open', 'upheld', 'overturned', 'resolved'} if appeals else STATUSES | {'all', 'active'}
+    if status not in statuses:
+        raise error(400, 'Invalid queue status')
+    where, args = [], []
+    if status == 'active':
+        where.append("status IN ('open','reviewing')")
+    elif status != 'all':
+        where.append('status=?'); args.append(status)
+    if not appeals:
+        reason, search, assignment = (values.get(k, '') for k in ('reason', 'search', 'assignment'))
+        if reason:
+            if reason not in REASONS:
+                raise error(400, 'Invalid queue reason')
+            where.append('reason=?'); args.append(reason)
+        if search:
+            if not re.fullmatch(r'[A-Za-z0-9-]{8,64}', search):
+                raise error(400, 'Search requires an ID prefix of 8 to 64 characters')
+            where.append('(id LIKE ? OR subject LIKE ?)'); args.extend((search + '%', search + '%'))
+        if assignment == 'mine':
+            where.append('assignee=?'); args.append(user)
+        elif assignment == 'unassigned':
+            where.append('assignee IS NULL')
+        elif assignment not in ('', 'all'):
+            raise error(400, 'Invalid assignment filter')
+    filters = {k: v for k, v in values.items() if k not in ('limit', 'cursor')}
+    binding = hashlib.sha256(json.dumps([appeals, user, filters], sort_keys=True).encode()).hexdigest()
+    cursor = values.get('cursor')
+    if cursor:
+        try:
+            decoded = json.loads(base64.b64decode(cursor + '=' * (-len(cursor) % 4), altchars=b'-_', validate=True))
+            created, case, digest = decoded
+            if type(created) is not int or created < 0 or not isinstance(case, str) or not CASE_ID.fullmatch(case) or digest != binding:
+                raise ValueError()
+        except (ValueError, TypeError, UnicodeError):
+            raise error(400, 'Invalid cursor or changed filters')
+        where.append('(created>? OR (created=? AND id>?))'); args.extend((created, created, case))
+    table = 'report_appeals' if appeals else 'reports'
+    columns = 'id,identity,report,created,expires,status,updated' if appeals else 'id,subject,reason,source,status,created,expires,updated,assignee'
+    clause = ' WHERE ' + ' AND '.join(where) if where else ''
+    rows = db.execute(f'SELECT {columns} FROM {table}{clause} ORDER BY created,id LIMIT ?', (*args, int(limit) + 1)).fetchall()
+    more = len(rows) > int(limit)
+    rows = rows[:int(limit)]
+    next_cursor = None
+    if more:
+        last = rows[-1]
+        next_cursor = base64.urlsafe_b64encode(json.dumps([last['created'], last['id'], binding], separators=(',', ':')).encode()).decode().rstrip('=')
+    return {'appeals' if appeals else 'reports': [dict(r) for r in rows], 'nextCursor': next_cursor}
+
+
 def handle(relay, db, user, env, body, error, b64):
     method, path = env['REQUEST_METHOD'], env['PATH_INFO']
     if not path.startswith(('/v2/reports', '/v2/moderation', '/v2/appeals')):
@@ -240,7 +318,7 @@ def handle(relay, db, user, env, body, error, b64):
             raise error(429, 'Moderation queue is full')
         if evidence_bytes(db) + len(encoded) > 64 * 1024 * 1024:
             raise error(429, 'Moderation evidence storage quota reached')
-        db.execute('INSERT INTO reports VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        db.execute('INSERT INTO reports(id,reporter,subject,reason,source,digest,envelope,sender_card,status,created,expires,updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                    (e['id'], user, subject, reason, source, digest, encoded, card, 'open', now, e['expiresAt'], now))
         audit(db, user, 'submit_report', e['id'], now)
         return {'id': e['id'], 'ok': True}
@@ -268,7 +346,7 @@ def handle(relay, db, user, env, body, error, b64):
             raise error(409, 'An appeal has already been submitted')
         if evidence_bytes(db) + len(encoded) > 64 * 1024 * 1024:
             raise error(429, 'Moderation evidence storage quota reached')
-        db.execute('INSERT INTO report_appeals VALUES (?,?,?,?,?,?,?,?,?)', (e['id'], user, case, digest, encoded, card, now, e['expiresAt'], 'open'))
+        db.execute('INSERT INTO report_appeals(id,identity,report,digest,envelope,sender_card,created,expires,status,updated) VALUES (?,?,?,?,?,?,?,?,?,?)', (e['id'], user, case, digest, encoded, card, now, e['expiresAt'], 'open', now))
         audit(db, user, 'appeal', case, now)
         return {'ok': True, 'id': e['id']}
     if method == 'GET' and path == '/v2/moderation/access':
@@ -298,11 +376,9 @@ def handle(relay, db, user, env, body, error, b64):
         db.execute('DELETE FROM moderator_sessions WHERE identity=?', (user,))
         return {'ok': True}
     if method == 'GET' and path == '/v2/moderation/queue':
-        rows = db.execute('SELECT id,subject,reason,source,status,created,expires,updated FROM reports ORDER BY CASE status WHEN \'open\' THEN 0 WHEN \'reviewing\' THEN 1 ELSE 2 END,created LIMIT 100').fetchall()
-        return {'reports': [dict(r) for r in rows]}
+        return page(db, env, user, False, error)
     if method == 'GET' and path == '/v2/moderation/appeals':
-        rows = db.execute('SELECT id,identity,report,created,expires,status FROM report_appeals ORDER BY created LIMIT 100').fetchall()
-        return {'appeals': [dict(r) for r in rows]}
+        return page(db, env, user, True, error)
     if method == 'GET' and path == '/v2/moderation/audit':
         rows = db.execute('SELECT seq,entry,previous,digest FROM moderation_audit ORDER BY seq DESC LIMIT 200').fetchall()
         return {'events': [dict(r) for r in rows]}
@@ -330,9 +406,48 @@ def handle(relay, db, user, env, body, error, b64):
         if value == 'none':
             db.execute('DELETE FROM moderators WHERE identity=?', (target,))
             db.execute('DELETE FROM moderator_mfa WHERE identity=?', (target,))
+            db.execute('UPDATE reports SET assignee=NULL,updated=updated+1 WHERE assignee=?', (target,))
         else:
             db.execute('INSERT OR REPLACE INTO moderators VALUES (?,?)', (target, value))
         audit(db, user, 'role_' + value, target, now)
+        return {'ok': True}
+    if method == 'POST' and path == '/v2/moderation/assign':
+        case, target, expected = body.get('report'), body.get('assignee'), body.get('expectedUpdated')
+        if set(body) != {'report', 'assignee', 'expectedUpdated'} or not isinstance(case, str) or not CASE_ID.fullmatch(case) or type(expected) is not int:
+            raise error(400, 'Invalid case assignment')
+        if target is not None and (not isinstance(target, str) or not IDENTITY.fullmatch(target) or role(db, target) is None):
+            raise error(400, 'Assignee must have an active moderator role')
+        row = db.execute('SELECT assignee,status,updated FROM reports WHERE id=?', (case,)).fetchone()
+        if row is None:
+            raise error(404, 'Report not found')
+        if row['updated'] != expected:
+            raise error(409, 'Case changed; refresh before assigning')
+        if row['status'] not in ('open', 'reviewing'):
+            raise error(409, 'Closed cases cannot be assigned')
+        if current_role == 'reviewer' and not ((target == user and row['assignee'] in (None, user)) or (target is None and row['assignee'] == user)):
+            raise error(403, 'Reviewers may claim free cases or release their own cases')
+        db.execute('UPDATE reports SET assignee=?,updated=? WHERE id=?', (target, max(now, expected + 1), case))
+        audit(db, user, 'assign_' + (target or 'none'), case, now)
+        return {'ok': True}
+    if method == 'POST' and path == '/v2/moderation/appeal-decision':
+        case, outcome, expected = body.get('appeal'), body.get('outcome'), body.get('expectedUpdated')
+        if set(body) - {'appeal', 'outcome', 'expectedUpdated', 'acknowledgeSelfReview'} or not isinstance(case, str) or not CASE_ID.fullmatch(case) or outcome not in ('upheld', 'overturned') or type(expected) is not int:
+            raise error(400, 'Invalid appeal decision')
+        if current_role not in ('owner', 'admin'):
+            raise error(403, 'Administrator role required for appeal decisions')
+        row = db.execute('SELECT * FROM report_appeals WHERE id=?', (case,)).fetchone()
+        if row is None:
+            raise error(404, 'Appeal not found')
+        if row['status'] != 'open' or row['updated'] != expected:
+            raise error(409, 'Appeal changed or already decided')
+        decision = db.execute('SELECT decision_actor FROM reports WHERE id=?', (row['report'],)).fetchone()
+        self_review = decision is not None and decision['decision_actor'] == user
+        if self_review and not (current_role == 'owner' and body.get('acknowledgeSelfReview') is True):
+            raise error(403, 'A different administrator must review their colleague\'s decision; owner self-review requires explicit acknowledgement')
+        if outcome == 'overturned':
+            db.execute('DELETE FROM sanctions WHERE subject=? AND report=?', (row['identity'], row['report']))
+        db.execute('UPDATE report_appeals SET status=?,updated=? WHERE id=?', (outcome, max(now, expected + 1), case))
+        audit(db, user, 'appeal_' + outcome + ('_self_review' if self_review else ''), case, now)
         return {'ok': True}
     if method == 'GET' and path.startswith(('/v2/moderation/report/', '/v2/moderation/appeal/')):
         case = path.rsplit('/', 1)[1]
@@ -364,16 +479,19 @@ def handle(relay, db, user, env, body, error, b64):
             raise error(409, 'Case changed; refresh before deciding')
         if row['status'] in ('resolved', 'dismissed') and current_role == 'reviewer':
             raise error(403, 'Only administrators can reopen a closed decision')
+        if current_role == 'reviewer' and row['assignee'] not in (None, user):
+            raise error(403, 'Case is assigned to another moderator')
         if current and row['subject'] == current['owner'] and action != 'none':
             raise error(403, 'Permanent administrator cannot be reassigned or sanctioned through reports')
         if action == 'lift':
             db.execute('DELETE FROM sanctions WHERE subject=? AND report=?', (row['subject'], case))
-            db.execute("UPDATE report_appeals SET status='resolved' WHERE report=?", (case,))
+            db.execute("UPDATE report_appeals SET status='resolved',updated=max(?,updated+1) WHERE report=? AND status='open'", (now, case))
         elif action != 'none':
             old = db.execute('SELECT action FROM sanctions WHERE subject=?', (row['subject'],)).fetchone()
             if old and {'warn': 1, 'restrict': 2, 'ban': 3}[old[0]] > {'warn': 1, 'restrict': 2, 'ban': 3}[action]:
                 raise error(409, 'Use an explicit lift before lowering an active sanction')
             db.execute('INSERT OR REPLACE INTO sanctions VALUES (?,?,?,?,?,?)', (row['subject'], action, now + duration, case, user, now))
+            db.execute('UPDATE reports SET decision_actor=? WHERE id=?', (user, case))
         db.execute('UPDATE reports SET status=?,updated=? WHERE id=?', (status, max(now, expected + 1), case))
         audit(db, user, 'decision_' + status + '_' + action, case, now)
         return {'ok': True}

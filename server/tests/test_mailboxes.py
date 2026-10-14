@@ -108,3 +108,26 @@ class MailboxTests(unittest.TestCase):
         self.call(box,'invites','POST',body)
         self.call(box,'',method='DELETE')
         self.assertEqual(self.request('/v2/private-invites/'+other)[0],404)
+
+    def test_publish_retry_cannot_resurrect_consumed_invitation(self):
+        box = self.mailbox(); token = secrets.token_urlsafe(32)
+        body = dict(token=token, ciphertext=base64.b64encode(b'x'*256).decode(), expiresAt=int(time.time())+3600)
+        self.assertEqual(self.call(box, 'invites', 'POST', body)[0], 200)
+        self.assertEqual(self.request('/v2/private-invites/'+token)[0], 200)
+        self.assertEqual(self.call(box, 'invites', 'POST', body)[0], 200)
+        self.assertEqual(self.request('/v2/private-invites/'+token)[0], 404)
+        changed = dict(body, expiresAt=body['expiresAt'] + 1)
+        self.assertEqual(self.call(box, 'invites', 'POST', changed)[0], 409)
+
+    def test_selective_revoke_retries_owner_scope_and_other_links(self):
+        box = self.mailbox(); other = self.mailbox(); tokens = [secrets.token_urlsafe(32) for _ in range(2)]
+        bodies = [dict(token=t, ciphertext=base64.b64encode(b'x'*256).decode(), expiresAt=int(time.time())+3600) for t in tokens]
+        for body in bodies:
+            self.assertEqual(self.call(box, 'invites', 'POST', body)[0], 200)
+        self.assertEqual(self.call(other, 'invites/'+tokens[0], 'DELETE')[0], 403)
+        self.assertEqual(self.call(box, 'invites/'+tokens[0], 'DELETE', scope='write')[0], 403)
+        for _ in range(2):
+            self.assertEqual(self.call(box, 'invites/'+tokens[0], 'DELETE')[0], 200)
+        self.assertEqual(self.call(box, 'invites', 'POST', bodies[0])[0], 200)
+        self.assertEqual(self.request('/v2/private-invites/'+tokens[0])[0], 404)
+        self.assertEqual(self.request('/v2/private-invites/'+tokens[1])[0], 200)

@@ -49,7 +49,8 @@ class ModerationTests(unittest.TestCase):
 
     def mod_request(self, path, method='GET', body=None, token=None, account=None):
         data = json.dumps(body).encode() if body is not None else b''
-        env = {'REQUEST_METHOD': method, 'PATH_INFO': path, 'CONTENT_LENGTH': str(len(data)), 'CONTENT_TYPE': 'application/json',
+        path, _, query = path.partition('?')
+        env = {'REQUEST_METHOD': method, 'PATH_INFO': path, 'QUERY_STRING': query, 'CONTENT_LENGTH': str(len(data)), 'CONTENT_TYPE': 'application/json',
                'REMOTE_ADDR': '127.0.0.1', 'wsgi.input': io.BytesIO(data), 'HTTP_AUTHORIZATION': 'Bearer ' + (account or self.a)}
         if token:
             env['HTTP_X_MODERATION_TOKEN'] = token
