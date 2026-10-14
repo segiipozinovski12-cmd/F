@@ -79,12 +79,22 @@ extension ChatStore {
               link.certificate.scope == "collaboration", link.certificate.device == myID,
               state.contacts.contains(where: { $0.card.hasSameKeys(as: link.peer) && $0.verified && !$0.blocked }),
               extended.revokedDevices[link.id] == nil, state.outbox.count < 2000,
-              extended.pendingDeviceCommands.filter({ $0.status == "waiting" }).count < 128 else { throw MessengerError.invalid("Нет разрешения или очередь запросов заполнена") }
+              extended.pendingDeviceCommands.filter({ command in
+                  command.status == "waiting" && command.createdAt > Date().addingTimeInterval(-7*86400) &&
+                  extended.deviceLinks.contains(where: { $0.id == command.certificateID && $0.approved && $0.certificate.expiresAt > Int(Date().timeIntervalSince1970) && extended.revokedDevices[$0.id] == nil })
+              }).count < 128 else { throw MessengerError.invalid("Нет разрешения или очередь запросов заполнена") }
         try link.certificate.validate()
         let previous = state
         do {
             try deviceEvent(kind: "deviceCommand", certificate: link.certificate, peer: link.peer, command: command)
             var local = extended; local.pendingDeviceCommands.removeAll { $0.id == command.id }
+            for index in local.pendingDeviceCommands.indices where local.pendingDeviceCommands[index].status == "waiting" {
+                if local.pendingDeviceCommands[index].createdAt <= Date().addingTimeInterval(-7*86400) {
+                    local.pendingDeviceCommands[index].status = "expired"; local.pendingDeviceCommands[index].detail = "Срок запроса истёк"
+                } else if !local.deviceLinks.contains(where: { $0.id == local.pendingDeviceCommands[index].certificateID && $0.approved && $0.certificate.expiresAt > Int(Date().timeIntervalSince1970) && local.revokedDevices[$0.id] == nil }) {
+                    local.pendingDeviceCommands[index].status = "revoked"; local.pendingDeviceCommands[index].detail = "Связь отозвана или истекла"
+                }
+            }
             var waiting = command; waiting.status = "waiting"; waiting.detail = nil
             local.pendingDeviceCommands.append(waiting); local.pendingDeviceCommands = Array(local.pendingDeviceCommands.suffix(500)); state.extended = local
             try save()

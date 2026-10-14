@@ -49,6 +49,19 @@ final class DeviceCommandTests: XCTestCase {
         event.deviceCommandResult?.commandID = UUID().uuidString
         XCTAssertThrowsError(try store.applyAccepted(event, sender: issuer.card))
     }
+    @MainActor func testExpiredRequestsCannotPermanentlyFillSecondaryQueue() throws {
+        let issuer = try LocalIdentity.create(), device = try LocalIdentity.create(), certificate = try certificate(issuer: issuer, device: device.card)
+        let store = try configured(issuer: device, device: issuer, certificate: certificate); defer { try? store.vault?.delete() }
+        store.state.extended?.pendingDeviceCommands = (0..<128).map { _ in
+            DeviceCommand(certificateID: certificate.id, operation: "send", roomID: "dm:test", text: "expired", createdAt: Date().addingTimeInterval(-8*86400))
+        }
+        let next = DeviceCommand(certificateID: certificate.id, operation: "send", roomID: "dm:test", text: "new")
+        XCTAssertNoThrow(try store.queueDeviceCommand(next))
+        XCTAssertEqual(store.extended.pendingDeviceCommands.filter { $0.status == "waiting" }.count,1)
+        XCTAssertEqual(store.extended.pendingDeviceCommands.filter { $0.status == "expired" }.count,128)
+        store.state = try XCTUnwrap(store.vault).read(key: device.storage)
+        XCTAssertEqual(store.extended.pendingDeviceCommands.last?.id,next.id)
+    }
     @MainActor func testRejectedCommandCannotEditSomeoneElsesMessageOrSendOutsideExistingRooms() throws {
         let issuer = try LocalIdentity.create(), device = try LocalIdentity.create(), other = try LocalIdentity.create().card
         let cert = try certificate(issuer: issuer, device: device.card), store = try configured(issuer: issuer, device: device, certificate: cert); defer { try? store.vault?.delete() }

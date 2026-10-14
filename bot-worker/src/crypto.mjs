@@ -93,7 +93,7 @@ function keyFor(e, privateBytes, publicBytes) {
 }
 export function sealEnvelope(packet, identity, target, id, expiry, route) {
   validateCard(target); const ephemeral = c.randomBytes(32), own = identityCard(identity);
-  const e = {id, ...(route ? {mailbox:route.id} : {sender:own.id,recipient:target.id}), ephemeralKey:b64(rawPublic(privateKey(ephemeral,'x'))),salt:b64(c.randomBytes(32)),expiresAt:Math.min(now()+7*86400, expiry ?? Infinity, route?.expiresAt ?? Infinity)};
+  const e = {id, ...(route ? {mailbox:route.id} : {sender:own.id,recipient:target.id}), ephemeralKey:b64(rawPublic(privateKey(ephemeral,'x'))),salt:b64(c.randomBytes(32)),expiresAt:Math.floor(Math.min(now()+7*86400, expiry ?? Infinity, route?.expiresAt ?? Infinity))};
   let clear = packet;
   if (route) {
     validateRoute(route);

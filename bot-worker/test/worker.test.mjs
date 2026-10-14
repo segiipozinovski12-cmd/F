@@ -14,9 +14,9 @@ function fixture() {
   const state={contacts:[],rooms:[],messages:[],outbox:[],processed:[],extended:{signal,ownMailboxes:[],privateLinks:[]}};
   return {version:1,identity,bot,state,executorID:randomBytes(32).toString('base64url')};
 }
-async function inbound(payload) {
+async function inbound(payload,expiresAt) {
   const alice=makeIdentity(), card=identityCard(alice), room={id:'dm:'+ [card.id,payload.bot.card.id].sort().join(':'),title:'',members:[card,payload.bot.card],creator:'',isGroup:false,createdAt:now(),pinned:false,archived:false,muted:false,unread:0,draft:'',disappearingSeconds:0};
-  const event={id:randomUUID(),kind:'message',room,message:{id:randomUUID(),roomID:room.id,sender:card.id,text:'/start',createdAt:now()},senderName:'Alice',at:now()};
+  const event={id:randomUUID(),kind:'message',room,message:{id:randomUUID(),roomID:room.id,sender:card.id,text:'/start',createdAt:now(),expiresAt},senderName:'Alice',at:now()};
   const encrypted=await encrypt(json(event),payload.bot.card,alice,createSnapshot(),payload.state.extended.signal.pendingPublication.bundles[0]);
   return {alice,card,event,...encrypted};
 }
@@ -76,6 +76,13 @@ test('bot commits ratchet and exact reply together; failed storage never acknowl
   assert.equal(worker.payload.state.outbox.length,1);assert.deepEqual(worker.payload.state.processed,['packet-id']);
   const opened=openEnvelope(worker.payload.state.outbox[0].envelope,a.alice,p.bot.card), reply=await decrypt(JSON.parse(opened.packet),p.bot.card,a.state);
   assert.equal(JSON.parse(reply.clear).message.text,'Hello');
+});
+test('fractional Swift disappearing dates preserve inner expiry and produce valid integer wire dates',async()=>{
+  const p=fixture(), expiry=now()+120.75, a=await inbound(p,expiry), worker=new Worker(p,()=>{},{});
+  await worker.receive(a.packet,a.card,'timer');const envelope=worker.payload.state.outbox[0].envelope;
+  assert.equal(envelope.expiresAt,Math.floor(expiry));assert.equal(Number.isInteger(envelope.expiresAt),true);
+  const opened=openEnvelope(envelope,a.alice,p.bot.card), reply=await decrypt(JSON.parse(opened.packet),p.bot.card,a.state);
+  assert.equal(JSON.parse(reply.clear).message.expiresAt,expiry);
 });
 test('corrupt packets are durably rejected and do not advance Signal state',async()=>{
   const p=fixture(), worker=new Worker(p,()=>{},{}), a=makeIdentity();await worker.receive(Buffer.from('{}'),identityCard(a),'bad');

@@ -12,7 +12,7 @@ if(process.argv[2]==='init') {
   const signal=publication(createSnapshot(),identity,2), state={contacts:[],rooms:[],messages:[],outbox:[],processed:[],extended:{signal,ownMailboxes:[],privateLinks:[]}}, executorID=randomBytes(32).toString('base64url');
   const creation={card,name:bot.name,username:bot.username,token:bot.token,ownershipSignature:sign(identity,Buffer.from(`VO1D-BOT-CREATE-1\n${owner}\n${card.id}\n${bot.username}\n${bot.name}\n${hash(bot.token)}`))};
   const room={id:'dm:'+ [aliceCard.id,card.id].sort().join(':'),title:'',members:[aliceCard,card],creator:'',isGroup:false,createdAt:now(),pinned:false,archived:false,muted:false,unread:0,draft:'',disappearingSeconds:0};
-  const event={id:randomUUID(),kind:'message',room,message:{id:randomUUID(),roomID:room.id,sender:aliceCard.id,text:'/start',createdAt:now()},senderName:'Alice',at:now()};
+  const event={id:randomUUID(),kind:'message',room,message:{id:randomUUID(),roomID:room.id,sender:aliceCard.id,text:'/start',createdAt:now(),expiresAt:now()+120.75},senderName:'Alice',at:now()};
   const encrypted=await encrypt(json(event),card,alice,createSnapshot(),signal.pendingPublication.bundles[0]);
   console.log(JSON.stringify({creation,payload:{version:1,bot,identity,state,executorID},alice,aliceCard,aliceState:encrypted.state,envelope:sealEnvelope(encrypted.packet,alice,card,event.id)}));
 } else if(process.argv[2]==='tick') {
