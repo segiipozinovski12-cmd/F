@@ -12,7 +12,7 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def main():
-    pins={str(p.relative_to(ROOT)):sha(p) for p in [ROOT/'server/requirements.lock',ROOT/'Vendor/libsignal/Cargo.lock',ROOT/'Vendor/TorRuntime/Package.swift'] if p.exists()}
+    pins={str(p.relative_to(ROOT)):sha(p) for p in [ROOT/'server/requirements.lock',ROOT/'bot-worker/pnpm-lock.yaml',ROOT/'Vendor/libsignal/Cargo.lock',ROOT/'Vendor/TorRuntime/Package.swift'] if p.exists()}
     packages=[]
     for line in (ROOT/'server/requirements.lock').read_text().splitlines():
         if '==' in line and not line.startswith('#'):

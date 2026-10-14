@@ -1,0 +1,17 @@
+{
+  "name": "vo1d-bot-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@signalapp/libsignal-client": "0.70.0",
+    "socks-proxy-agent": "10.1.0"
+  }
+}

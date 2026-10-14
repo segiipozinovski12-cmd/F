@@ -95,7 +95,7 @@ struct ReportConfig: Decodable {
     var retentionSeconds: Int
 }
 struct ModerationAccess: Decodable { var role: String?; var mfaEnabled: Bool }
-struct ModeratorLogin: Decodable { var token: String; var expiresAt: Int }
+struct ModeratorLogin: Decodable { var token: String; var expiresAt: Int; var recoveryCodes: [String]? = nil }
 struct ModeratorSetup: Decodable { var secret: String; var expiresAt: Int }
 struct ModerationCase: Decodable, Identifiable {
     var id: String
@@ -142,6 +142,14 @@ extension APIClient {
     func setupModeratorMFA() async throws -> ModeratorSetup { try await request("v2/moderation/mfa/setup", method: "POST", body: Data("{}".utf8)) }
     func loginModerator(code: String) async throws -> ModeratorLogin {
         try await request("v2/moderation/mfa/verify", method: "POST", body: Wire.encoder.encode(["code": code]))
+    }
+    func recoverModerator(code: String) async throws {
+        let _: OK = try await request("v2/moderation/mfa/recover", method: "POST", body: Wire.encoder.encode(["recoveryCode": code]))
+    }
+    func rotateModeratorRecovery(code: String, token: String) async throws -> [String] {
+        struct Result: Decodable { var recoveryCodes: [String] }
+        let result: Result = try await request("v2/moderation/mfa/recovery-codes", method: "POST", body: Wire.encoder.encode(["code": code]), moderationToken: token)
+        return result.recoveryCodes
     }
     func moderationQueue(token: String) async throws -> [ModerationCase] {
         struct Response: Decodable { var reports: [ModerationCase] }

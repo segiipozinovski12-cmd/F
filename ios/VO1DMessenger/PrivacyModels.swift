@@ -110,6 +110,8 @@ struct LocalReminder: Codable, Identifiable, Hashable {
 }
 
 struct ExtendedState: Codable {
+    var pendingDeviceCommands: [DeviceCommand] = []
+    var completedDeviceCommands: [String: DeviceCommandResult] = [:]
     var revokedDevices: [String:Int] = [:]
     var deviceLinks: [DeviceLink] = []
     var issuedGroupInvites: [String: GroupInvitation] = [:]
@@ -149,6 +151,7 @@ struct ExtendedState: Codable {
     var roomNotes: [String: String] = [:]
     init() {}
     enum CodingKeys: String, CodingKey {
+        case pendingDeviceCommands, completedDeviceCommands
         case revokedDevices, deviceLinks
         case issuedGroupInvites, pendingGroupInvites, acceptedGroupInvites
         case signal
@@ -160,6 +163,8 @@ struct ExtendedState: Codable {
     init(from decoder: Decoder) throws {
         self.init()
         let container=try decoder.container(keyedBy:CodingKeys.self)
+        pendingDeviceCommands=try container.decodeIfPresent([DeviceCommand].self,forKey:.pendingDeviceCommands) ?? []
+        completedDeviceCommands=try container.decodeIfPresent([String: DeviceCommandResult].self,forKey:.completedDeviceCommands) ?? [:]
         lastOpenedAt=try container.decodeIfPresent(Date.self,forKey:.lastOpenedAt)
         revokedDevices=try container.decodeIfPresent([String:Int].self,forKey:.revokedDevices) ?? [:]
         deviceLinks=try container.decodeIfPresent([DeviceLink].self,forKey:.deviceLinks) ?? []

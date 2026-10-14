@@ -204,6 +204,10 @@ class Relay:
         with self.db() as db:
             self.clean(db)
             if not public:
+                # Recheck fenced worker credentials inside the transaction:
+                # owner epoch/lease changes may have happened after auth.
+                if env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
+                    user = self.user(env, db)
                 result = bots.handle(db,user,env,body,APIError,b64)
                 if result is not None:
                     return result

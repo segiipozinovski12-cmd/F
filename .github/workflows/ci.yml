@@ -9,6 +9,24 @@ concurrency:
   group: vo1d-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
+  bot-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: npm install --global --ignore-scripts pnpm@11.25.0
+      - run: pnpm --dir bot-worker install --frozen-lockfile --ignore-scripts
+      - run: pnpm --dir bot-worker test
+      - run: pnpm --dir bot-worker audit --prod
+      - run: pip install --require-hashes -r server/requirements.lock
+      - name: Real relay / external libsignal worker integration
+        run: python -m unittest discover -s server/tests -p test_external_worker.py -v
   relay:
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +78,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: recursive
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare official libsignal interoperability fixture
+        run: |
+          npm install --global --ignore-scripts pnpm@11.25.0
+          pnpm --dir bot-worker install --frozen-lockfile --ignore-scripts
+          node bot-worker/test/interop.mjs
       - name: Verify generated project
         run: |
           python3 scripts/generate_project.py
@@ -76,6 +103,8 @@ jobs:
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and "iPhone" in d["name"]))')
           xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug"
+          app_data=$(xcrun simctl get_app_container "$simulator_id" io.vo1d.messenger data)
+          node bot-worker/test/interop.mjs verify "$app_data/Documents/signal-interop-response.json"
       - name: Build release for device
         run: |
           xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Release -destination 'generic/platform=iOS' -derivedDataPath release CODE_SIGNING_ALLOWED=NO

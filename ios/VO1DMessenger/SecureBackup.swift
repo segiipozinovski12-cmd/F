@@ -96,6 +96,7 @@ enum SecureBackup {
             local.signal = mode == .history ? nil : signal
         }
         local.revokedDevices = [:]; local.deviceLinks = []; local.issuedGroupInvites = [:]; local.pendingGroupInvites = []; local.acceptedGroupInvites = [:]
+        local.pendingDeviceCommands = []; local.completedDeviceCommands = [:]
         local.privateBlobDeletes = [:]; local.ownMailboxes = []; local.privateInvite = nil; local.privateInviteLink = nil
         local.privateLinks = []
         local.invitationBundles = [:]; local.pendingEvents = []; local.reminders = []

@@ -957,9 +957,9 @@ final class ChatStore: ObservableObject {
         guard let api else {
             throw MessengerError.invalid("Нет соединения с VO1D")
         }
-        guard data.count > 3 * 1024 * 1024,
+        guard data.count > 0,
               data.count <= 50 * 1024 * 1024 else {
-            throw MessengerError.invalid("Большое вложение должно быть от 3 до 50 МБ")
+            throw MessengerError.invalid("Вложение должно быть до 50 МБ")
         }
         guard (preview?.count ?? 0) <= 320 * 1024 else {
             throw MessengerError.invalid("Preview слишком большой")
@@ -1060,7 +1060,9 @@ final class ChatStore: ObservableObject {
         silent: Bool = false,
         poll: PollData? = nil,
         topic: String? = nil,
-        viewOnceSeconds: Int? = nil
+        viewOnceSeconds: Int? = nil,
+        deliveryID: String? = nil,
+        persistImmediately: Bool = true
     ) throws {
         let text = preferences.cleanLinks ? SafeContent.cleanText(text) : text
         guard let room = state.rooms.first(where: { $0.id == roomID }),
@@ -1090,7 +1092,7 @@ final class ChatStore: ObservableObject {
             if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
                 state.rooms[index].draft = ""
             }
-            try save()
+            if persistImmediately { try save() }
             return
         }
 
@@ -1115,7 +1117,7 @@ final class ChatStore: ObservableObject {
             if let index = state.rooms.firstIndex(where: { $0.id == roomID }) {
                 state.rooms[index].draft = ""
             }
-            try save()
+            if persistImmediately { try save() }
             return
         }
 
@@ -1153,7 +1155,7 @@ final class ChatStore: ObservableObject {
                 state.rooms[index].draft = ""
                 state.rooms[index].unread = 0
             }
-            try save()
+            if persistImmediately { try save() }
             return
         }
         if room.isGroup && room.onlyAdminsCanPost == true && !isGroupAdmin(room) {
@@ -1168,7 +1170,7 @@ final class ChatStore: ObservableObject {
         let ordinaryExpiry = seconds > 0 ? Date().addingTimeInterval(Double(seconds)) : nil
         let expiry = viewOnceSeconds == nil ? ordinaryExpiry : min(ordinaryExpiry ?? .distantFuture, Date().addingTimeInterval(7 * 86400))
         var message = ChatMessage(
-            id: UUID().uuidString,
+            id: deliveryID ?? UUID().uuidString,
             roomID: roomID,
             sender: myID,
             text: text,
@@ -1186,9 +1188,9 @@ final class ChatStore: ObservableObject {
         try enqueue(ChatEvent(kind: "message", room: room, message: message, senderName: state.nickname), room: room, messageID: message.id)
         state.messages.append(message)
         if let index = state.rooms.firstIndex(where: { $0.id == roomID }) { state.rooms[index].draft = "" }
-        try save()
+        if persistImmediately { try save() }
     }
-    func action(_ kind: String, message: ChatMessage, value: String? = nil) throws {
+    func action(_ kind: String, message: ChatMessage, value: String? = nil, persistImmediately: Bool = true) throws {
         guard let room = state.rooms.first(where: { $0.id == message.roomID }), let index = state.messages.firstIndex(where: { $0.id == message.id }) else { return }
         guard kind != "edit" || state.messages[index].viewOnceSeconds == nil else { throw MessengerError.invalid("Одноразовый текст нельзя изменить") }
         if kind == "edit" || kind == "delete" {
@@ -1208,7 +1210,7 @@ final class ChatStore: ObservableObject {
         }
             if kind == "delete" { state.messages.remove(at: index) }
             if kind == "reaction" { state.messages[index].reactions[myID] = value }
-            try save()
+            if persistImmediately { try save() }
             return
         }
 
@@ -1216,7 +1218,7 @@ final class ChatStore: ObservableObject {
         if kind == "edit" { state.messages[index].text = String((value ?? "").prefix(16000)); state.messages[index].edited = true }
         if kind == "delete" { state.messages.remove(at: index) }
         if kind == "reaction" { state.messages[index].reactions[myID] = value }
-        try save()
+        if persistImmediately { try save() }
     }
     func forward(_ message: ChatMessage, to roomID: String) throws {
         guard message.viewOnceSeconds == nil else { throw MessengerError.invalid("Одноразовый текст нельзя переслать") }

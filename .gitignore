@@ -7,6 +7,9 @@ xcuserdata/
 *.xcuserstate
 __pycache__/
 .venv/
+node_modules/
+*.vo1dbot
+*.worker-lock
 data/
 .env
 *.sqlite3*

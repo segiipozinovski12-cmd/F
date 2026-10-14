@@ -28,15 +28,18 @@ final class APIClient {
     private let capabilityNamespace = UUID().uuidString
     private let callToken: String?
     private let botToken: String?
+    private let botExecutor: String?
+    private let botInstance: String?
     private var authenticationTask: Task<Void, Error>?
 
-    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil, botToken: String? = nil) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil, botToken: String? = nil, botExecutor: String? = nil, botInstance: String? = nil) throws {
         base = try Self.validateURL(server,privacy:privacy)
         self.privacy = privacy
         self.identity = identity
         self.authenticationCard = authenticationCard
         self.callToken = callToken
         self.botToken = botToken
+        self.botExecutor = botExecutor; self.botInstance = botInstance
         let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
     }
@@ -90,6 +93,8 @@ final class APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let botToken { request.setValue("BotCapability \(botToken)", forHTTPHeaderField: "Authorization") }
+        if let botExecutor { request.setValue(botExecutor, forHTTPHeaderField: "X-Bot-Executor") }
+        if let botInstance { request.setValue(botInstance, forHTTPHeaderField: "X-Bot-Instance") }
         if let moderationToken { request.setValue(moderationToken, forHTTPHeaderField: "X-Moderation-Token") }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MessengerError.invalid("Нет ответа сервера") }

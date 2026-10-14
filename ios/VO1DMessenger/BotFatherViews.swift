@@ -64,6 +64,7 @@ struct BotManagementView: View {
                     }.disabled(!bot.registered)
                 }
                 Section("/setcommands · команды") {
+                    if bot.externalExecution == true { Text("Для изменения встроенных ответов сначала верни последний файл исполнителя. Внешняя программа может использовать собственный обработчик.").font(.caption) }
                     ForEach(bot.commands.keys.sorted(), id: \.self) { key in
                         VStack(alignment: .leading, spacing: 4) {
                             Text("/" + key).font(.body.monospaced())
@@ -80,8 +81,9 @@ struct BotManagementView: View {
                               bot.commands.count < 32 || bot.commands[key] != nil else { failure = "Нужны команда a-z/0-9/_, ответ до 4000 символов; максимум 32 команды"; return }
                         update { $0.commands[key] = response }; command = ""; response = ""
                     }
-                }
+                }.disabled(bot.externalExecution == true)
                 Section("/token · доступ исполнителя") {
+                    NavigationLink("Круглосуточный внешний исполнитель") { BotWorkerTransferView(botID: bot.id) }
                     NavigationLink("Приватные приглашения бота") { PrivateLinksView(botID: bot.id) }
                     Text("Токен разрешает работу только с шифротекстом этого бота. Для внешнего исполнителя нужны отдельные ключи и состояние E2EE. Не публикуй токен.").font(.caption)
                     Button("Скопировать токен на 30 секунд") { SafeContent.copy(bot.token, seconds: 30) }

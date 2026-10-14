@@ -18,6 +18,11 @@ def install(db):
         created INTEGER NOT NULL, commands TEXT NOT NULL DEFAULT '[]');
       CREATE INDEX IF NOT EXISTS bot_owner ON bots(owner);
     ''')
+    columns = {row[1] for row in db.execute('PRAGMA table_info(bots)')}
+    for name, declaration in [('executor', "TEXT NOT NULL DEFAULT ''"), ('execution_mode', "TEXT NOT NULL DEFAULT 'native'"),
+                              ('lease_instance', 'TEXT'), ('lease_until', 'INTEGER NOT NULL DEFAULT 0')]:
+        if name not in columns:
+            db.execute(f'ALTER TABLE bots ADD COLUMN {name} {declaration}')
 
 
 def creation_bytes(owner, card, username, name, digest):
@@ -30,11 +35,18 @@ def authorize(db, env, error):
     token = auth[len('BotCapability '):]
     if not TOKEN.fullmatch(token):
         raise error(401, 'Invalid bot credential')
-    row = db.execute('SELECT b.identity,b.owner FROM bots b JOIN identities i ON i.id=b.identity WHERE b.token_digest=? AND b.enabled=1',
+    row = db.execute('SELECT b.* FROM bots b JOIN identities i ON i.id=b.identity WHERE b.token_digest=? AND b.enabled=1',
                      (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
     if row is None:
         raise error(401, 'Bot credential revoked or unavailable')
     path, method = env.get('PATH_INFO', ''), env.get('REQUEST_METHOD', '')
+    if path == '/v2/bots/worker/lease' and method == 'POST':
+        moderation.enforce(db, row['identity'], error)
+        moderation.enforce(db, row['owner'], error)
+        return row['identity']
+    if row['executor'] and (env.get('HTTP_X_BOT_EXECUTOR') != row['executor'] or
+                            env.get('HTTP_X_BOT_INSTANCE') != row['lease_instance'] or row['lease_until'] <= int(time.time())):
+        raise error(409, 'Bot executor lease expired or replaced')
     allowed = ((method == 'GET' and (path in ('/v1/inbox', '/v2/prekeys') or path.startswith('/v1/identity/'))) or
                (method == 'POST' and (path in ('/v1/ack', '/v1/envelopes', '/v2/prekeys') or path.startswith('/v2/prekeys/'))))
     if not allowed:
@@ -70,6 +82,17 @@ def handle(db, user, env, body, error, b64):
     if not path.startswith('/v2/bots'):
         return None
     now = int(time.time())
+    if method == 'POST' and path == '/v2/bots/worker/lease':
+        if not env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
+            raise error(403, 'Worker credential required')
+        row = db.execute('SELECT * FROM bots WHERE identity=?', (user,)).fetchone()
+        executor, instance = body.get('executor'), body.get('instance')
+        if row is None or not row['executor'] or executor != row['executor'] or not isinstance(instance, str) or not TOKEN.fullmatch(instance):
+            raise error(409, 'Bot executor replaced or unconfigured')
+        if row['lease_until'] > now and row['lease_instance'] != instance:
+            raise error(409, 'Another executor holds the bot lease')
+        db.execute('UPDATE bots SET lease_instance=?,lease_until=? WHERE identity=?', (instance, now + 90, user))
+        return {'ok': True, 'expiresAt': now + 90}
     if method == 'GET' and path.startswith('/v2/bots/directory/'):
         row = db.execute('SELECT * FROM bots WHERE identity=?', (path.rsplit('/', 1)[1],)).fetchone()
         return {'bot': public(row) if row else None}
@@ -127,17 +150,25 @@ def handle(db, user, env, body, error, b64):
         import privacy
         privacy.erase(db, bot_id)
         return {'ok': True}
-    match = re.fullmatch(r'/v2/bots/([a-f0-9]{64})/(token|settings)', path)
+    match = re.fullmatch(r'/v2/bots/([a-f0-9]{64})/(token|settings|executor)', path)
     if method == 'POST' and match:
         bot_id, operation = match.groups()
         row = db.execute('SELECT * FROM bots WHERE identity=? AND owner=?', (bot_id, user)).fetchone()
         if row is None:
             raise error(404, 'Owned bot not found')
-        if operation == 'token':
+        if operation == 'executor':
+            executor, mode = body.get('executor'), body.get('mode')
+            if set(body) != {'executor', 'mode'} or not isinstance(executor, str) or not TOKEN.fullmatch(executor) or mode not in ('native', 'external'):
+                raise error(400, 'Invalid executor configuration')
+            if executor != row['executor']:
+                db.execute('UPDATE bots SET executor=?,execution_mode=?,lease_instance=NULL,lease_until=0 WHERE identity=?', (executor, mode, bot_id))
+            elif mode != row['execution_mode']:
+                raise error(409, 'Change executor identifier when changing mode')
+        elif operation == 'token':
             token = body.get('token')
             if not isinstance(token, str) or not TOKEN.fullmatch(token):
                 raise error(400, 'Invalid replacement credential')
-            db.execute('UPDATE bots SET token_digest=? WHERE identity=?', (hashlib.sha256(token.encode()).hexdigest(), bot_id))
+            db.execute('UPDATE bots SET token_digest=?,lease_instance=NULL,lease_until=0 WHERE identity=?', (hashlib.sha256(token.encode()).hexdigest(), bot_id))
         else:
             enabled, commands = body.get('enabled'), body.get('commands')
             if type(enabled) is not bool or not isinstance(commands, list) or len(commands) > 32 or any(not isinstance(c, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,31}', c) for c in commands) or len(commands) != len(set(commands)):

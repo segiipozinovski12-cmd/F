@@ -37,6 +37,9 @@ def install(db):
         CREATE TABLE IF NOT EXISTS moderator_sessions (
           digest TEXT PRIMARY KEY, identity TEXT NOT NULL, account_session TEXT NOT NULL,
           expires INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS moderator_recovery (
+          identity TEXT NOT NULL, digest TEXT NOT NULL, created INTEGER NOT NULL,
+          PRIMARY KEY(identity,digest));
         CREATE TABLE IF NOT EXISTS reports (
           id TEXT PRIMARY KEY, reporter TEXT NOT NULL, subject TEXT NOT NULL,
           reason TEXT NOT NULL, source TEXT NOT NULL, digest TEXT NOT NULL,
@@ -126,6 +129,8 @@ def erase(db, user):
     tables = ('moderator_sessions', 'moderators') if current and current['owner'] == user else ('moderator_sessions', 'moderator_mfa', 'moderators')
     for table in tables:
         db.execute(f'DELETE FROM {table} WHERE identity=?', (user,))
+    if current is None or current['owner'] != user:
+        db.execute('DELETE FROM moderator_recovery WHERE identity=?', (user,))
     db.execute('DELETE FROM reports WHERE reporter=?', (user,))
     db.execute('DELETE FROM report_appeals WHERE identity=?', (user,))
     db.execute('UPDATE reports SET assignee=NULL,updated=updated+1 WHERE assignee=?', (user,))
@@ -176,6 +181,19 @@ def check_otp(db, user, code, now, error):
             if changed == 1:
                 return
     raise error(403, 'Invalid or already used authenticator code')
+
+
+def recovery_digest(user, code):
+    # Independent 128-bit random codes; never store or log their plaintext.
+    return hashlib.sha256(f'VO1D-MFA-RECOVERY-1\n{user}\n{code}'.encode()).hexdigest()
+
+
+def issue_recovery(db, user, now):
+    codes = [secrets.token_urlsafe(16) for _ in range(8)]
+    db.execute('DELETE FROM moderator_recovery WHERE identity=?', (user,))
+    db.executemany('INSERT INTO moderator_recovery VALUES (?,?,?)', [(user, recovery_digest(user, code), now) for code in codes])
+    audit(db, user, 'mfa_recovery_rotated', user, now)
+    return codes
 
 
 def authorize(db, user, env, error, roles=('owner', 'admin', 'reviewer')):
@@ -352,6 +370,21 @@ def handle(relay, db, user, env, body, error, b64):
     if method == 'GET' and path == '/v2/moderation/access':
         row = db.execute('SELECT verified FROM moderator_mfa WHERE identity=?', (user,)).fetchone()
         return {'role': role(db, user), 'mfaEnabled': bool(row and row[0])}
+    if method == 'POST' and path == '/v2/moderation/mfa/recover':
+        if role(db, user) is None:
+            raise error(403, 'Moderator role required')
+        code = body.get('recoveryCode')
+        if set(body) != {'recoveryCode'} or not isinstance(code, str) or not re.fullmatch(r'[A-Za-z0-9_-]{22}', code):
+            raise error(400, 'Invalid recovery code format')
+        found = db.execute('DELETE FROM moderator_recovery WHERE identity=? AND digest=?', (user, recovery_digest(user, code))).rowcount
+        if found != 1:
+            raise error(403, 'Recovery code invalid or consumed')
+        db.execute('DELETE FROM moderator_recovery WHERE identity=?', (user,))
+        db.execute('DELETE FROM moderator_mfa WHERE identity=?', (user,))
+        db.execute('DELETE FROM moderator_sessions WHERE identity=?', (user,))
+        db.execute('DELETE FROM sessions WHERE identity=?', (user,))
+        audit(db, user, 'mfa_recovered_sessions_revoked', user, now)
+        return {'ok': True}
     if path in ('/v2/moderation/mfa/setup', '/v2/moderation/mfa/verify') and method == 'POST':
         if role(db, user) is None:
             raise error(403, 'Moderator role required')
@@ -363,6 +396,7 @@ def handle(relay, db, user, env, body, error, b64):
             db.execute('INSERT OR REPLACE INTO moderator_mfa VALUES (?,?,0,-1,?)', (user, protect(secret, user, error), now + 600))
             audit(db, user, 'mfa_setup', user, now)
             return {'secret': base64.b32encode(secret).decode().rstrip('='), 'expiresAt': now + 600}
+        previous = db.execute('SELECT verified FROM moderator_mfa WHERE identity=?', (user,)).fetchone()
         check_otp(db, user, body.get('code'), now, error)
         token = secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode()).hexdigest()
@@ -370,8 +404,16 @@ def handle(relay, db, user, env, body, error, b64):
         db.execute('DELETE FROM moderator_sessions WHERE identity=?', (user,))
         db.execute('INSERT INTO moderator_sessions VALUES (?,?,?,?)', (digest, user, account, now + 900))
         audit(db, user, 'mfa_login', user, now)
-        return {'token': token, 'expiresAt': now + 900}
+        result = {'token': token, 'expiresAt': now + 900}
+        if previous and not previous['verified']:
+            result['recoveryCodes'] = issue_recovery(db, user, now)
+        return result
     current_role = authorize(db, user, env, error)
+    if method == 'POST' and path == '/v2/moderation/mfa/recovery-codes':
+        if set(body) != {'code'}:
+            raise error(400, 'Fresh authenticator code required')
+        check_otp(db, user, body['code'], now, error)
+        return {'recoveryCodes': issue_recovery(db, user, now)}
     if method == 'POST' and path == '/v2/moderation/logout':
         db.execute('DELETE FROM moderator_sessions WHERE identity=?', (user,))
         return {'ok': True}
@@ -406,6 +448,7 @@ def handle(relay, db, user, env, body, error, b64):
         if value == 'none':
             db.execute('DELETE FROM moderators WHERE identity=?', (target,))
             db.execute('DELETE FROM moderator_mfa WHERE identity=?', (target,))
+            db.execute('DELETE FROM moderator_recovery WHERE identity=?', (target,))
             db.execute('UPDATE reports SET assignee=NULL,updated=updated+1 WHERE assignee=?', (target,))
         else:
             db.execute('INSERT OR REPLACE INTO moderators VALUES (?,?)', (target, value))

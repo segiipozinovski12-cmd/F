@@ -23,15 +23,36 @@ class BotTests(unittest.TestCase):
         body['ownershipSignature'] = test_relay.encode(private.sign(bots.creation_bytes(self.alice_card['id'], card, body['username'], body['name'], digest)))
         return private, body
 
-    def worker(self, token, path, method='GET', body=None):
+    def worker(self, token, path, method='GET', body=None, executor=None, instance=None):
         raw = json.dumps(body).encode() if body is not None else b''
         env = dict(REQUEST_METHOD=method, PATH_INFO=path, CONTENT_LENGTH=str(len(raw)), CONTENT_TYPE='application/json', REMOTE_ADDR='127.0.0.1')
         env['wsgi.input'] = io.BytesIO(raw)
         env['HTTP_AUTHORIZATION'] = 'BotCapability ' + token
+        if executor: env['HTTP_X_BOT_EXECUTOR'] = executor
+        if instance: env['HTTP_X_BOT_INSTANCE'] = instance
         status = []
         def start(value, headers): status.append(int(value.split()[0]))
         output = b''.join(self.relay(env, start))
         return status[0], json.loads(output)
+
+    def test_external_executor_lease_fences_replaced_and_concurrent_workers(self):
+        _, body = self.create_body(); self.request('/v2/bots', 'POST', body, self.a)
+        path = '/v2/bots/' + body['card']['id'] + '/executor'
+        executor, instance, competitor = [secrets.token_urlsafe(32) for _ in range(3)]
+        config = {'executor': executor, 'mode': 'external'}
+        self.assertEqual(self.request(path, 'POST', config, self.b)[0], 404)
+        self.assertEqual(self.request(path, 'POST', config, self.a)[0], 200)
+        self.assertEqual(self.worker(body['token'], '/v1/inbox')[0], 409)
+        lease = {'executor': executor, 'instance': instance}
+        self.assertEqual(self.worker(body['token'], '/v2/bots/worker/lease', 'POST', lease)[0], 200)
+        self.assertEqual(self.worker(body['token'], '/v1/inbox', executor=executor, instance=instance)[0], 200)
+        self.assertEqual(self.worker(body['token'], '/v2/bots/worker/lease', 'POST', {'executor': executor, 'instance': competitor})[0], 409)
+        with self.relay.db() as db: db.execute('UPDATE bots SET lease_until=0')
+        self.assertEqual(self.worker(body['token'], '/v2/bots/worker/lease', 'POST', {'executor': executor, 'instance': competitor})[0], 200)
+        self.assertEqual(self.worker(body['token'], '/v1/inbox', executor=executor, instance=instance)[0], 409)
+        self.assertEqual(self.request(path, 'POST', {'executor': secrets.token_urlsafe(32), 'mode': 'native'}, self.a)[0], 200)
+        self.assertEqual(self.worker(body['token'], '/v2/bots/worker/lease', 'POST', lease)[0], 409)
+        self.assertEqual(self.request(path, 'POST', {'executor': executor, 'mode': 'root'}, self.a)[0], 400)
 
     def test_create_bot_and_lookup_with_independent_keys(self):
         _, body = self.create_body()

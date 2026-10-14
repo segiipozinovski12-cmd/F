@@ -13,7 +13,7 @@ struct DeviceCertificate: Codable, Identifiable {
     func validate(now: Int = Int(Date().timeIntervalSince1970)) throws {
         try Crypto.validate(issuer)
         guard UUID(uuidString:id) != nil, device.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
-              device != issuer.id, ["history", "history-live"].contains(scope), expiresAt > now, expiresAt <= now + 31*86400 else { throw MessengerError.invalid("Разрешение устройства недействительно") }
+              device != issuer.id, ["history", "history-live", "collaboration"].contains(scope), expiresAt > now, expiresAt <= now + 31*86400 else { throw MessengerError.invalid("Разрешение устройства недействительно") }
         let key = try Curve25519.Signing.PublicKey(rawRepresentation:Crypto.decode(issuer.signingKey,count:32))
         guard try key.isValidSignature(Crypto.decode(signature,count:64),for:signed) else { throw MessengerError.invalid("Подпись устройства не совпала") }
     }
@@ -30,10 +30,13 @@ struct DeviceLink: Codable, Identifiable {
 }
 
 enum DeviceHistory {
-    static func snapshot(state: VaultState, owner: ContactCard) throws -> HistoryArchive {
+    static func snapshot(state: VaultState, owner: ContactCard, shareFiles: Bool = false) throws -> HistoryArchive {
         let networkRooms = Set(state.rooms.filter { !$0.members.contains(where:{ $0.id == ChatStore.builtinBotID }) }.map(\.id))
-        let messages = Array(state.messages.filter { networkRooms.contains($0.roomID) && ($0.expiresAt ?? .distantFuture) > Date() && $0.viewOnceSeconds == nil && $0.attachment?.viewSeconds == nil && (!$0.text.isEmpty || $0.poll != nil) }.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }.suffix(200)).map { input -> ChatMessage in
-            var result = input; result.attachment = nil; result.editHistory = nil
+        let messages = Array(state.messages.filter { networkRooms.contains($0.roomID) && ($0.expiresAt ?? .distantFuture) > Date() && $0.viewOnceSeconds == nil && $0.attachment?.viewSeconds == nil && (!$0.text.isEmpty || $0.poll != nil || (shareFiles && $0.attachment?.blobReadToken != nil)) }.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }.suffix(200)).map { input -> ChatMessage in
+            var result = input
+            if !shareFiles || result.attachment?.blobReadToken == nil { result.attachment = nil }
+            else { result.attachment?.previewData = nil; result.attachment?.data = Data() }
+            result.editHistory = nil
             result.readBy = []; result.deliveredTo = []; result.openedAt = nil
             return result
         }
@@ -45,9 +48,9 @@ enum DeviceHistory {
         guard try Wire.encoder.encode(archive).count <= 1024*1024 else { throw MessengerError.invalid("История больше 1 МБ. Используй зашифрованную резервную копию") }
         return archive
     }
-    static func validate(_ archive: HistoryArchive, owner: ContactCard) throws {
+    static func validate(_ archive: HistoryArchive, owner: ContactCard, shareFiles: Bool = false) throws {
         guard archive.ownerCard?.hasSameKeys(as: owner) == true, archive.messages.count <= 200, archive.rooms.count <= 200,
-              archive.contacts.count <= 3200, archive.messages.allSatisfy({ $0.attachment == nil && $0.viewOnceSeconds == nil }),
+              archive.contacts.count <= 3200, archive.messages.allSatisfy({ ($0.attachment == nil || (shareFiles && $0.attachment?.blobReadToken != nil && $0.attachment?.data.isEmpty == true && $0.attachment?.viewSeconds == nil)) && $0.viewOnceSeconds == nil }),
               Set(archive.messages.map(\.id)).count == archive.messages.count,
               Set(archive.rooms.map(\.id)).count == archive.rooms.count,
               try Wire.encoder.encode(archive).count <= 1024*1024 else { throw MessengerError.invalid("Некорректная история устройства") }
@@ -59,26 +62,27 @@ enum DeviceHistory {
     static func acceptSnapshot(_ archive: HistoryArchive, revision: Int?, link: DeviceLink, sender: ContactCard, deviceID: String) throws -> Bool {
         try link.certificate.validate()
         guard link.approved, link.peer.hasSameKeys(as: sender), link.certificate.issuer.hasSameKeys(as: sender), link.certificate.device == deviceID,
-              link.certificate.scope == "history-live", archive.id == link.id, let revision, revision > 0 else { throw MessengerError.invalid("Нет разрешения или версии автоматической синхронизации") }
-        try validate(archive, owner: sender)
+              ["history-live", "collaboration"].contains(link.certificate.scope), archive.id == link.id, let revision, revision > 0 else { throw MessengerError.invalid("Нет разрешения или версии автоматической синхронизации") }
+        try validate(archive, owner: sender, shareFiles: link.certificate.scope == "collaboration")
         return revision > (link.receivedRevision ?? 0)
     }
 }
 
 extension ChatStore {
-    private func deviceEvent(kind: String, certificate: DeviceCertificate, peer: ContactCard, archive: HistoryArchive? = nil, revision: Int? = nil) throws {
+    func deviceEvent(kind: String, certificate: DeviceCertificate, peer: ContactCard, archive: HistoryArchive? = nil, revision: Int? = nil, command: DeviceCommand? = nil, result: DeviceCommandResult? = nil) throws {
         guard let identity, let ownCard else { throw MessengerError.invalid("Нет личности") }
         let room = Room(id:"dm:"+[myID,peer.id].sorted().joined(separator:":"),title:"",members:[ownCard,peer],creator:"",isGroup:false,createdAt:Date())
         var event = ChatEvent(kind:kind,room:room,senderName:state.nickname)
         event.deviceCertificate = certificate; event.historyArchive = archive
         event.deviceRevision = revision
+        event.deviceCommand = command; event.deviceCommandResult = result
         state.outbox.append(PendingDelivery(authorizationID:kind == "deviceRevoke" ? nil : certificate.id,envelope:try sealEvent(event,from:identity,to:peer),messageID:nil))
     }
-    func pairDevice(_ contact: Contact, live: Bool = false) throws {
+    func pairDevice(_ contact: Contact, live: Bool = false, collaboration: Bool = false) throws {
         guard activeProfile?.scope == nil || activeProfile?.scope == .general else { throw MessengerError.invalid("Для изолированной личности используй отдельную копию истории") }
         guard contact.verified, !contact.blocked, let identity, let ownCard, extended.deviceLinks.count < 8 else { throw MessengerError.invalid("Сверь отпечаток устройства; доступно до 8 связей") }
         var certificate = DeviceCertificate(id:UUID().uuidString,issuer:ownCard,device:contact.id,expiresAt:Int(Date().timeIntervalSince1970)+30*86400,signature:"")
-        certificate.scope = live ? "history-live" : "history"
+        certificate.scope = collaboration ? "collaboration" : live ? "history-live" : "history"
         certificate.signature = try identity.signingPrivate.signature(for:certificate.signed).base64EncodedString()
         try deviceEvent(kind:"devicePair",certificate:certificate,peer:contact.card)
         var local = extended; local.deviceLinks.append(DeviceLink(certificate:certificate,peer:contact.card)); state.extended = local; try save()
@@ -95,16 +99,16 @@ extension ChatStore {
     func syncDeviceHistory(_ id: String) throws {
         guard let link = extended.deviceLinks.first(where:{ $0.id == id && $0.approved }), link.certificate.issuer.id == myID, let ownCard else { throw MessengerError.invalid("Другое устройство не подтвердило связь") }
         try link.certificate.validate()
-        let snapshot = try DeviceHistory.snapshot(state:state,owner:ownCard)
+        let snapshot = try DeviceHistory.snapshot(state:state,owner:ownCard,shareFiles:link.certificate.scope == "collaboration")
         try deviceEvent(kind:"deviceHistory",certificate:link.certificate,peer:link.peer,archive:snapshot); try save()
     }
     func queueDeviceSnapshots() throws {
         guard !locked, let ownCard, state.outbox.count < 200 else { return }
-        for link in extended.deviceLinks.filter({ $0.approved && $0.certificate.issuer.id == myID && $0.certificate.scope == "history-live" && $0.certificate.expiresAt > Int(Date().timeIntervalSince1970) }) {
+        for link in extended.deviceLinks.filter({ $0.approved && $0.certificate.issuer.id == myID && ["history-live", "collaboration"].contains($0.certificate.scope) && $0.certificate.expiresAt > Int(Date().timeIntervalSince1970) }) {
             // Keep a single durable snapshot in flight. After its exact ciphertext
             // is delivered, a later sync captures any intervening changes.
             guard !state.outbox.contains(where: { $0.authorizationID == link.id }) else { continue }
-            var archive = try DeviceHistory.snapshot(state: state, owner: ownCard)
+            var archive = try DeviceHistory.snapshot(state: state, owner: ownCard, shareFiles: link.certificate.scope == "collaboration")
             archive.id = link.id; archive.title = "Связанное устройство · " + String(ownCard.id.prefix(12))
             let digest = Crypto.hex(SHA256.hash(data: try Wire.encoder.encode(archive)))
             guard digest != link.snapshotDigest else { continue }
@@ -130,7 +134,7 @@ extension ChatStore {
         try save()
     }
     func handleDeviceControl(_ event: ChatEvent, sender: ContactCard) throws -> Bool {
-        guard ["devicePair","deviceApprove","deviceHistory","deviceRevoke","deviceSnapshot"].contains(event.kind) else { return false }
+        guard ["devicePair","deviceApprove","deviceHistory","deviceRevoke","deviceSnapshot","deviceCommand","deviceCommandResult"].contains(event.kind) else { return false }
         guard let certificate = event.deviceCertificate else { throw MessengerError.invalid("Нет разрешения устройства") }
         try certificate.validate()
         var local = extended
@@ -143,6 +147,7 @@ extension ChatStore {
             state.extended = local; return true
         }
         guard local.revokedDevices[certificate.id] == nil else { throw MessengerError.invalid("Эта связь отозвана") }
+        if ["deviceCommand", "deviceCommandResult"].contains(event.kind) { try handleDeviceCommand(event, sender: sender, certificate: certificate); return true }
         if event.kind == "devicePair" {
             guard certificate.issuer.hasSameKeys(as: sender), certificate.device == myID, local.deviceLinks.count < 8,
                   state.contacts.contains(where:{ $0.card.hasSameKeys(as: sender) && !$0.blocked }) else { throw MessengerError.invalid("Незнакомое устройство") }
@@ -157,7 +162,7 @@ extension ChatStore {
             case "deviceHistory", "deviceSnapshot":
                 guard local.deviceLinks[index].approved, certificate.issuer.hasSameKeys(as: sender), certificate.device == myID, let archive = event.historyArchive else { throw MessengerError.invalid("История не разрешена") }
                 guard state.contacts.contains(where: { $0.card.hasSameKeys(as: sender) && $0.verified && !$0.blocked }) else { throw MessengerError.invalid("Устройство больше не проверено или заблокировано") }
-                try DeviceHistory.validate(archive,owner:sender)
+                try DeviceHistory.validate(archive,owner:sender,shareFiles:certificate.scope == "collaboration")
                 if event.kind == "deviceSnapshot" {
                     guard try DeviceHistory.acceptSnapshot(archive, revision: event.deviceRevision, link: local.deviceLinks[index], sender: sender, deviceID: myID) else { return true }
                     local.deviceLinks[index].receivedRevision = event.deviceRevision; local.deviceLinks[index].lastSynced = Date()
@@ -177,13 +182,15 @@ extension ChatStore {
 struct DeviceLinksView: View {
     @EnvironmentObject var store: ChatStore
     @State private var live = false
+    @State private var collaboration = false
     var body: some View {
         List {
             Section("Связать устройства") {
                 Text("На втором устройстве создай отдельную личность. Обменяйся приватными QR и сравни отпечатки через другой канал. Затем отметь контакт проверенным на обоих устройствах и подтверди связь здесь.").font(.caption).foregroundStyle(.secondary)
                 Toggle("Автоматически передавать последние 200 текстовых сообщений", isOn: $live)
+                Toggle("Разрешить отправку, правки и файлы через основное устройство", isOn: $collaboration)
                 ForEach(store.state.contacts.filter { $0.verified && !$0.blocked && !store.isBuiltinBot($0.id) }) { contact in
-                    Button("Связать с \(contact.name)") { do { try store.pairDevice(contact, live: live) } catch { store.error = error.localizedDescription } }
+                    Button("Связать с \(contact.name)") { do { try store.pairDevice(contact, live: live, collaboration: collaboration) } catch { store.error = error.localizedDescription } }
                 }
             }
             Section("Связанные устройства") {
@@ -193,6 +200,7 @@ struct DeviceLinksView: View {
                         Text(link.peer.shortID).font(.caption.monospaced())
                         Text(link.approved ? "Связь подтверждена · история" : "Ожидает подтверждения").font(.caption).foregroundStyle(.secondary)
                         if link.certificate.scope == "history-live" { Text("Автоматическая передача текста · с согласия обоих устройств").font(.caption) }
+                        if link.certificate.scope == "collaboration" { Text("Отправка, правки, удаление и файлы через основное устройство").font(.caption) }
                         if let date = link.lastSynced { Text(date, style: .relative).font(.caption) }
                         if link.certificate.device == store.myID && !link.approved {
                             Button("Подтвердить своё второе устройство") { do { try store.approveDevice(link.id) } catch { store.error = error.localizedDescription } }
@@ -203,7 +211,7 @@ struct DeviceLinksView: View {
                         Button("Отозвать связь",role:.destructive) { do { try store.revokeDevice(link.id) } catch { store.error = error.localizedDescription } }
                     }
                 }
-                Text("Передача использует отдельную сессию libsignal. Автоматический режим обновляет архив при работе обоих приложений и наличии связи; правки и удаления отражаются в следующем снимке. Вложения, одноразовое содержимое, ключи и отправка от основной личности не передаются. Отзыв прекращает новые передачи и не удаляет уже полученную историю. Оба устройства должны поддерживать эту версию.").font(.caption).foregroundStyle(.secondary)
+                Text("Передача использует отдельную сессию libsignal. В режиме совместной работы второе устройство передаёт запросы, а основное отправляет их со своими ключами при следующем подключении. В этот режим входят ссылки и ключи обычных зашифрованных файлов; одноразовое содержимое и ключи личности не копируются. Отзыв прекращает новые запросы и снимки, но не удаляет полученные копии. Оба устройства должны поддерживать эту версию.").font(.caption).foregroundStyle(.secondary)
             }
         }.scrollContentBackground(.hidden).background(.black).navigationTitle("Мои устройства")
     }

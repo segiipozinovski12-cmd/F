@@ -13,6 +13,10 @@ struct ManagedBot: Codable, Identifiable {
     var settingsPending = true
     var enabled = true
     var tokenRotationPending: Bool? = nil
+    var externalExecution: Bool? = nil
+    var executorID: String? = nil
+    var executorPending: Bool? = nil
+    var handoffData: Data? = nil
     var id: String { card.id }
 }
 struct BotDirectoryEntry: Decodable, Identifiable {
@@ -52,6 +56,12 @@ extension APIClient {
     }
     func deleteBot(_ id: String) async throws {
         let _: OK = try await request("v2/bots/\(id)", method: "DELETE")
+    }
+    func configureBotExecutor(id: String, executor: String, external: Bool) async throws {
+        let _: OK = try await request("v2/bots/\(id)/executor", method: "POST", body: Wire.encoder.encode(["executor": executor, "mode": external ? "external" : "native"]))
+    }
+    func leaseBotExecutor(executor: String, instance: String) async throws {
+        let _: OK = try await request("v2/bots/worker/lease", method: "POST", body: Wire.encoder.encode(["executor": executor, "instance": instance]))
     }
     func botDirectory(_ id: String) async throws -> BotDirectoryEntry? {
         struct Response: Decodable { var bot: BotDirectoryEntry? }
@@ -110,9 +120,13 @@ extension ChatStore {
                 if bot.registered && bot.tokenRotationPending == true { try await ownerAPI.rotateBotToken(id: bot.id, token: bot.token) }
                 guard expected == generation, !locked, !Task.isCancelled else { return }
                 if bot.settingsPending { try await ownerAPI.updateBot(bot) }
+                if bot.executorPending == true, let executor = bot.executorID {
+                    try await ownerAPI.configureBotExecutor(id: bot.id, executor: executor, external: bot.externalExecution == true)
+                }
                 guard expected == generation, !locked, !Task.isCancelled,
                       let index = state.managedBots?.firstIndex(where: { $0.id == bot.id }) else { return }
                 state.managedBots?[index].registered = true
+                if state.managedBots?[index].executorID == bot.executorID { state.managedBots?[index].executorPending = false }
                 if state.managedBots?[index].token == bot.token { state.managedBots?[index].tokenRotationPending = false }
                 if state.managedBots?[index].commands == bot.commands && state.managedBots?[index].enabled == bot.enabled {
                     state.managedBots?[index].settingsPending = false
@@ -122,11 +136,12 @@ extension ChatStore {
                     var local = extended; local.trustedIDs.append(bot.id); state.extended = local
                 }
                 try save()
+                if bot.externalExecution == true { botStatuses[bot.id] = "Внешний исполнитель · встроенный приостановлен"; continue }
                 let worker = try NativeBotWorker(bot: bot, preferences: preferences)
                 if bot.enabled {
                     try await worker.run {
                         expected == self.generation && !self.locked && !Task.isCancelled &&
-                        self.state.managedBots?.contains(where: { $0.id == bot.id && $0.enabled && $0.token == bot.token }) == true
+                        self.state.managedBots?.contains(where: { $0.id == bot.id && $0.enabled && $0.token == bot.token && $0.externalExecution != true }) == true
                     }
                 } else {
                     defer { worker.api.invalidate() }
@@ -144,6 +159,7 @@ extension ChatStore {
 /// A bounded foreground executor. Only bot-addressed E2EE content reaches this worker.
 @MainActor
 final class NativeBotWorker {
+    private static let processInstance = try? Crypto.random(32).base64URL
     let bot: ManagedBot
     let keys: LocalIdentity
     let vault: Vault
@@ -154,11 +170,15 @@ final class NativeBotWorker {
         guard try loadedKeys.card.hasSameKeys(as: bot.card) else { throw MessengerError.invalid("Ключи бота не совпадают") }
         let loadedVault = try Vault(profileID: bot.keyProfileID)
         let loadedState = try loadedVault.read(key: loadedKeys.storage)
-        let client = try APIClient(server: bot.server, identity: loadedKeys, privacy: preferences, botToken: bot.token)
+        guard let instance = Self.processInstance else { throw MessengerError.invalid("Нет случайного идентификатора исполнителя") }
+        let client = try APIClient(server: bot.server, identity: loadedKeys, privacy: preferences, botToken: bot.token, botExecutor: bot.executorID, botInstance: instance)
         self.bot = bot
         keys = loadedKeys; vault = loadedVault; state = loadedState; api = client
     }
     func save() throws { try vault.write(state, key: keys.storage) }
+    private func lease() async throws {
+        if let executor = bot.executorID, let instance = Self.processInstance { try await api.leaseBotExecutor(executor: executor, instance: instance) }
+    }
     func maintainPrekeys(canContinue: () -> Bool) async throws {
         guard canContinue() else { return }
         if state.extended?.signal == nil {
@@ -181,6 +201,7 @@ final class NativeBotWorker {
         }
     }
     func preparePrivateInvite(canContinue: () -> Bool) async throws {
+        try await lease()
         state.extended?.privateLinks.removeAll { $0.expiresAt <= Int(Date().timeIntervalSince1970) }
         state.extended?.ownMailboxes.removeAll { $0.address.expiresAt <= Int(Date().timeIntervalSince1970) }
         guard canContinue(), (state.extended?.privateLinks.count ?? 0) < 32, (state.extended?.ownMailboxes.count ?? 0) < 512 else { throw MessengerError.invalid("Доступно до 32 ссылок и 512 приватных адресов бота") }
@@ -225,6 +246,7 @@ final class NativeBotWorker {
     func run(canContinue: () -> Bool) async throws {
         defer { api.invalidate() }
         guard canContinue() else { return }
+        try await lease()
         try await maintainPrekeys(canContinue: canContinue)
         try await flushPrivateLinks(canContinue: canContinue)
         guard canContinue() else { return }
@@ -235,6 +257,7 @@ final class NativeBotWorker {
         var ack: [String] = []
         for envelope in inbox {
             guard canContinue(), state.outbox.count < 100 else { break }
+            try await lease()
             if state.processed.contains(envelope.id) || envelope.expiresAt <= Int(Date().timeIntervalSince1970) { ack.append(envelope.id); continue }
             let sender = try await api.card(envelope.sender)
             guard canContinue() else { return }
@@ -250,6 +273,7 @@ final class NativeBotWorker {
         let activeMailboxes = (state.extended?.ownMailboxes ?? []).filter { $0.registered && $0.address.expiresAt > Int(Date().timeIntervalSince1970) }
         let start = activeMailboxes.isEmpty ? 0 : max(0, state.extended?.privateInboxOffset ?? 0) % activeMailboxes.count
         for offset in 0..<min(32, activeMailboxes.count) {
+            try await lease()
             let position = (start + offset) % activeMailboxes.count, mailbox = activeMailboxes[position]
             let privateInbox = try await api.privateInbox(mailbox)
             guard canContinue() else { return }
@@ -326,6 +350,7 @@ final class NativeBotWorker {
         try save()
         for pending in SmartQueue.ready(state.outbox, issues: state.deliveryRetryState ?? [:], limit: 8) {
             guard canContinue() else { return }
+            try await lease()
             do { try await api.send(pending.envelope) }
             catch {
                 guard canContinue() else { return }

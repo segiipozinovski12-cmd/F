@@ -54,6 +54,7 @@ extension ChatStore {
         guard !locked else { throw MessengerError.invalid("Хранилище заблокировано") }
         if let botID {
             guard !botsSyncing, let bot = state.managedBots?.first(where: { $0.id == botID }) else { throw MessengerError.invalid("Дождись завершения работы бота") }
+            guard bot.externalExecution != true else { throw MessengerError.invalid("Сначала верни последний файл внешнего исполнителя") }
             let worker = try NativeBotWorker(bot: bot, preferences: preferences)
             defer { worker.api.invalidate() }
             if let index = worker.state.extended?.privateLinks.firstIndex(where: { $0.id == id }) {
@@ -80,6 +81,7 @@ extension ChatStore {
     }
     func prepareBotPrivateInvite(_ id: String) async throws {
         guard !locked, !botsSyncing, let bot = state.managedBots?.first(where: { $0.id == id && $0.registered && $0.enabled }) else { throw MessengerError.invalid("Бот должен быть включён и свободен; повтори после синхронизации") }
+        guard bot.externalExecution != true else { throw MessengerError.invalid("Сначала верни последний файл внешнего исполнителя") }
         botsSyncing = true
         defer { botsSyncing = false }
         let expected = generation

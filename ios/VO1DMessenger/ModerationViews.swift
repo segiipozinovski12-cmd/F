@@ -179,6 +179,8 @@ struct ModerationDashboardView: View {
     @State private var expiresAt = 0
     @State private var secret = ""
     @State private var code = ""
+    @State private var recoveryCode = ""
+    @State private var recoveryCodes: [String] = []
     @State private var queue: [ModerationCase] = []
     @State private var queueCursor: String?
     @State private var appealCursor: String?
@@ -213,6 +215,19 @@ struct ModerationDashboardView: View {
                 }
             }
             if token != nil {
+                Section("Восстановление MFA") {
+                    Text("Сохрани коды отдельно от телефона и ключей личности. Любой один код вместе с доступом к твоей личности сбрасывает MFA и отзывает все сессии. После сброса остальные коды перестают работать.").font(.caption)
+                    if !recoveryCodes.isEmpty {
+                        Text(recoveryCodes.joined(separator: "\n")).font(.body.monospaced()).textSelection(.enabled)
+                        Button("Скопировать коды на 30 секунд") { SafeContent.copy(recoveryCodes.joined(separator: "\n"), seconds: 30) }
+                        Button("Коды сохранены") { recoveryCodes = [] }
+                    }
+                    SecureField("Новый код аутентификатора", text: $code).keyboardType(.numberPad)
+                    Button("Заменить все резервные коды") {
+                        guard let token else { return }; let expected = store.generation
+                        run { api in let codes = try await api.rotateModeratorRecovery(code: code, token: token); guard expected == store.generation, !store.locked, scenePhase == .active else { return }; recoveryCodes = codes; code = "" }
+                    }.disabled(code.count != 6)
+                }
                 Section("Фильтры очереди") {
                     Picker("Статус", selection: $statusFilter) {
                         Text("Активные").tag("active"); Text("Все").tag("all")
@@ -324,9 +339,18 @@ struct ModerationDashboardView: View {
                     let login = try await api.loginModerator(code: code)
                     guard current == store.generation, scenePhase == .active, !store.locked else { return }
                     token = login.token; expiresAt = login.expiresAt; secret = ""; code = ""
+                    recoveryCodes = login.recoveryCodes ?? []
                     await refresh()
                 }
             }.disabled(code.count != 6)
+            if access?.mfaEnabled == true {
+                SecureField("Резервный код MFA", text: $recoveryCode).textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Восстановить MFA и отозвать все сессии", role: .destructive) {
+                    let expected = store.generation
+                    run { api in try await api.recoverModerator(code: recoveryCode); guard expected == store.generation else { return }; clear(); await refresh() }
+                }.disabled(recoveryCode.count != 22)
+                Text("Нужны текущие ключи этой личности и один сохранённый код. Восстановление не меняет владельца @vo1d и не восстанавливает утраченные ключи переписок.").font(.caption)
+            }
         }
     }
     private var roles: some View {
@@ -346,6 +370,7 @@ struct ModerationDashboardView: View {
     }
     private func clear() {
         token = nil; secret = ""; code = ""; queue = []; appeals = []; events = []; selected = nil; appealContent = nil
+        recoveryCode = ""; recoveryCodes = []
         queueCursor = nil; appealCursor = nil; selectedAppeal = nil; selfReview = false; confirmAppeal = false
     }
     private func run(_ operation: @escaping (APIClient) async throws -> Void) {
