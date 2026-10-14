@@ -36,6 +36,8 @@ Room drafts, local aliases, notes, unread counters, archives and other local UI 
 
 Remote file preparation applies upload limits, Wi-Fi policy and filename anonymization centrally. The active profile/generation is captured before asynchronous encryption, checked again before upload and after receipt, and switched/locked operations reject committing their capability into the new profile. Imported upload-size values are clamped before arithmetic. This prevents the discovered late-capture race; actual network interruption/disk/power-loss behavior still requires device QA.
 
+Prekey publication rejects exhausted/zero counters before arithmetic; it does not reset old key IDs. SDK timestamp pruning uses checked subtraction, so a malformed future timestamp cannot overflow UInt64. Worker imports bound collection/store sizes and validate counters/publication shape before starting. These are parser/integration guards and do not replace a native sanitizer audit.
+
 A private roster is supported only in a channel with the creator as the sole administrator and publisher. Subscribers receive owner + own card. Existing historical roster disclosures cannot be undone. Ordinary groups still expose membership. V2 groups use pairwise libsignal fanout (maximum 16 participants), authenticated membership epochs and cancellation of old-membership queued messages. They are not MLS groups. Scoped group/contact profiles offer separate identities only when explicitly chosen. Private poll participants receive counts, while the poll creator receives and stores individual votes; this is not anonymity from the creator. Research decisions are recorded separately.
 
 ## Calls v2

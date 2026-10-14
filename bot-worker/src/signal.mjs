@@ -45,7 +45,7 @@ export function publication(input,identity,count=24) {
   for (const [id,expiry] of Object.entries(state.prekeyExpirations)) if (expiry<=now()) { delete state.prekeys[id]; delete state.prekeyExpirations[id]; }
   for (const [id,value] of Object.entries(state.signedKeys)) if (s.SignedPreKeyRecord.deserialize(decode(value)).timestamp()+8*86400000<Date.now()) delete state.signedKeys[id];
   for (const [id,value] of Object.entries(state.kyberKeys)) if (s.KyberPreKeyRecord.deserialize(decode(value)).timestamp()+8*86400000<Date.now()) delete state.kyberKeys[id];
-  if (state.nextKey+count*2+1>0xffffffff) throw Error('Prekey counter exhausted');
+  if (!Number.isInteger(state.nextKey) || state.nextKey<1 || state.nextKey+count*2+1>0xffffffff) throw Error('Prekey counter exhausted');
   const signedID=state.nextKey++, signedKey=s.PrivateKey.generate(), signedSignature=pair.privateKey.sign(signedKey.getPublicKey().serialize());
   state.signedKeys[signedID]=b64(s.SignedPreKeyRecord.new(signedID,Date.now(),signedKey.getPublicKey(),signedKey,signedSignature).serialize());
   const identityKey=b64(pair.publicKey.serialize()), identityBinding=sign(identity,bindingBytes(identityKey,owner)), bundles=[];

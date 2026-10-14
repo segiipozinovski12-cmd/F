@@ -71,6 +71,15 @@ export function validatePayload(payload) {
   if (JSON.stringify(card) !== JSON.stringify({id:payload.bot.card.id, signingKey:payload.bot.card.signingKey, agreementKey:payload.bot.card.agreementKey, binding:payload.bot.card.binding})) throw Error('Worker identity mismatch');
   if (!/^[A-Za-z0-9_-]{43}$/.test(payload.bot.token) || !payload.bot.registered || payload.state.managedBots?.length || payload.state.pendingReports?.length || (payload.state.outbox?.length ?? 0) > 1000 || (payload.state.contacts?.length ?? 0) > 1000) throw Error('Invalid bot state');
   if (json(payload).length > 16*1024*1024) throw Error('Worker state too large');
+  for(const [records,limit] of [[payload.state.contacts,1000],[payload.state.outbox,1000],[payload.state.processed,5000],[payload.state.extended.ownMailboxes,512]]) {
+    if(!Array.isArray(records) || records.length>limit) throw Error('Invalid worker collection');
+  }
+  const signal=payload.state.extended.signal;
+  if (!Number.isInteger(signal.registration) || signal.registration<1 || signal.registration>0xffffffff || !Number.isInteger(signal.nextKey) || signal.nextKey<1 || signal.nextKey>0xffffffff) throw Error('Invalid Signal counters');
+  for(const [name,limit] of [['prekeys',512],['kyberKeys',512],['signedKeys',512],['sessions',1000],['trusted',1000]]) {
+    const records=signal[name]; if(!records || typeof records!=='object' || Array.isArray(records) || Object.keys(records).length>limit) throw Error('Invalid Signal store');
+  }
+  if(signal.pendingPublication && (!Array.isArray(signal.pendingPublication.bundles) || signal.pendingPublication.bundles.length<1 || signal.pendingPublication.bundles.length>48)) throw Error('Invalid Signal publication size');
   return payload;
 }
 const header = e => Buffer.from(e.mailbox ? `VO1D-OPAQUE-2\n${e.id}\n${e.mailbox}\n${e.ephemeralKey}\n${e.salt}\n${e.expiresAt}` : `VO1D-ENVELOPE-1\n${e.id}\n${e.sender}\n${e.recipient}\n${e.ephemeralKey}\n${e.salt}\n${e.expiresAt}`);

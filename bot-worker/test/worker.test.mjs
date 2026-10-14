@@ -54,6 +54,12 @@ test('encrypted export retains exact bot ratchet and denies wrong password and r
   const tampered=JSON.parse(data);tampered.ciphertext=b64(Buffer.alloc(40));assert.throws(()=>decryptExport(json(tampered),'long password for bot'));
   p.identity=makeIdentity();assert.throws(()=>validatePayload(p));
 });
+test('imported Signal counters and oversized stores are rejected without counter reset',()=>{
+  const p=fixture();p.state.extended.signal.nextKey=0;assert.throws(()=>validatePayload(p));assert.throws(()=>publication(p.state.extended.signal,p.identity,1));
+  p.state.extended.signal.nextKey=0xffffffff;assert.throws(()=>publication(p.state.extended.signal,p.identity,1));
+  p.state.extended.signal.nextKey=1;p.state.extended.signal.prekeys=Object.fromEntries(Array.from({length:513},(_,i)=>[i,b64(Buffer.alloc(1))]));assert.throws(()=>validatePayload(p));
+  const malformed=fixture();malformed.state.extended.signal.pendingPublication.bundles={};assert.throws(()=>validatePayload(malformed));
+});
 test('exclusive file lock and atomic encrypted saves survive a new process',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'vo1d-worker-')), filename=path.join(dir,'test.vo1dbot'), password='long password for bot', p=fixture();
   fs.writeFileSync(filename,encryptExport(p,password),{mode:0o600});

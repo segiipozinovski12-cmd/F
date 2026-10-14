@@ -129,12 +129,14 @@ enum SignalProtocol {
     }
     static func publication(state: SignalSnapshot, identity: LocalIdentity, count: Int = 24) throws -> (SignalSnapshot, SignalPublication) {
         guard (1...48).contains(count) else { throw MessengerError.invalid("Неверное число ключей") }
+        guard state.nextKey > 0, state.nextKey <= UInt32.max - UInt32(1 + count*2) else { throw MessengerError.invalid("Счётчик ключей исчерпан или повреждён. Требуется миграция личности; не сбрасывай старые номера ключей") }
         let store = SignalVaultStore(state), pair = try store.identityKeyPair(context: NullContext()), owner = try identity.card.id
         for (id, expiry) in store.state.prekeyExpirations where expiry <= Int(Date().timeIntervalSince1970) {
             store.state.prekeys[id] = nil; store.state.prekeyExpirations[id] = nil
         }
         for (id, bytes) in store.state.kyberKeys {
-            if try KyberPreKeyRecord(bytes: bytes).timestamp + UInt64(8 * 86400 * 1000) < UInt64(Date().timeIntervalSince1970 * 1000) { store.state.kyberKeys[id] = nil }
+            let timestamp = try KyberPreKeyRecord(bytes: bytes).timestamp, current = UInt64(Date().timeIntervalSince1970 * 1000)
+            if timestamp < current && current - timestamp > UInt64(8 * 86400 * 1000) { store.state.kyberKeys[id] = nil }
         }
         let publicIdentity = Data(pair.identityKey.serialize()).base64EncodedString()
         let binding = try identity.signingPrivate.signature(for: bindingBytes(publicIdentity, owner: owner)).base64EncodedString()
@@ -164,7 +166,8 @@ enum SignalProtocol {
         // A signed key survives for pending offline messages, then is discarded.
         for (id, bytes) in store.state.signedKeys {
             let key = try SignedPreKeyRecord(bytes: bytes)
-            if key.timestamp + UInt64(8 * 86400 * 1000) < UInt64(Date().timeIntervalSince1970 * 1000) { store.state.signedKeys[id] = nil }
+            let current = UInt64(Date().timeIntervalSince1970 * 1000)
+            if key.timestamp < current && current - key.timestamp > UInt64(8 * 86400 * 1000) { store.state.signedKeys[id] = nil }
         }
         guard store.state.prekeys.count <= 512, store.state.kyberKeys.count <= 512 else { throw MessengerError.invalid("Нужно завершить обработку старых ключей перед обновлением") }
         let publication = SignalPublication(bundles: bundles)

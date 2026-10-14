@@ -21,6 +21,10 @@ enum BotWorkerTransfer {
               (payload.state.pendingReports ?? []).isEmpty, payload.state.contacts.count <= 1000, payload.state.outbox.count <= 1000,
               try Wire.encoder.encode(payload).count <= 16*1024*1024 else { throw MessengerError.invalid("Некорректное состояние исполнителя бота") }
         for contact in payload.state.contacts { try Crypto.validate(contact.card) }
+        guard let signal = payload.state.extended?.signal, signal.registration > 0, signal.nextKey > 0,
+              signal.prekeys.count <= 512, signal.kyberKeys.count <= 512, signal.signedKeys.count <= 512,
+              signal.sessions.count <= 1000, signal.trusted.count <= 1000,
+              (signal.pendingPublication?.bundles.count ?? 0) <= 48 else { throw MessengerError.invalid("Повреждённое или слишком большое состояние libsignal") }
     }
     static func export(_ payload: BotWorkerPayload, password: String) throws -> Data {
         try validate(payload)
