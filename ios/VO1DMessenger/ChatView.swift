@@ -36,6 +36,7 @@ struct ChatView: View {
     @State private var historyMessage: ChatMessage?
     @State private var forwarding: ChatMessage?
     @State private var reportTarget: ReportTarget?
+    @State private var ghostConfirm = false
     @State private var selectedTopic: String?
     @StateObject private var audio = VoiceRecorder()
     var room: Room? { store.state.rooms.first { $0.id == roomID } }
@@ -67,7 +68,7 @@ struct ChatView: View {
                                         Text("ЗАКРЕПЛЕНО")
                                             .font(.system(size: 8, weight: .black, design: .monospaced))
                                             .tracking(1.4)
-                                        Text(pinned.text.isEmpty ? (pinned.attachment?.name ?? "Вложение") : pinned.text)
+                                        Text(pinned.previewText.isEmpty ? (pinned.attachment?.name ?? "Вложение") : pinned.previewText)
                                             .font(.caption)
                                             .lineLimit(1)
                                             .foregroundStyle(Theme.secondary)
@@ -218,6 +219,8 @@ struct ChatView: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
+                        Button("Отправить одноразовый текст · 30 секунд", systemImage: "eye.slash") { ghostConfirm = true }
+                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editing != nil || store.isLocalUtilityRoom(roomID))
                         Button("Фильтр по автору и дате") { filterSheet=true }
                         NavigationLink("Ссылки чата") { ChatLinksView(roomID:roomID) }
                         NavigationLink("Настройки чата") { RoomToolsView(roomID:roomID) }
@@ -275,6 +278,11 @@ struct ChatView: View {
             }
             .sheet(isPresented: $info) { RoomInfoView(roomID: roomID) }
             .sheet(item: $reportTarget) { ReportComposerView(target: $0) }
+            .confirmationDialog("Отправить одноразовый текст?", isPresented: $ghostConfirm, titleVisibility: .visible) {
+                Button("Отправить · просмотр 30 секунд") { send(viewOnceSeconds: 30) }
+            } message: {
+                Text("После открытия текст исчезнет из истории этого приложения. Получатель может сохранить его другим способом. Нужен VO1D NEXT: старые версии могут показать текст как обычный. Неоткрытое сообщение истекает не позднее 7 дней.")
+            }
             .sheet(item:$photoDraft) { draft in PhotoPrivacyEditor(draft:draft) { attachment in send(attachment) } }
             .sheet(item:$reviewFile) { review in FileReviewView(review:review) { data,mime,name in
                 Task { await processFileData(data,mime:mime,name:name) }
@@ -527,7 +535,7 @@ struct ChatView: View {
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 25)
                         .onEnded { value in
-                            guard !selectionMode,
+                            guard !selectionMode, message.viewOnceSeconds == nil,
                                   value.translation.width > 65,
                                   abs(value.translation.height) < 55 else { return }
                             reply = message
@@ -544,7 +552,12 @@ struct ChatView: View {
                     if !mine && !store.isLocalUtilityRoom(roomID) {
                         Button("Пожаловаться", systemImage: "flag") { reportTarget = ReportTarget(subject: message.sender, source: "message", roomID: roomID, messageID: message.id) }
                     }
-
+                    if message.viewOnceSeconds != nil {
+                        if mine {
+                            Button("Отменить отправку") { store.cancelMessage(message.id) }
+                            Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
+                        }
+                    } else {
                     Button(store.extended.bookmarks.contains(message.id) ? "Убрать закладку" : "В закладки",systemImage:"bookmark") { store.toggleBookmark(message.id) }
                     Button("Статусы участников",systemImage:"checkmark.circle") { detailsMessage=message }
                     Menu("Напомнить") {
@@ -601,6 +614,7 @@ struct ChatView: View {
                     if mine && message.call == nil {
                         Button("Редактировать", systemImage: "pencil") { editing = message; reply = nil; text = message.text }
                         Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
+                    }
                     }
                 
     }
@@ -673,7 +687,9 @@ struct ChatView: View {
 
     @ViewBuilder
     func messageText(_ message: ChatMessage,mine: Bool) -> some View {
-                if let poll = message.poll {
+                if message.viewOnceSeconds != nil {
+                    GhostTextView(messageID: message.id)
+                } else if let poll = message.poll {
                     PollMessageView(message: message, poll: poll, mine: mine)
                 } else if !message.text.isEmpty {
                     Text(AttributedString(message.text))
@@ -742,7 +758,7 @@ struct ChatView: View {
                                 if source.attachment != nil {
                                     Image(systemName: source.attachment?.mime.hasPrefix("image/") == true ? "photo" : source.attachment?.mime.hasPrefix("audio/") == true ? "waveform" : "doc")
                                 }
-                                Text(source.text.isEmpty ? "Вложение" : source.text)
+                                Text(source.previewText.isEmpty ? "Вложение" : source.previewText)
                                     .lineLimit(2)
                             }
                             .font(.caption)
@@ -900,7 +916,8 @@ struct ChatView: View {
     func send(
         _ attachment: Attachment? = nil,
         silent: Bool = false,
-        scheduledAt: Date? = nil
+        scheduledAt: Date? = nil,
+        viewOnceSeconds: Int? = nil
     ) {
         perform {
             if let editing {
@@ -914,7 +931,8 @@ struct ChatView: View {
                     forwardedFrom: nil,
                     scheduledAt: scheduledAt,
                     silent: silent,
-                    topic: selectedTopic
+                    topic: selectedTopic,
+                    viewOnceSeconds: viewOnceSeconds
                 )
             }
             text = ""
@@ -1141,7 +1159,7 @@ private struct EditHistoryView: View {
                                 .font(.caption2.monospaced())
                                 .tracking(1.5)
                                 .foregroundStyle(Theme.secondary)
-                            Text(message.text)
+                            Text(message.previewText)
                                 .textSelection(.enabled)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)

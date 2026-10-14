@@ -309,8 +309,8 @@ struct InboxView: View {
                     Text(!room.draft.isEmpty
                          ? "Черновик: \(room.draft)"
                          : (last?.state == "scheduled"
-                            ? "Запланировано: \(last?.text ?? "")"
-                            : (last?.attachment?.name ?? last?.text ?? "Начни разговор")))
+                            ? "Запланировано: \(last?.previewText ?? "")"
+                            : (last?.attachment?.name ?? last?.previewText ?? "Начни разговор")))
                         .font(.subheadline)
                         .foregroundStyle(Theme.secondary)
                         .lineLimit(1)

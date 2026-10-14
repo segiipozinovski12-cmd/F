@@ -470,7 +470,7 @@ final class ChatStore: ObservableObject {
 
     func invite() throws -> String {
         guard let ownCard else { throw MessengerError.invalid("Нет ключей") }
-        if let link = extended.privateInviteLink { return link }
+        if let link = extended.privateLinks.last(where: { $0.published && !$0.revocationPending && $0.expiresAt > Int(Date().timeIntervalSince1970) }) { return link.url }
         let data = try Wire.encoder.encode(Invite(server: state.server, name: state.nickname, card: ownCard))
         let code = data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         return "vo1d://contact/\(code)"
@@ -1059,11 +1059,15 @@ final class ChatStore: ObservableObject {
         scheduledAt: Date? = nil,
         silent: Bool = false,
         poll: PollData? = nil,
-        topic: String? = nil
+        topic: String? = nil,
+        viewOnceSeconds: Int? = nil
     ) throws {
         let text = preferences.cleanLinks ? SafeContent.cleanText(text) : text
         guard let room = state.rooms.first(where: { $0.id == roomID }),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachment != nil || poll != nil else { return }
+        if let duration = viewOnceSeconds {
+            guard (1...120).contains(duration), attachment == nil, poll == nil, scheduledAt == nil, !isLocalUtilityRoom(roomID), !text.isEmpty else { throw MessengerError.invalid("Одноразовый режим доступен для обычного текста без вложений и отложенной отправки") }
+        }
 
         if let scheduledAt, scheduledAt > Date().addingTimeInterval(1) {
             let scheduled = ChatMessage(
@@ -1161,8 +1165,9 @@ final class ChatStore: ObservableObject {
             throw MessengerError.invalid("В чате есть заблокированный контакт")
         }
         let seconds = room.disappearingSeconds > 0 ? room.disappearingSeconds : preferences.defaultDisappearing
-        let expiry = seconds > 0 ? Date().addingTimeInterval(Double(seconds)) : nil
-        let message = ChatMessage(
+        let ordinaryExpiry = seconds > 0 ? Date().addingTimeInterval(Double(seconds)) : nil
+        let expiry = viewOnceSeconds == nil ? ordinaryExpiry : min(ordinaryExpiry ?? .distantFuture, Date().addingTimeInterval(7 * 86400))
+        var message = ChatMessage(
             id: UUID().uuidString,
             roomID: roomID,
             sender: myID,
@@ -1177,6 +1182,7 @@ final class ChatStore: ObservableObject {
             poll: poll,
             topic: topic
         )
+        message.viewOnceSeconds = viewOnceSeconds
         try enqueue(ChatEvent(kind: "message", room: room, message: message, senderName: state.nickname), room: room, messageID: message.id)
         state.messages.append(message)
         if let index = state.rooms.firstIndex(where: { $0.id == roomID }) { state.rooms[index].draft = "" }
@@ -1184,6 +1190,7 @@ final class ChatStore: ObservableObject {
     }
     func action(_ kind: String, message: ChatMessage, value: String? = nil) throws {
         guard let room = state.rooms.first(where: { $0.id == message.roomID }), let index = state.messages.firstIndex(where: { $0.id == message.id }) else { return }
+        guard kind != "edit" || state.messages[index].viewOnceSeconds == nil else { throw MessengerError.invalid("Одноразовый текст нельзя изменить") }
         if kind == "edit" || kind == "delete" {
             guard message.sender == myID else { return }
         }
@@ -1212,6 +1219,7 @@ final class ChatStore: ObservableObject {
         try save()
     }
     func forward(_ message: ChatMessage, to roomID: String) throws {
+        guard message.viewOnceSeconds == nil else { throw MessengerError.invalid("Одноразовый текст нельзя переслать") }
         let source = message.forwardedFrom ?? name(message.sender)
         try send(
             roomID: roomID,
@@ -1411,6 +1419,7 @@ final class ChatStore: ObservableObject {
         defer { syncing = false }
         do {
             try await flushReports(api: api, generation: currentGeneration)
+            try await flushPrivateLinks(api: api, generation: currentGeneration)
             processScheduledMessages()
             expire()
             try await maintainSignalPrekeys(api: api, identity: identity, generation: currentGeneration)
@@ -1426,10 +1435,14 @@ final class ChatStore: ObservableObject {
                 if assigned { try save() }
             }
             for pending in Array(state.outbox.filter { ($0.notBefore ?? .distantPast) <= Date() }.prefix(24)) {
+                if let authorization = pending.authorizationID, extended.revokedDevices[authorization] != nil || extended.deviceLinks.contains(where: { $0.id == authorization && $0.certificate.expiresAt <= Int(Date().timeIntervalSince1970) }) {
+                    state.outbox.removeAll { $0.id == pending.id }; try save(); continue
+                }
                 if let issue=deliveryIssues[pending.id], issue.nextAttempt > Date() { continue }
                 do {
                     let envelope = try await prepareSignalDelivery(pending, api: api, identity: identity, generation: currentGeneration)
-                    guard currentGeneration == generation else { return }
+                    guard currentGeneration == generation, !locked else { return }
+                    guard state.outbox.contains(where: { $0.id == pending.id }) else { continue }
                     try await api.send(envelope)
                 }
                 catch {
@@ -1477,6 +1490,8 @@ final class ChatStore: ObservableObject {
             // Commit received content and queued receipts before deleting server copies.
             try save()
             if !ack.isEmpty { try await api.ack(ack) }
+            guard currentGeneration == generation, !locked else { return }
+            try queueDeviceSnapshots()
             connection = "Подключён"
             await syncManagedBots(generation: currentGeneration)
         } catch {
@@ -1645,11 +1660,16 @@ final class ChatStore: ObservableObject {
             guard message.sender == sender.id,
                   message.roomID == incoming.id,
                   !message.id.isEmpty,
+                  message.id.count <= 160,
                   message.text.count <= 16000,
                   message.expiresAt == nil || message.expiresAt! > Date() else {
                 throw MessengerError.invalid("Неверное содержимое сообщения")
             }
             if let attachment = message.attachment { try validateAttachment(attachment) }
+            if let seconds = message.viewOnceSeconds {
+                guard (1...120).contains(seconds), message.attachment == nil, message.poll == nil, let expiry = message.expiresAt, expiry <= Date().addingTimeInterval(7 * 86400 + 60) else { throw MessengerError.invalid("Неверные ограничения одноразового текста") }
+                if extended.consumedGhosts[GhostText.key(message)] != nil { return }
+            }
             if let poll=message.poll {
                 guard (2...10).contains(poll.options.count),poll.question.count<=240,
                       Set(poll.options.map(\.id)).count==poll.options.count,
@@ -1667,7 +1687,8 @@ final class ChatStore: ObservableObject {
                    !(state.rooms.first(where: { $0.id == incoming.id }).map(isRoomMuted) ?? false) {
                     let title = state.rooms.first(where: { $0.id == incoming.id })?.title ?? String(event.senderName.prefix(40))
                     let body: String
-                    if !message.text.isEmpty {
+                    if message.viewOnceSeconds != nil { body = "Одноразовый текст" }
+                    else if !message.text.isEmpty {
                         body = String(message.text.prefix(120))
                     } else if message.attachment?.mime.hasPrefix("audio/") == true {
                         body = "Голосовое сообщение"
@@ -1687,7 +1708,7 @@ final class ChatStore: ObservableObject {
             if abs(event.at.timeIntervalSinceNow) < 8 { typing[incoming.id] = Date().addingTimeInterval(6) }
         } else if let target = event.target, let index = state.messages.firstIndex(where: { $0.id == target && $0.roomID == incoming.id }) {
             switch event.kind {
-            case "edit" where state.messages[index].sender == sender.id:
+            case "edit" where state.messages[index].sender == sender.id && state.messages[index].viewOnceSeconds == nil:
                 var history = state.messages[index].editHistory ?? []
                 if !state.messages[index].text.isEmpty {
                     history.append(state.messages[index].text)
@@ -1761,6 +1782,8 @@ final class ChatStore: ObservableObject {
         for i in state.messages.indices where expiredIDs.contains(state.messages[i].id) { state.messages[i].state="expired" }
         state.outbox.removeAll { $0.envelope.expiresAt <= Int(now.timeIntervalSince1970) }
         if var extra=state.extended {
+            extra.consumedGhosts = extra.consumedGhosts.filter { $0.value > now }
+            for index in extra.archives.indices { extra.archives[index].messages.removeAll { ($0.expiresAt ?? .distantFuture) <= now } }
             extra.pendingEvents.removeAll { ($0.event.message?.expiresAt ?? $0.event.at.addingTimeInterval(7*86400))<=now }
             state.extended=extra
         }
@@ -1831,7 +1854,7 @@ final class ChatStore: ObservableObject {
         return state.contacts.first(where: { $0.id == id })?.name ?? "Ghost"
     }
     func messages(_ roomID: String, search: String = "") -> [ChatMessage] {
-        state.messages.filter { $0.roomID == roomID && (search.isEmpty || ($0.text.localizedCaseInsensitiveContains(search) || (extended.ocrText[$0.id] ?? "").localizedCaseInsensitiveContains(search))) }.sorted { $0.createdAt < $1.createdAt }
+        state.messages.filter { $0.roomID == roomID && (search.isEmpty || ($0.viewOnceSeconds == nil && ($0.text.localizedCaseInsensitiveContains(search) || (extended.ocrText[$0.id] ?? "").localizedCaseInsensitiveContains(search)))) }.sorted { $0.createdAt < $1.createdAt }
     }
     func openEphemeral(_ messageID: String) {
         guard let index = state.messages.firstIndex(where: { $0.id == messageID }),

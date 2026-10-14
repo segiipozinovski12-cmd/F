@@ -80,8 +80,11 @@ final class APIClient {
         throw MessengerError.invalid("Для подключения нужен HTTPS. HTTP доступен только для localhost в Debug.")
     }
 
-    private func raw(_ path: String, method: String, body: Data?, moderationToken: String? = nil) async throws -> (Data, Int) {
-        var request = URLRequest(url: base.appendingPathComponent(path))
+    private func raw(_ path: String, method: String, body: Data?, moderationToken: String? = nil, query: [URLQueryItem] = []) async throws -> (Data, Int) {
+        guard var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false) else { throw MessengerError.invalid("Неверный адрес запроса") }
+        if !query.isEmpty { components.queryItems = query }
+        guard let url = components.url else { throw MessengerError.invalid("Неверные параметры запроса") }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -93,13 +96,13 @@ final class APIClient {
         return (data, http.statusCode)
     }
 
-    func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true, moderationToken: String? = nil) async throws -> T {
+    func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true, moderationToken: String? = nil, query: [URLQueryItem] = []) async throws -> T {
         guard callToken == nil else { throw MessengerError.invalid("Фоновое разрешение доступно только для звонков") }
         let attemptedToken = token
-        let (data, status) = try await raw(path, method: method, body: body, moderationToken: moderationToken)
+        let (data, status) = try await raw(path, method: method, body: body, moderationToken: moderationToken, query: query)
         if status == 401 && retry && botToken == nil {
             if token == attemptedToken || token == nil { try await authenticate() }
-            return try await request(path, method: method, body: body, retry: false, moderationToken: moderationToken)
+            return try await request(path, method: method, body: body, retry: false, moderationToken: moderationToken, query: query)
         }
         guard (200..<300).contains(status) else {
             let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка сервера \(status)"

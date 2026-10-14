@@ -115,4 +115,57 @@ final class NextSecurityTests: XCTestCase {
         let history = try SecureBackup.sanitized(BackupPayload(identity: keys, state: state, mode: .history))
         XCTAssertNil(history.state.secureNotes)
     }
+    func testGhostConsumptionPersistsBeforeReopenAndCannotLeakToBackupOrDeviceHistory() throws {
+        let keys = try LocalIdentity.create(), peer = try LocalIdentity.create().card
+        let profile = UUID().uuidString, vault = try Vault(profileID: profile)
+        defer { try? vault.delete() }
+        let room = Room(id: "dm:ghost", title: "", members: [try keys.card, peer], creator: "", isGroup: false, createdAt: Date())
+        var state = VaultState(); state.extended = ExtendedState(); state.rooms = [room]
+        var message = ChatMessage(id: UUID().uuidString, roomID: room.id, sender: peer.id, text: "ONE_VIEW_SECRET", createdAt: Date(), expiresAt: Date().addingTimeInterval(3600), replyTo: nil, attachment: nil)
+        message.viewOnceSeconds = 30; state.messages = [message]
+        XCTAssertTrue(try DeviceHistory.snapshot(state: state, owner: keys.card).messages.isEmpty)
+        XCTAssertTrue(try SecureBackup.sanitized(BackupPayload(identity: keys, state: state, mode: .full)).state.messages.isEmpty)
+        let opened = try GhostText.consume(message.id, state: &state)
+        XCTAssertEqual(opened.0, "ONE_VIEW_SECRET"); XCTAssertEqual(opened.1, 30)
+        try vault.write(state, key: keys.storage)
+        var restored = try vault.read(key: keys.storage)
+        XCTAssertEqual(restored.messages[0].text, "")
+        XCTAssertNotNil(restored.extended?.consumedGhosts[GhostText.key(message)])
+        XCTAssertThrowsError(try GhostText.consume(message.id, state: &restored))
+        restored.messages[0].openedAt = nil; restored.messages[0].text = "REPLAY_SECRET"
+        XCTAssertThrowsError(try GhostText.consume(message.id, state: &restored))
+    }
+
+    func testLiveDeviceSnapshotAuthorityAndReorderedDeliveryAcrossRestart() throws {
+        let keys = try LocalIdentity.create(), owner = try keys.card, device = try LocalIdentity.create().card, outsider = try LocalIdentity.create().card
+        var certificate = DeviceCertificate(id: UUID().uuidString, issuer: owner, device: device.id, expiresAt: Int(Date().timeIntervalSince1970) + 3600, signature: "")
+        certificate.scope = "history-live"; certificate.signature = try keys.signingPrivate.signature(for: certificate.signed).base64EncodedString()
+        var link = DeviceLink(certificate: certificate, peer: owner, approved: true)
+        var archive = try DeviceHistory.snapshot(state: VaultState(), owner: owner); archive.id = certificate.id
+        XCTAssertTrue(try DeviceHistory.acceptSnapshot(archive, revision: 2, link: link, sender: owner, deviceID: device.id))
+        link.receivedRevision = 2
+        let restored = try Wire.decoder.decode(DeviceLink.self, from: Wire.encoder.encode(link))
+        XCTAssertFalse(try DeviceHistory.acceptSnapshot(archive, revision: 1, link: restored, sender: owner, deviceID: device.id))
+        XCTAssertFalse(try DeviceHistory.acceptSnapshot(archive, revision: 2, link: restored, sender: owner, deviceID: device.id))
+        XCTAssertThrowsError(try DeviceHistory.acceptSnapshot(archive, revision: 3, link: link, sender: outsider, deviceID: device.id))
+        XCTAssertThrowsError(try DeviceHistory.acceptSnapshot(archive, revision: 3, link: link, sender: owner, deviceID: outsider.id))
+        link.approved = false
+        XCTAssertThrowsError(try DeviceHistory.acceptSnapshot(archive, revision: 3, link: link, sender: owner, deviceID: device.id))
+    }
+
+    func testPrivateLinkExactPublicationSurvivesVaultRestartAndBackupExcludesSecrets() throws {
+        let keys = try LocalIdentity.create(), profile = UUID().uuidString, vault = try Vault(profileID: profile)
+        defer { try? vault.delete() }
+        let mailbox = LocalMailbox(address: MailboxAddress(id: try Crypto.random(32).base64URL, writeToken: try Crypto.random(32).base64URL, expiresAt: Int(Date().timeIntervalSince1970) + 86400), readToken: try Crypto.random(32).base64URL, peerID: nil, registered: true, proof: "123")
+        let publication = try SignalProtocol.publication(state: SignalSnapshot.create(), identity: keys, count: 1)
+        let invitation = Invite(version: 2, server: "https://relay.example", name: "test", card: try keys.card, mailbox: mailbox.address, prekey: publication.1.bundles[0])
+        let record = try PrivateLinkRecord.create(invitation: invitation, mailbox: mailbox)
+        var state = VaultState(); state.extended = ExtendedState(); state.extended?.privateLinks = [record]
+        try vault.write(state, key: keys.storage)
+        let restored = try vault.read(key: keys.storage)
+        XCTAssertEqual(restored.extended?.privateLinks[0].ciphertext, record.ciphertext)
+        XCTAssertEqual(restored.extended?.privateLinks[0].expiresAt, record.expiresAt)
+        let backup = try SecureBackup.sanitized(BackupPayload(identity: keys, state: state, mode: .full))
+        XCTAssertTrue(backup.state.extended?.privateLinks.isEmpty == true)
+    }
 }

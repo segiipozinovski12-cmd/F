@@ -26,7 +26,7 @@ enum BotCommandRouter {
               Set(room.members.map(\.id)) == Set([sender.id, bot.id]),
               room.id == "dm:" + [sender.id, bot.id].sorted().joined(separator: ":"),
               let message = event.message, message.sender == sender.id, message.roomID == room.id,
-              message.text.count <= 20000, (message.expiresAt ?? .distantFuture) > Date() else { return nil }
+              message.text.count <= 20000, message.viewOnceSeconds == nil, (message.expiresAt ?? .distantFuture) > Date() else { return nil }
         let command = String(message.text.split(whereSeparator: { $0.isWhitespace }).first ?? "").lowercased()
         guard command.hasPrefix("/") else { return "Доступные команды: " + commands.keys.sorted().map { "/" + $0 }.joined(separator: ", ") }
         let name = String(command.dropFirst()).split(separator: "@").first.map(String.init) ?? ""
@@ -62,6 +62,7 @@ extension APIClient {
 
 extension ChatStore {
     func deleteManagedBot(_ id: String) async throws {
+        guard !botsSyncing else { throw MessengerError.invalid("Дождись завершения текущей операции бота") }
         guard let api, let bot = state.managedBots?.first(where: { $0.id == id }) else { return }
         let expected = generation
         try await api.deleteBot(id)
@@ -121,12 +122,15 @@ extension ChatStore {
                     var local = extended; local.trustedIDs.append(bot.id); state.extended = local
                 }
                 try save()
+                let worker = try NativeBotWorker(bot: bot, preferences: preferences)
                 if bot.enabled {
-                    let worker = try NativeBotWorker(bot: bot, preferences: preferences)
                     try await worker.run {
                         expected == self.generation && !self.locked && !Task.isCancelled &&
                         self.state.managedBots?.contains(where: { $0.id == bot.id && $0.enabled && $0.token == bot.token }) == true
                     }
+                } else {
+                    defer { worker.api.invalidate() }
+                    try await worker.flushPrivateLinks { expected == self.generation && !self.locked && !Task.isCancelled }
                 }
                 botStatuses[bot.id] = bot.enabled ? "Готов · работает при открытом VO1D" : "Остановлен"
             } catch {
@@ -155,8 +159,7 @@ final class NativeBotWorker {
         keys = loadedKeys; vault = loadedVault; state = loadedState; api = client
     }
     func save() throws { try vault.write(state, key: keys.storage) }
-    func run(canContinue: () -> Bool) async throws {
-        defer { api.invalidate() }
+    func maintainPrekeys(canContinue: () -> Bool) async throws {
         guard canContinue() else { return }
         if state.extended?.signal == nil {
             var local = state.extended ?? ExtendedState(); local.signal = try SignalSnapshot.create(); state.extended = local; try save()
@@ -176,6 +179,53 @@ final class NativeBotWorker {
             state.extended?.signal?.pendingPublication = nil
             state.extended?.signal?.publishedAt = Date(); try save()
         }
+    }
+    func preparePrivateInvite(canContinue: () -> Bool) async throws {
+        guard canContinue(), (state.extended?.privateLinks.count ?? 0) < 32 else { throw MessengerError.invalid("Доступно до 32 ссылок бота") }
+        try await maintainPrekeys(canContinue: canContinue)
+        let bits = try await api.publicWorkBits()
+        let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: nil, bits: bits) }.value
+        guard canContinue() else { throw CancellationError() }
+        state.extended?.ownMailboxes.append(mailbox); try save()
+        try await api.registerMailbox(mailbox)
+        guard canContinue() else { throw CancellationError() }
+        if let index = state.extended?.ownMailboxes.firstIndex(where: { $0.id == mailbox.id }) { state.extended?.ownMailboxes[index].registered = true }
+        try save()
+        let bundle = try await api.prekey(bot.card)
+        guard canContinue() else { throw CancellationError() }
+        _ = try bundle.validated(for: bot.card)
+        let invite = Invite(version: 2, server: bot.server, name: bot.name, card: bot.card, mailbox: mailbox.address, prekey: bundle)
+        state.extended?.privateLinks.append(try PrivateLinkRecord.create(invitation: invite, mailbox: mailbox)); try save()
+        try await flushPrivateLinks(canContinue: canContinue)
+    }
+    func flushPrivateLinks(canContinue: () -> Bool) async throws {
+        state.extended?.privateLinks.removeAll { $0.expiresAt <= Int(Date().timeIntervalSince1970) }
+        for record in (state.extended?.privateLinks ?? []).filter({ (!$0.published || $0.revocationPending) && $0.stopped != true && ($0.nextAttempt ?? .distantPast) <= Date() }).prefix(8) {
+            guard canContinue(), let mailbox = state.extended?.ownMailboxes.first(where: { $0.id == record.mailboxID }) else { return }
+            do {
+                if record.revocationPending { try await api.revokePrivateInvite(record.token, mailbox: mailbox) }
+                else { try await api.publishPrivateInvite(token: record.token, ciphertext: record.ciphertext, mailbox: mailbox, expiresAt: record.expiresAt) }
+            } catch {
+                guard canContinue() else { throw CancellationError() }
+                if let index = state.extended?.privateLinks.firstIndex(where: { $0.id == record.id }) {
+                    state.extended?.privateLinks[index].failure = error.localizedDescription
+                    state.extended?.privateLinks[index].nextAttempt = Date().addingTimeInterval(60)
+                    state.extended?.privateLinks[index].stopped = (error as? HTTPFailure).map { [400,403,404,409,413].contains($0.status) } ?? false
+                }
+                try save(); continue
+            }
+            guard canContinue() else { throw CancellationError() }
+            if record.revocationPending { state.extended?.privateLinks.removeAll { $0.id == record.id } }
+            else if let index = state.extended?.privateLinks.firstIndex(where: { $0.id == record.id }) { state.extended?.privateLinks[index].published = true; state.extended?.privateLinks[index].failure = nil; state.extended?.privateLinks[index].nextAttempt = nil }
+            try save()
+        }
+    }
+    func run(canContinue: () -> Bool) async throws {
+        defer { api.invalidate() }
+        guard canContinue() else { return }
+        try await maintainPrekeys(canContinue: canContinue)
+        try await flushPrivateLinks(canContinue: canContinue)
+        guard canContinue() else { return }
         try await drain(canContinue: canContinue)
         guard canContinue(), state.outbox.count < 100 else { return }
         let inbox = try await api.inbox()

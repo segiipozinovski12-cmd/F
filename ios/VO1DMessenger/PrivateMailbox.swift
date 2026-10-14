@@ -135,10 +135,13 @@ extension Data {
     }
 }
 extension APIClient {
-    func publishPrivateInvite(token: String, ciphertext: Data, mailbox: LocalMailbox) async throws {
+    func publishPrivateInvite(token: String, ciphertext: Data, mailbox: LocalMailbox, expiresAt: Int? = nil) async throws {
         struct Body: Encodable { var token: String; var ciphertext: String; var expiresAt: Int }
-        let body = Body(token: token, ciphertext: ciphertext.base64EncodedString(), expiresAt: Int(Date().timeIntervalSince1970) + 3600)
+        let body = Body(token: token, ciphertext: ciphertext.base64EncodedString(), expiresAt: expiresAt ?? Int(Date().timeIntervalSince1970) + 3600)
         let _: OK = try await capability("v2/mailboxes/\(mailbox.id)/invites", token: mailbox.readToken, method: "POST", body: Wire.encoder.encode(body))
+    }
+    func revokePrivateInvite(_ token: String, mailbox: LocalMailbox) async throws {
+        let _: OK = try await capability("v2/mailboxes/\(mailbox.id)/invites/\(token)", token: mailbox.readToken, method: "DELETE")
     }
     func redeemPrivateInvite(token: String) async throws -> Data {
         struct Response: Decodable { var ciphertext: String }

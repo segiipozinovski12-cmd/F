@@ -144,7 +144,7 @@ struct MessageLibraryView: View {
                     NavigationLink { ChatView(roomID:message.roomID,initialMessageID:message.id) } label: {
                         VStack(alignment:.leading) {
                             Text(store.state.rooms.first { $0.id==message.roomID }?.title ?? "Чат").font(.headline)
-                            Text(message.text.isEmpty ? message.attachment?.name ?? "Сообщение" : message.text).lineLimit(3)
+                            Text(message.previewText.isEmpty ? message.attachment?.name ?? "Сообщение" : message.previewText).lineLimit(3)
                         }
                     }
                     if mode != "bookmarks" {
@@ -337,7 +337,7 @@ struct ChatLinksView: View {
     @EnvironmentObject var store: ChatStore
     var body: some View {
         List {
-            ForEach(store.messages(roomID).filter { !SafeContent.links(in:$0.text).isEmpty }) { message in
+            ForEach(store.messages(roomID).filter { $0.viewOnceSeconds == nil && !SafeContent.links(in:$0.text).isEmpty }) { message in
                 Section {
                     ForEach(SafeContent.links(in:message.text),id:\.absoluteString) { url in
                         VStack(alignment: .leading, spacing: 5) {

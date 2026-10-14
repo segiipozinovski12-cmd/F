@@ -82,6 +82,7 @@ struct BotManagementView: View {
                     }
                 }
                 Section("/token · доступ исполнителя") {
+                    NavigationLink("Приватные приглашения бота") { PrivateLinksView(botID: bot.id) }
                     Text("Токен разрешает работу только с шифротекстом этого бота. Для внешнего исполнителя нужны отдельные ключи и состояние E2EE. Не публикуй токен.").font(.caption)
                     Button("Скопировать токен на 30 секунд") { SafeContent.copy(bot.token, seconds: 30) }
                     Button("Отозвать и заменить токен", role: .destructive) { rotating = true }.disabled(!bot.registered)

@@ -32,6 +32,7 @@ extension ChatStore {
     }
 
     func prepareSignalDelivery(_ pending: PendingDelivery, api: APIClient, identity: LocalIdentity, generation expected: Int) async throws -> Envelope {
+        guard state.outbox.contains(where: { $0.id == pending.id }) else { throw CancellationError() }
         guard let clear = pending.envelope.deferredEvent else { return pending.envelope }
         var event = try Wire.decoder.decode(ChatEvent.self, from: clear)
         let target = state.contacts.first(where: { $0.id == pending.envelope.recipient })?.card

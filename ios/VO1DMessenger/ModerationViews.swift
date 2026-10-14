@@ -180,10 +180,20 @@ struct ModerationDashboardView: View {
     @State private var secret = ""
     @State private var code = ""
     @State private var queue: [ModerationCase] = []
+    @State private var queueCursor: String?
+    @State private var appealCursor: String?
+    @State private var statusFilter = "active"
+    @State private var reasonFilter = ""
+    @State private var assignmentFilter = "all"
+    @State private var search = ""
     @State private var appeals: [ModerationAppeal] = []
     @State private var events: [ModerationAudit] = []
     @State private var selected: ModerationCase?
     @State private var appealContent: ReportContent?
+    @State private var selectedAppeal: ModerationAppeal?
+    @State private var appealOutcome = "upheld"
+    @State private var confirmAppeal = false
+    @State private var selfReview = false
     @State private var roleIdentity = ""
     @State private var assignedRole = "reviewer"
     @State private var failure: String?
@@ -203,25 +213,54 @@ struct ModerationDashboardView: View {
                 }
             }
             if token != nil {
-                Section("Очередь · до 100 жалоб") {
+                Section("Фильтры очереди") {
+                    Picker("Статус", selection: $statusFilter) {
+                        Text("Активные").tag("active"); Text("Все").tag("all")
+                        Text("Новые").tag("open"); Text("На рассмотрении").tag("reviewing")
+                        Text("Решённые").tag("resolved"); Text("Отклонённые").tag("dismissed")
+                    }
+                    Picker("Причина", selection: $reasonFilter) {
+                        Text("Все причины").tag("")
+                        ForEach(ReportReason.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                    Picker("Ответственный", selection: $assignmentFilter) {
+                        Text("Все").tag("all"); Text("Мои дела").tag("mine"); Text("Не назначены").tag("unassigned")
+                    }
+                    TextField("Начало ID дела или пользователя · от 8 символов", text: $search)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("Применить фильтры") { run { _ in await refresh() } }
+                }
+                Section("Очередь · \(queue.count) загружено") {
                     ForEach(queue) { item in
                         Button { selected = item } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(ReportReason(rawValue: item.reason)?.label ?? item.reason)
                                 Text("\(item.status) · \(String(item.subject.prefix(12)))").font(.caption.monospaced()).foregroundStyle(.secondary)
+                                if let assignee = item.assignee { Text("Ответственный: \(assignee == store.myID ? "ты" : String(assignee.prefix(12)))").font(.caption) }
                             }
                         }
                     }
                     if queue.isEmpty { Text("Нет жалоб") }
+                    if queueCursor != nil { Button("Загрузить ещё жалобы") { loadMore(appeals: false) } }
                 }
                 Section("Апелляции") {
                     ForEach(appeals) { item in
                         Button("\(item.status) · \(String(item.report.prefix(8)))") { openAppeal(item) }
-                            .disabled(access?.role != "owner")
                     }
+                    if appealCursor != nil { Button("Загрузить ещё апелляции") { loadMore(appeals: true) } }
                     if let appealContent {
                         Text(appealContent.comment).textSelection(.enabled)
-                        Text("Решение по делу \(appealContent.subject.prefix(12)) пересматривается через действие «Снять ограничение» у исходной жалобы.").font(.caption)
+                    }
+                    if let selectedAppeal {
+                        Text("Исходное дело: \(selectedAppeal.report)").font(.caption.monospaced()).textSelection(.enabled)
+                        if access?.role == "owner" {
+                            Toggle("Подтверждаю пересмотр собственного решения, если оно моё", isOn: $selfReview)
+                            Text("Предпочтителен другой администратор. Пересмотр своего решения владельцем записывается в аудит.").font(.caption)
+                        }
+                        if ["owner", "admin"].contains(access?.role ?? "") {
+                            Button("Оставить решение в силе") { appealOutcome = "upheld"; confirmAppeal = true }
+                            Button("Удовлетворить апелляцию и снять это ограничение") { appealOutcome = "overturned"; confirmAppeal = true }
+                        }
                     }
                 }
                 if access?.role == "owner" { roles }
@@ -249,6 +288,16 @@ struct ModerationDashboardView: View {
         }
         .sheet(item: $selected, onDismiss: { Task { await refresh() } }) { item in
             if let token { ModeratorCaseView(item: item, token: token, role: access?.role ?? "reviewer") }
+        }
+        .confirmationDialog("Подтвердить решение по апелляции?", isPresented: $confirmAppeal, titleVisibility: .visible) {
+            Button("Подтвердить") {
+                guard let item = selectedAppeal, let token else { return }
+                run { api in
+                    try await api.decideAppeal(item, outcome: appealOutcome, acknowledgeSelfReview: selfReview, token: token)
+                    selectedAppeal = nil; appealContent = nil; selfReview = false
+                    await refresh()
+                }
+            }
         }
     }
     private var authentication: some View {
@@ -297,6 +346,7 @@ struct ModerationDashboardView: View {
     }
     private func clear() {
         token = nil; secret = ""; code = ""; queue = []; appeals = []; events = []; selected = nil; appealContent = nil
+        queueCursor = nil; appealCursor = nil; selectedAppeal = nil; selfReview = false; confirmAppeal = false
     }
     private func run(_ operation: @escaping (APIClient) async throws -> Void) {
         guard let api = store.api else { return }
@@ -317,16 +367,40 @@ struct ModerationDashboardView: View {
             access = nextAccess
             if let token {
                 guard expiresAt > Int(Date().timeIntervalSince1970), scenePhase == .active else { clear(); return }
-                let reports = try await api.moderationQueue(token: token)
-                let nextAppeals = try await api.moderationAppeals(token: token)
+                let filters = [statusFilter, reasonFilter, search, assignmentFilter]
+                let reports = try await api.moderationPage(token: token, status: filters[0], reason: filters[1], search: filters[2], assignment: filters[3])
+                let nextAppeals = try await api.appealPage(token: token)
                 let audit = try await api.moderationAudit(token: token)
-                guard current == store.generation, self.token == token, !store.locked, scenePhase == .active else { return }
-                queue = reports; appeals = nextAppeals; events = audit
+                guard current == store.generation, self.token == token, !store.locked, scenePhase == .active, filters == [statusFilter, reasonFilter, search, assignmentFilter] else { return }
+                queue = reports.reports; queueCursor = reports.nextCursor
+                appeals = nextAppeals.appeals; appealCursor = nextAppeals.nextCursor; events = audit
             }
-        } catch { failure = error.localizedDescription }
+        } catch { if current == store.generation, !store.locked { failure = error.localizedDescription } }
+    }
+    private func loadMore(appeals isAppeals: Bool) {
+        guard let token else { return }
+        let current = store.generation
+        let filters = [statusFilter, reasonFilter, search, assignmentFilter]
+        let cursor = isAppeals ? appealCursor : queueCursor
+        guard let cursor else { return }
+        run { api in
+            if isAppeals {
+                let result = try await api.appealPage(token: token, cursor: cursor)
+                guard current == store.generation, self.token == token, !store.locked, scenePhase == .active, appealCursor == cursor else { return }
+                let known = Set(appeals.map(\.id))
+                appeals += result.appeals.filter { !known.contains($0.id) }; appealCursor = result.nextCursor
+            } else {
+                let result = try await api.moderationPage(token: token, status: filters[0], reason: filters[1], search: filters[2], assignment: filters[3], cursor: cursor)
+                guard current == store.generation, self.token == token, !store.locked, scenePhase == .active, queueCursor == cursor, filters == [statusFilter, reasonFilter, search, assignmentFilter] else { return }
+                let known = Set(queue.map(\.id))
+                queue += result.reports.filter { !known.contains($0.id) }; queueCursor = result.nextCursor
+            }
+        }
     }
     private func openAppeal(_ item: ModerationAppeal) {
         guard let token, let identity = store.identity else { return }
+        selectedAppeal = item; appealContent = nil; selfReview = false
+        guard access?.role == "owner" else { return }
         let current = store.generation
         run { api in
             let sealed = try await api.moderationEvidence(item.id, appeal: true, token: token)
@@ -351,6 +425,7 @@ struct ModeratorCaseView: View {
     @State private var action: String?
     @State private var confirming = false
     @State private var working = false
+    @State private var assignee = ""
     var body: some View {
         NavigationStack {
             List {
@@ -377,6 +452,14 @@ struct ModeratorCaseView: View {
                     Button("Расшифровать выбранные доказательства") { decrypt() }
                 }
                 Section("Решение") {
+                    Button("Назначить дело себе") { assign(store.myID) }
+                    if item.assignee == store.myID || role != "reviewer" {
+                        Button("Освободить назначение") { assign(nil) }
+                    }
+                    if role == "owner" || role == "admin" {
+                        TextField("ID ответственного модератора", text: $assignee).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Button("Назначить модератору") { assign(assignee) }.disabled(assignee.count != 64)
+                    }
                     Button("Взять на рассмотрение") { decide(status: "reviewing", action: "none") }
                     Button("Отклонить жалобу") { action = "dismiss"; confirming = true }
                     if role == "owner" || role == "admin" {
@@ -421,6 +504,15 @@ struct ModeratorCaseView: View {
         Task {
             defer { working = false }
             do { try await api.decide(item, status: status, action: action, token: token); dismiss() }
+            catch { failure = error.localizedDescription }
+        }
+    }
+    private func assign(_ identity: String?) {
+        guard let api = store.api else { return }
+        working = true
+        Task {
+            defer { working = false }
+            do { try await api.assignCase(item, assignee: identity, token: token); dismiss() }
             catch { failure = error.localizedDescription }
         }
     }

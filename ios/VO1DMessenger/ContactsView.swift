@@ -264,6 +264,7 @@ struct MyIdentityView: View {
                     Button("СОЗДАТЬ ПРИВАТНОЕ ПРИГЛАШЕНИЕ") {
                         Task { do { try await store.preparePrivateInvite() } catch { store.error = error.localizedDescription } }
                     }.buttonStyle(.bordered)
+                    NavigationLink("УПРАВЛЯТЬ ПРИВАТНЫМИ ССЫЛКАМИ") { PrivateLinksView() }
                     Text("Приватное приглашение действует час и используется один раз. Оно содержит адрес доставки и одноразовые ключи, зашифрованные ключом из ссылки.")
                         .font(.caption).foregroundStyle(Theme.secondary)
 

@@ -123,6 +123,8 @@ struct ExtendedState: Codable {
     var invitationBundles: [String: SignalBundle] = [:]
     var privateInvite: Invite? = nil
     var privateInviteLink: String? = nil
+    var privateLinks: [PrivateLinkRecord] = []
+    var consumedGhosts: [String: Date] = [:]
     var lastOpenedAt: Date? = nil
     var privatePollVotes: [String: [String: String]] = [:]
     var privatePollSelections: [String: String] = [:]
@@ -151,7 +153,7 @@ struct ExtendedState: Codable {
         case signal
         case archives, privateBlobDeletes
         case ownMailboxes, peerMailboxes, invitationBundles, privateInvite
-        case privateInviteLink
+        case privateInviteLink, privateLinks, consumedGhosts
         case lastOpenedAt, privatePollVotes, privatePollSelections, privacy, folders, bookmarks, notes, aliases, favorites, hiddenRooms, trustedIDs, pendingEvents, declinedRooms, reminders, snippets, roomRetention, roomFontSize, receiptExceptions, protectedMessages, ocrText, roomNotes
     }
     init(from decoder: Decoder) throws {
@@ -171,6 +173,8 @@ struct ExtendedState: Codable {
         invitationBundles=try container.decodeIfPresent([String: SignalBundle].self,forKey:.invitationBundles) ?? [:]
         privateInvite=try container.decodeIfPresent(Invite.self,forKey:.privateInvite)
         privateInviteLink=try container.decodeIfPresent(String.self,forKey:.privateInviteLink)
+        privateLinks=try container.decodeIfPresent([PrivateLinkRecord].self,forKey:.privateLinks) ?? []
+        consumedGhosts=try container.decodeIfPresent([String: Date].self,forKey:.consumedGhosts) ?? [:]
         privatePollVotes=try container.decodeIfPresent([String: [String: String]].self,forKey:.privatePollVotes) ?? privatePollVotes
         privatePollSelections=try container.decodeIfPresent([String: String].self,forKey:.privatePollSelections) ?? privatePollSelections
         privacy=try container.decodeIfPresent(PrivacyPreferences.self,forKey:.privacy) ?? privacy

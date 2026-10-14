@@ -68,6 +68,7 @@ struct NextSecurityCenterView: View {
             Section("Данные и восстановление") {
                 NavigationLink("Private Spaces") { PrivateSpacesView() }
                 NavigationLink("Secure Notes") { SecureNotesView() }
+                NavigationLink("Private Links") { PrivateLinksView() }
                 NavigationLink("Зашифрованная копия") { BackupCenterView() }
                 NavigationLink("Очередь сообщений") { MessageLibraryView(mode: "outbox") }
                 NavigationLink("Жалобы") { ReportCenterView() }

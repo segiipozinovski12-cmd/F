@@ -97,11 +97,14 @@ enum SecureBackup {
         }
         local.revokedDevices = [:]; local.deviceLinks = []; local.issuedGroupInvites = [:]; local.pendingGroupInvites = []; local.acceptedGroupInvites = [:]
         local.privateBlobDeletes = [:]; local.ownMailboxes = []; local.privateInvite = nil; local.privateInviteLink = nil
+        local.privateLinks = []
         local.invitationBundles = [:]; local.pendingEvents = []; local.reminders = []
         local.privacy.streamIsolation = ""
         payload.state.outbox = []; payload.state.processed = []
         payload.state.pendingReports = nil; payload.state.deliveryRetryState = nil
         payload.state.managedBots = nil
+        payload.state.messages.removeAll { $0.viewOnceSeconds != nil || $0.attachment?.viewSeconds != nil }
+        for index in local.archives.indices { local.archives[index].messages.removeAll { $0.viewOnceSeconds != nil || $0.attachment?.viewSeconds != nil } }
         payload.state.extended = local
         if mode == .history {
             payload.state.secureNotes = nil

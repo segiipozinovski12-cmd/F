@@ -26,7 +26,7 @@ extension ChatStore {
         var ready = mailbox; ready.registered = true; return ready
     }
     func preparePrivateInvite() async throws {
-        guard let api, let identity, let card = ownCard else { throw MessengerError.invalid("Сначала подключись к relay") }
+        guard !locked, let api, let identity, let card = ownCard, extended.privateLinks.count < 32 else { throw MessengerError.invalid("Нужны подключение и свободное место для ссылки (до 32)") }
         let expected = generation
         try await maintainSignalPrekeys(api: api, identity: identity, generation: expected)
         let mailbox = try await ensurePrivateMailbox(peerID: nil, api: api, generation: expected, fresh: true)
@@ -34,15 +34,12 @@ extension ChatStore {
         guard expected == generation else { throw CancellationError() }
         _ = try bundle.validated(for: card)
         let invitation = Invite(version: 2, server: state.server, name: state.nickname, card: card, mailbox: mailbox.address, prekey: bundle)
-        let token = try Crypto.random(32).base64URL, key = try Crypto.random(32)
-        let box = try AES.GCM.seal(Wire.encoder.encode(invitation), using: SymmetricKey(data: key), authenticating: Data("VO1D-PRIVATE-INVITE-2\n\(token)".utf8))
-        guard let encrypted = box.combined else { throw MessengerError.invalid("Ошибка приглашения") }
-        try await api.publishPrivateInvite(token: token, ciphertext: encrypted, mailbox: mailbox)
-        guard expected == generation else { throw CancellationError() }
+        let record = try PrivateLinkRecord.create(invitation: invitation, mailbox: mailbox)
         var local = extended
         local.privateInvite = invitation
-        local.privateInviteLink = "vo1d://private/\(token)/\(key.base64URL)"
+        local.privateLinks.append(record)
         state.extended = local; try save()
+        try await flushPrivateLinks(api: api, generation: expected)
     }
     func acceptReplyMailbox(_ route: MailboxAddress?, sender: ContactCard, roomID: String) throws {
         guard let route else { return }

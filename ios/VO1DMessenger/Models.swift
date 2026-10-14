@@ -118,10 +118,13 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var poll: PollData? = nil
     var topic: String? = nil
     var call: CallMessageData? = nil
+    var viewOnceSeconds: Int? = nil
+    var previewText: String { viewOnceSeconds == nil ? text : "Одноразовый текст" }
 }
 
 /// All event content, including group membership and attachments, lives inside AEAD.
 struct ChatEvent: Codable {
+    var deviceRevision: Int? = nil
     var deviceCertificate: DeviceCertificate? = nil
     var historyArchive: HistoryArchive? = nil
     var groupInvitation: GroupInvitation? = nil

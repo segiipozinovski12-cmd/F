@@ -35,7 +35,7 @@ private struct ArchiveMessagesView: View {
     var archive: HistoryArchive
     var room: Room
     var body: some View {
-        List(archive.messages.filter { $0.roomID == room.id }.sorted { $0.createdAt < $1.createdAt }) { message in
+        List(archive.messages.filter { $0.roomID == room.id && $0.viewOnceSeconds == nil && ($0.expiresAt ?? .distantFuture) > Date() }.sorted { $0.createdAt < $1.createdAt }) { message in
             VStack(alignment:.leading,spacing:8) {
                 HStack {
                     Text(message.sender == archive.ownerCard?.id ? "Ты в архиве" : (archive.contacts.first { $0.id == message.sender }?.name ?? "Участник"))

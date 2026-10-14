@@ -106,9 +106,12 @@ struct ModerationCase: Decodable, Identifiable {
     var created: Int
     var expires: Int
     var updated: Int
+    var assignee: String? = nil
 }
 struct ModerationNotice: Decodable, Identifiable { var id: String; var action: String; var expires: Int; var created: Int }
-struct ModerationAppeal: Decodable, Identifiable { var id: String; var identity: String; var report: String; var created: Int; var expires: Int; var status: String }
+struct ModerationAppeal: Decodable, Identifiable { var id: String; var identity: String; var report: String; var created: Int; var expires: Int; var status: String; var updated: Int? = nil }
+struct ModerationPage: Decodable { var reports: [ModerationCase]; var nextCursor: String? }
+struct AppealPage: Decodable { var appeals: [ModerationAppeal]; var nextCursor: String? }
 struct SealedReport: Decodable { var id: String; var envelope: Envelope; var senderCard: ContactCard }
 struct ModerationAudit: Decodable, Identifiable {
     var seq: Int; var entry: String; var previous: String; var digest: String
@@ -145,6 +148,28 @@ extension APIClient {
         let result: Response = try await request("v2/moderation/queue", moderationToken: token)
         return result.reports
     }
+    func moderationPage(token: String, status: String, reason: String, search: String, assignment: String, cursor: String? = nil) async throws -> ModerationPage {
+        var query = [URLQueryItem(name: "status", value: status), URLQueryItem(name: "assignment", value: assignment), URLQueryItem(name: "limit", value: "50")]
+        if !reason.isEmpty { query.append(URLQueryItem(name: "reason", value: reason)) }
+        if !search.isEmpty { query.append(URLQueryItem(name: "search", value: search)) }
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await request("v2/moderation/queue", moderationToken: token, query: query)
+    }
+    func appealPage(token: String, cursor: String? = nil) async throws -> AppealPage {
+        var query = [URLQueryItem(name: "status", value: "open"), URLQueryItem(name: "limit", value: "50")]
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await request("v2/moderation/appeals", moderationToken: token, query: query)
+    }
+    func assignCase(_ item: ModerationCase, assignee: String?, token: String) async throws {
+        // JSON null must be explicit when releasing an assignment.
+        var body: [String: Any] = ["report": item.id, "expectedUpdated": item.updated]
+        body["assignee"] = assignee.map { $0 as Any } ?? NSNull()
+        let _: OK = try await request("v2/moderation/assign", method: "POST", body: JSONSerialization.data(withJSONObject: body), moderationToken: token)
+    }
+    func decideAppeal(_ item: ModerationAppeal, outcome: String, acknowledgeSelfReview: Bool, token: String) async throws {
+        struct Body: Encodable { var appeal: String; var outcome: String; var expectedUpdated: Int; var acknowledgeSelfReview: Bool }
+        let _: OK = try await request("v2/moderation/appeal-decision", method: "POST", body: Wire.encoder.encode(Body(appeal: item.id, outcome: outcome, expectedUpdated: item.updated ?? item.created, acknowledgeSelfReview: acknowledgeSelfReview)), moderationToken: token)
+    }
     func moderationAppeals(token: String) async throws -> [ModerationAppeal] {
         struct Response: Decodable { var appeals: [ModerationAppeal] }
         let result: Response = try await request("v2/moderation/appeals", moderationToken: token)
@@ -176,6 +201,7 @@ extension ChatStore {
         let rooms = Set(state.rooms.filter { $0.members.contains(where: { $0.id == target.subject }) }.map(\.id))
         return state.messages.filter {
             (target.roomID == nil ? rooms.contains($0.roomID) : $0.roomID == target.roomID) &&
+            $0.viewOnceSeconds == nil &&
             ($0.expiresAt ?? .distantFuture) > Date() && !isLocalUtilityRoom($0.roomID)
         }
     }
