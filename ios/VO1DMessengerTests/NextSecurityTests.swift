@@ -206,4 +206,52 @@ final class NextSecurityTests: XCTestCase {
         pending[25].envelope.expiresAt = Int(now.timeIntervalSince1970) - 1
         XCTAssertEqual(SmartQueue.ready(pending, issues: restored, now: now).map(\.id), Array(pending[26..<30]).map(\.id))
     }
+    func testCorruptBotPacketDoesNotBlockAnotherUsersValidReply() throws {
+        let profile = UUID().uuidString, keys = try Keychain.load(profileID: profile), alice = try LocalIdentity.create()
+        let vault = try Vault(profileID: profile)
+        defer { try? vault.delete(); try? Keychain.delete(profileID: profile) }
+        let bot = ManagedBot(card: try keys.card, keyProfileID: profile, server: "https://relay.example", name: "Bot", username: "test_bot", token: try Crypto.random(32).base64URL, commands: ["ping": "pong"])
+        let publication = try SignalProtocol.publication(state: SignalSnapshot.create(), identity: keys, count: 2)
+        var state = VaultState(); state.extended = ExtendedState(); state.extended?.signal = publication.0
+        try vault.write(state, key: keys.storage)
+        let worker = try NativeBotWorker(bot: bot, preferences: PrivacyPreferences())
+        defer { worker.api.invalidate() }
+        try worker.receive(Data("{unreadable".utf8), sender: alice.card, envelopeID: "corrupt-packet")
+        XCTAssertEqual(worker.state.rejectedBotPackets, 1)
+        let request = event(alice: try alice.card, bot: bot.card, text: "/ping")
+        let sent = try SignalProtocol.encrypt(Wire.encoder.encode(request), to: bot.card, identity: alice, state: SignalSnapshot.create(), bundle: publication.1.bundles[0])
+        try worker.receive(sent.1, sender: alice.card, envelopeID: request.id)
+        let restored = try vault.read(key: keys.storage)
+        XCTAssertEqual(restored.rejectedBotPackets, 1)
+        XCTAssertTrue(restored.processed.contains("corrupt-packet"))
+        XCTAssertEqual(restored.outbox.count, 1)
+        let envelope = try XCTUnwrap(restored.outbox.first?.envelope)
+        let packet = try Wire.decoder.decode(SignalPacket.self, from: Crypto.openPayload(envelope, identity: alice, sender: bot.card))
+        let reply = try SignalProtocol.decrypt(packet, from: bot.card, state: sent.0)
+        XCTAssertEqual(try Wire.decoder.decode(ChatEvent.self, from: reply.1).message?.text, "pong")
+    }
+    func testBotSaveFailureDoesNotConsumeOrDiscardLegitimateMessage() throws {
+        let profile = UUID().uuidString, keys = try Keychain.load(profileID: profile), alice = try LocalIdentity.create()
+        let vault = try Vault(profileID: profile)
+        defer { try? vault.delete(); try? Keychain.delete(profileID: profile) }
+        let bot = ManagedBot(card: try keys.card, keyProfileID: profile, server: "https://relay.example", name: "Bot", username: "test_bot", token: try Crypto.random(32).base64URL, commands: ["ping": "pong"])
+        let publication = try SignalProtocol.publication(state: SignalSnapshot.create(), identity: keys, count: 2)
+        var state = VaultState(); state.extended = ExtendedState(); state.extended?.signal = publication.0
+        try vault.write(state, key: keys.storage)
+        let worker = try NativeBotWorker(bot: bot, preferences: PrivacyPreferences())
+        defer { worker.api.invalidate() }
+        let request = event(alice: try alice.card, bot: bot.card, text: "/ping")
+        let sent = try SignalProtocol.encrypt(Wire.encoder.encode(request), to: bot.card, identity: alice, state: SignalSnapshot.create(), bundle: publication.1.bundles[0])
+        try FileManager.default.removeItem(at: vault.url)
+        try FileManager.default.createDirectory(at: vault.url, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try worker.receive(sent.1, sender: alice.card, envelopeID: request.id))
+        XCTAssertFalse(worker.state.processed.contains(request.id))
+        XCTAssertNil(worker.state.rejectedBotPackets)
+        XCTAssertTrue(worker.state.outbox.isEmpty)
+        try FileManager.default.removeItem(at: vault.url)
+        try worker.save()
+        try worker.receive(sent.1, sender: alice.card, envelopeID: request.id)
+        XCTAssertEqual(worker.state.outbox.count, 1)
+        XCTAssertTrue(worker.state.processed.contains(request.id))
+    }
 }

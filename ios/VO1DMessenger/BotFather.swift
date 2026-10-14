@@ -132,7 +132,7 @@ extension ChatStore {
                     defer { worker.api.invalidate() }
                     try await worker.flushPrivateLinks { expected == self.generation && !self.locked && !Task.isCancelled }
                 }
-                botStatuses[bot.id] = bot.enabled ? "Готов · работает при открытом VO1D" : "Остановлен"
+                botStatuses[bot.id] = bot.enabled ? "Готов · отклонено повреждённых пакетов: \(worker.state.rejectedBotPackets ?? 0)" : "Остановлен"
             } catch {
                 guard expected == generation else { return }
                 botStatuses[bot.id] = error.localizedDescription
@@ -238,8 +238,10 @@ final class NativeBotWorker {
             if state.processed.contains(envelope.id) || envelope.expiresAt <= Int(Date().timeIntervalSince1970) { ack.append(envelope.id); continue }
             let sender = try await api.card(envelope.sender)
             guard canContinue() else { return }
-            let packet = try Wire.decoder.decode(SignalPacket.self, from: Crypto.openPayload(envelope, identity: keys, sender: sender))
-            try consume(packet, sender: sender, envelopeID: envelope.id)
+            let payload: Data
+            do { payload = try Crypto.openPayload(envelope, identity: keys, sender: sender) }
+            catch { try reject(envelope.id); ack.append(envelope.id); continue }
+            try receive(payload, sender: sender, envelopeID: envelope.id)
             ack.append(envelope.id)
         }
         try save()
@@ -255,9 +257,10 @@ final class NativeBotWorker {
             for envelope in privateInbox {
                 if state.processed.contains(envelope.id) { privateAck.append(envelope.id); continue }
                 guard state.outbox.count < 100 else { break }
-                let opened = try PrivateMailboxCrypto.open(envelope, identity: keys, mailbox: mailbox)
-                let packet = try Wire.decoder.decode(SignalPacket.self, from: opened.1)
-                try consume(packet, sender: opened.0, envelopeID: envelope.id)
+                let opened: (ContactCard, Data)
+                do { opened = try PrivateMailboxCrypto.open(envelope, identity: keys, mailbox: mailbox) }
+                catch { try reject(envelope.id); privateAck.append(envelope.id); continue }
+                try receive(opened.1, sender: opened.0, envelopeID: envelope.id)
                 privateAck.append(envelope.id)
             }
             state.extended?.privateInboxOffset = (position + 1) % activeMailboxes.count; try save()
@@ -266,8 +269,28 @@ final class NativeBotWorker {
         }
         try await drain(canContinue: canContinue)
     }
+    func receive(_ payload: Data, sender: ContactCard, envelopeID: String) throws {
+        let next: VaultState
+        do {
+            let packet = try Wire.decoder.decode(SignalPacket.self, from: payload)
+            next = try prepared(packet, sender: sender, envelopeID: envelopeID)
+        } catch { try reject(envelopeID); return }
+        // Filesystem failures remain outside payload rejection. Do not ACK or
+        // classify a legitimate message as corrupt when its reply cannot save.
+        try vault.write(next, key: keys.storage); state = next
+    }
+    private func reject(_ envelopeID: String) throws {
+        var next = state
+        next.rejectedBotPackets = min(1_000_000, (next.rejectedBotPackets ?? 0) + 1)
+        next.processed = Array((next.processed + [envelopeID]).suffix(5000))
+        try vault.write(next, key: keys.storage); state = next
+    }
     func consume(_ packet: SignalPacket, sender: ContactCard, envelopeID: String) throws {
-        guard let current = state.extended?.signal else { return }
+        let next = try prepared(packet, sender: sender, envelopeID: envelopeID)
+        try vault.write(next, key: keys.storage); state = next
+    }
+    private func prepared(_ packet: SignalPacket, sender: ContactCard, envelopeID: String) throws -> VaultState {
+        guard let current = state.extended?.signal else { throw MessengerError.invalid("Нет состояния E2EE бота") }
         let decrypted = try SignalProtocol.decrypt(packet, from: sender, state: current)
         let event = try Wire.decoder.decode(ChatEvent.self, from: decrypted.1)
         var next = state
@@ -294,8 +317,7 @@ final class NativeBotWorker {
             next.outbox.append(PendingDelivery(envelope: outgoing))
         }
         next.processed = Array((next.processed + [envelopeID]).suffix(5000))
-        try vault.write(next, key: keys.storage)
-        state = next
+        return next
     }
     private func drain(canContinue: () -> Bool) async throws {
         state.outbox.removeAll { $0.envelope.expiresAt <= Int(Date().timeIntervalSince1970) }

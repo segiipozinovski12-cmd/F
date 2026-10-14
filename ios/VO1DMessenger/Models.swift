@@ -166,6 +166,7 @@ struct PendingDelivery: Codable, Identifiable {
 }
 
 struct VaultState: Codable {
+    var rejectedBotPackets: Int? = nil
     var managedBots: [ManagedBot]? = nil
     var secureNotes: [SecureNote]? = nil
     var pendingReports: [PendingReport]? = nil
