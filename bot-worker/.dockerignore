@@ -1,0 +1,7 @@
+node_modules
+test
+*.vo1dbot
+*.worker-lock
+*.tmp
+.env
+secrets

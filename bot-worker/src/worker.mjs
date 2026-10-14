@@ -151,8 +151,30 @@ export class Worker {
     // Every received ratchet/reply or rejection has already been saved.
     if(ack.length) await this.client.request(mailbox ? `/v2/mailboxes/${mailbox.address.id}/ack` : '/v1/ack','POST',{ids:ack},mailbox?.readToken);
   }
+  async flushPrivateLinks() {
+    let next=structuredClone(this.payload);
+    next.state.extended.privateLinks??=[];
+    next.state.extended.privateLinks=next.state.extended.privateLinks.filter(r=>r.expiresAt>now());
+    next.state.extended.ownMailboxes=next.state.extended.ownMailboxes.filter(m=>m.address.expiresAt>now());
+    await this.commit(next);
+    for(const record of this.payload.state.extended.privateLinks.filter(r=>(!r.published || r.revocationPending) && !r.stopped && (r.nextAttempt??0)<=now()).slice(0,8)) {
+      const mailbox=this.payload.state.extended.ownMailboxes.find(m=>m.address.id===record.mailboxID); if(!mailbox) continue;
+      await this.client.lease();
+      try {
+        if(record.revocationPending) await this.client.request(`/v2/mailboxes/${record.mailboxID}/invites/${record.token}`,'DELETE',undefined,mailbox.readToken);
+        else await this.client.request(`/v2/mailboxes/${record.mailboxID}/invites`,'POST',{token:record.token,ciphertext:record.ciphertext,expiresAt:record.expiresAt},mailbox.readToken);
+      } catch(error) {
+        next=structuredClone(this.payload); const r=next.state.extended.privateLinks.find(r=>r.token===record.token);
+        r.failure='Private invitation pending';r.nextAttempt=now()+60;r.stopped=[400,401,403,404,409,410,413].includes(error.status);await this.commit(next);continue;
+      }
+      next=structuredClone(this.payload);
+      if(record.revocationPending) next.state.extended.privateLinks=next.state.extended.privateLinks.filter(r=>r.token!==record.token);
+      else {const r=next.state.extended.privateLinks.find(r=>r.token===record.token);r.published=true;r.failure=null;r.nextAttempt=null;}
+      await this.commit(next);
+    }
+  }
   async tick() {
-    await this.client.lease(); await this.maintainPrekeys(); await this.drain();
+    await this.client.lease(); await this.maintainPrekeys(); await this.flushPrivateLinks(); await this.drain();
     if(this.payload.state.outbox.length>=100) return;
     await this.client.lease(); const inbox=await this.client.request('/v1/inbox'); await this.batch(inbox.envelopes);
     const mailboxes=this.payload.state.extended.ownMailboxes.filter(m=>m.registered && m.address.expiresAt>now()), start=(this.payload.state.extended.privateInboxOffset??0)%Math.max(1,mailboxes.length);

@@ -43,12 +43,15 @@ enum DeviceHistory {
         let roomIDs = Set(messages.map(\.roomID))
         let rooms = state.rooms.filter { roomIDs.contains($0.id) }.map(\.wireCopy)
         let contactIDs = Set(rooms.flatMap(\.members).map(\.id))
-        let archive = HistoryArchive(title:"С другого устройства · \(Date().formatted(date:.numeric,time:.shortened))",rooms:rooms,messages:messages,
+        var archive = HistoryArchive(title:"С другого устройства · \(Date().formatted(date:.numeric,time:.shortened))",rooms:rooms,messages:messages,
                                      contacts:state.contacts.filter { contactIDs.contains($0.id) },ownerCard:owner)
+        if shareFiles { archive.sharedPrivateLinks = (state.extended?.privateLinks ?? []).prefix(32).map { SharedPrivateLink(id: SharedPrivateLink.reference(token: $0.token, owner: owner.id), expiresAt: $0.expiresAt, revocationPending: $0.revocationPending) } }
         guard try Wire.encoder.encode(archive).count <= 1024*1024 else { throw MessengerError.invalid("История больше 1 МБ. Используй зашифрованную резервную копию") }
         return archive
     }
     static func validate(_ archive: HistoryArchive, owner: ContactCard, shareFiles: Bool = false) throws {
+        guard (archive.sharedPrivateLinks ?? []).count <= 32, shareFiles || (archive.sharedPrivateLinks ?? []).isEmpty,
+              (archive.sharedPrivateLinks ?? []).allSatisfy({ $0.id.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil }) else { throw MessengerError.invalid("Некорректные ссылки устройства") }
         guard archive.ownerCard?.hasSameKeys(as: owner) == true, archive.messages.count <= 200, archive.rooms.count <= 200,
               archive.contacts.count <= 3200, archive.messages.allSatisfy({ ($0.attachment == nil || (shareFiles && $0.attachment?.blobReadToken != nil && $0.attachment?.data.isEmpty == true && $0.attachment?.viewSeconds == nil)) && $0.viewOnceSeconds == nil }),
               Set(archive.messages.map(\.id)).count == archive.messages.count,
@@ -207,6 +210,9 @@ struct DeviceLinksView: View {
                         }
                         if link.approved && link.certificate.issuer.id == store.myID {
                             Button("Передать последние 200 текстовых сообщений") { do { try store.syncDeviceHistory(link.id) } catch { store.error = error.localizedDescription } }
+                        }
+                        if link.approved && link.certificate.device == store.myID && link.certificate.scope == "collaboration" {
+                            NavigationLink("Приватные ссылки основной личности") { DelegatedPrivateLinksView(certificateID: link.id) }
                         }
                         Button("Отозвать связь",role:.destructive) { do { try store.revokeDevice(link.id) } catch { store.error = error.localizedDescription } }
                     }

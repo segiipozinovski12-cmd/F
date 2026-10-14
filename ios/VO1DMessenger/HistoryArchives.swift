@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct HistoryArchive: Codable, Identifiable {
+    var sharedPrivateLinks: [SharedPrivateLink]? = nil
     var id = UUID().uuidString
     var title: String
     var rooms: [Room]
@@ -15,7 +16,7 @@ struct HistoryArchivesView: View {
     var body: some View {
         List {
             Section {
-                Text("Архивы открываются для чтения. Импорт истории не меняет текущие ключи и не возобновляет старые сессии.").font(.caption).foregroundStyle(.secondary)
+                Text("Импортированные архивы открываются для чтения. В архиве подтверждённого устройства режим совместной работы позволяет отправку через основную личность. Импорт истории не меняет текущие ключи и не возобновляет старые сессии.").font(.caption).foregroundStyle(.secondary)
             }
             ForEach(store.extended.archives) { archive in
                 NavigationLink(archive.title) { ArchiveRoomsView(archive:archive) }

@@ -27,6 +27,10 @@ jobs:
       - run: pip install --require-hashes -r server/requirements.lock
       - name: Real relay / external libsignal worker integration
         run: python -m unittest discover -s server/tests -p test_external_worker.py -v
+      - name: Build isolated bot image
+        run: |
+          docker build -t vo1d-bot:ci bot-worker
+          docker run --rm --entrypoint node vo1d-bot:ci -e "const s=require('@signalapp/libsignal-client'); if(s.IdentityKeyPair.generate().serialize().length!==69) process.exit(1)"
   relay:
     runs-on: ubuntu-latest
     steps:
@@ -37,6 +41,20 @@ jobs:
       - run: pip install --require-hashes -r server/requirements.lock
       - run: python -m unittest discover -s scripts/tests -v
       - run: python -m unittest discover -s server/tests -v
+      - name: Coverage-guided relay parser fuzzing
+        run: |
+          set -o pipefail
+          pip install --require-hashes --only-binary=:all: -r tools/fuzz-requirements.lock
+          mkdir -p build-evidence/fuzz build-evidence/fuzz-corpus
+          python scripts/fuzz_relay.py build-evidence/fuzz-corpus -runs=5000 -max_len=65536 -timeout=5 -rss_limit_mb=512 -artifact_prefix=build-evidence/fuzz/ 2>&1 | tee build-evidence/fuzz.log
+      - name: Upload fuzz evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relay-fuzz-evidence
+          path: |
+            build-evidence/fuzz.log
+            build-evidence/fuzz/
       - name: Bounded encrypted-report concurrency probe
         run: python scripts/benchmark_next.py --samples 100 --workers 8
       - name: Loopback HTTP report concurrency probe
@@ -102,7 +120,8 @@ jobs:
       - name: Run cryptography and privacy tests
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and "iPhone" in d["name"]))')
-          xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug"
+          xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -parallel-testing-enabled NO -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug"
+          xcrun simctl bootstatus "$simulator_id" -b
           app_data=$(xcrun simctl get_app_container "$simulator_id" io.vo1d.messenger data)
           node bot-worker/test/interop.mjs verify "$app_data/Documents/signal-interop-response.json"
       - name: Build release for device

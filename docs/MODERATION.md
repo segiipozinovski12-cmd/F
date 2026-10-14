@@ -36,6 +36,8 @@ All endpoints require normal account authentication. Moderator operations additi
 | `GET /v2/moderation/access` | Own role and MFA enrollment status |
 | `POST /v2/moderation/mfa/setup` | Ten-minute enrollment secret, role required |
 | `POST /v2/moderation/mfa/verify` | TOTP verification and a 15-minute session |
+| `POST /v2/moderation/mfa/recovery-codes` | MFA session plus fresh OTP: rotate eight recovery codes |
+| `POST /v2/moderation/mfa/recover` | Account keys plus one recovery code: reset MFA, revoke all sessions |
 | `POST /v2/moderation/logout` | Revoke moderator sessions |
 | `GET /v2/moderation/queue` | Bounded queue metadata |
 | `POST /v2/moderation/assign` | Revision-checked assignment or release |
@@ -62,7 +64,9 @@ Example generation on the operator's machine:
 python3 -c 'import base64,secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())'
 ```
 
-Never commit the result. Back up this secret independently with the database and keep the identity backup and authenticator recovery material secure. A new authenticator cannot overwrite an already verified one through the API. MFA uses the library implementation of [RFC 6238 TOTP](https://datatracker.ietf.org/doc/html/rfc6238): SHA-1, six digits, 30-second steps, a bounded clock window, replay counters and rate limits. Moderator tokens are stored as digests, bound to the particular account session and revoked on role removal. Native sessions/content are cleared on background, lock, profile changes and timeout.
+Never commit the result. Back up this secret independently with the database and keep the identity backup and authenticator recovery material secure. Enrollment cannot overwrite a verified authenticator. MFA implements [RFC 6238 TOTP](https://datatracker.ietf.org/doc/html/rfc6238) using standard-library HMAC: SHA-1, six digits, 30-second steps, a bounded clock window, replay counters and rate limits. Moderator tokens are stored as digests, bound to the particular account session and revoked on role removal. Native sessions/content are cleared on background, lock, profile changes and timeout.
+
+The first successful enrollment verification returns eight independent 128-bit one-use recovery codes once; only domain-separated SHA-256 digests are stored. Existing moderators can generate a new set with an MFA session and a fresh unused OTP. Recovery requires both current account authentication (private signing keys) and one code. It consumes all old codes, resets the authenticator and revokes normal/moderator sessions; the owner must authenticate and enroll again. It does not reassign @vo1d or recover lost private keys. Role removal deletes the corresponding codes. Attempts share the MFA rate limit; concurrent consumption is serialized and tested. The native panel clears displayed codes on background/lock/profile changes and encourages separate offline storage. Restore from a historical operator backup discards these codes; see [OPERATIONS.md](OPERATIONS.md).
 
 ## Retention and abuse boundaries
 

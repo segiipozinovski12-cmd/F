@@ -97,3 +97,13 @@ test('transport refuses cleartext, implicit onion DNS and credentials in URLs',(
   assert.throws(()=>new RelayClient(p.bot,p.executorID,{proxy:'socks5://localhost:9050'}));
   assert.doesNotThrow(()=>new RelayClient({...p.bot,server:'http://'+'a'.repeat(56)+'.onion'},p.executorID,{proxy:'socks5h://localhost:9050'}));
 });
+test('private invitation retries preserve ciphertext and queued revocation survives restart',async()=>{
+  const p=fixture(), address={id:randomBytes(32).toString('base64url'),writeToken:randomBytes(32).toString('base64url'),expiresAt:now()+86400}, readToken=randomBytes(32).toString('base64url');
+  p.state.extended.ownMailboxes=[{address,readToken,registered:true}];
+  const record={token:randomBytes(32).toString('base64url'),key:b64(randomBytes(32)),ciphertext:b64(randomBytes(100)),mailboxID:address.id,expiresAt:now()+3600,published:false,revocationPending:false};p.state.extended.privateLinks=[record];
+  const calls=[], client={lease:async()=>{},request:async(route,m,body,token)=>{calls.push({route,m,body,token});throw new HTTPFailure(503);}};
+  let worker=new Worker(p,()=>{},client);await worker.flushPrivateLinks();assert.equal(worker.payload.state.extended.privateLinks[0].ciphertext,record.ciphertext);
+  worker=new Worker(JSON.parse(JSON.stringify(worker.payload)),()=>{},client);worker.payload.state.extended.privateLinks[0].nextAttempt=0;client.request=async(route,m,body,token)=>calls.push({route,m,body,token});
+  await worker.flushPrivateLinks();assert.deepEqual(calls[0],calls[1]);assert.equal(worker.payload.state.extended.privateLinks[0].published,true);
+  worker.payload.state.extended.privateLinks[0].revocationPending=true;await worker.flushPrivateLinks();assert.equal(worker.payload.state.extended.privateLinks.length,0);assert.equal(calls[2].m,'DELETE');assert.equal(calls[2].token,readToken);
+});

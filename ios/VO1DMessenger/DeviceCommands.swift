@@ -1,6 +1,37 @@
 import Foundation
+import CryptoKit
 import SwiftUI
 import UniformTypeIdentifiers
+
+struct SharedPrivateLink: Codable, Identifiable {
+    var id: String
+    var expiresAt: Int
+    var revocationPending: Bool
+    static func reference(token: String, owner: String) -> String {
+        Crypto.hex(SHA256.hash(data: Data("VO1D-DEVICE-LINK-REF-1\n\(owner)\n\(token)".utf8)))
+    }
+}
+struct DelegatedPrivateLinksView: View {
+    var certificateID: String
+    @EnvironmentObject private var store: ChatStore
+    var body: some View {
+        List {
+            Text("Передаются только ID, срок и состояние ссылок. Секрет приглашения и разрешения ящика не копируются. Отзыв выполнит основное устройство после подключения.").font(.caption)
+            ForEach(store.extended.archives.first(where: { $0.id == certificateID })?.sharedPrivateLinks ?? []) { link in
+                VStack(alignment: .leading) {
+                    Text(String(link.id.prefix(12))).font(.body.monospaced())
+                    Text(Date(timeIntervalSince1970: Double(link.expiresAt)), style: .date).font(.caption)
+                    Button("Отозвать через основное устройство", role: .destructive) {
+                        do { try store.queueDeviceCommand(DeviceCommand(certificateID: certificateID, operation: "revokeLink", roomID: "", target: link.id)) } catch { store.error = error.localizedDescription }
+                    }.disabled(link.revocationPending)
+                }
+            }
+            ForEach(store.extended.pendingDeviceCommands.filter { $0.certificateID == certificateID && $0.operation == "revokeLink" }.suffix(20)) { command in
+                Text(command.detail ?? "Отзыв ожидает основное устройство").font(.caption)
+            }
+        }.navigationTitle("Ссылки основной личности")
+    }
+}
 
 struct DeviceCommand: Codable, Identifiable {
     var id = UUID().uuidString
@@ -83,7 +114,7 @@ extension ChatStore {
         var result = DeviceCommandResult(commandID: command.id, certificateID: certificate.id, status: "applied", detail: "Применено основным устройством")
         do {
             if command.operation == "revokeLink" {
-                guard let target = command.target, let index = extended.privateLinks.firstIndex(where: { $0.id == target }) else { throw MessengerError.invalid("Ссылка отсутствует") }
+                guard let target = command.target, let index = extended.privateLinks.firstIndex(where: { SharedPrivateLink.reference(token: $0.token, owner: myID) == target }) else { throw MessengerError.invalid("Ссылка отсутствует") }
                 var local = extended; local.privateLinks[index].revocationPending = true; local.privateLinks[index].stopped = false; local.privateLinks[index].nextAttempt = nil; state.extended = local
             } else {
                 guard let room = state.rooms.first(where: { $0.id == command.roomID }), !isLocalUtilityRoom(room.id),

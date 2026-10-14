@@ -84,4 +84,23 @@ final class DeviceCommandTests: XCTestCase {
         command.createdAt = Date().addingTimeInterval(-8*86400); XCTAssertThrowsError(try command.validate())
         command.createdAt = Date(); command.text = String(repeating: "x",count: 16001); XCTAssertThrowsError(try command.validate())
     }
+    @MainActor func testDelegatedLinkRevocationUsesOnlyHashedReferenceAndIsIdempotent() throws {
+        let issuer = try LocalIdentity.create(), device = try LocalIdentity.create(), cert = try certificate(issuer: issuer, device: device.card)
+        let store = try configured(issuer: issuer, device: device, certificate: cert); defer { try? store.vault?.delete() }
+        let token = try Crypto.random(32).base64URL
+        let link = PrivateLinkRecord(token: token, key: try Crypto.random(32), ciphertext: Data("INVITE-CIPHER".utf8), mailboxID: try Crypto.random(32).base64URL, expiresAt: Int(Date().timeIntervalSince1970)+3600)
+        store.state.extended?.privateLinks = [link]
+        let snapshot = try DeviceHistory.snapshot(state: store.state, owner: issuer.card, shareFiles: true)
+        let shared = try XCTUnwrap(snapshot.sharedPrivateLinks?.first)
+        XCTAssertFalse(String(data: try Wire.encoder.encode(snapshot), encoding: .utf8)!.contains(token))
+        XCTAssertEqual(shared.id, SharedPrivateLink.reference(token: token, owner: store.myID))
+        let command = DeviceCommand(certificateID: cert.id, operation: "revokeLink", roomID: "", target: shared.id)
+        let room = Room(id: "dm:test",title: "",members: [try issuer.card,try device.card],creator: "",isGroup: false,createdAt: Date())
+        var event = ChatEvent(kind: "deviceCommand",room: room,senderName: "Device"); event.deviceCertificate = cert; event.deviceCommand = command
+        try store.applyAccepted(event,sender: device.card); try store.save()
+        XCTAssertTrue(store.extended.privateLinks[0].revocationPending)
+        XCTAssertEqual(store.extended.completedDeviceCommands[command.key]?.status,"applied")
+        try store.applyAccepted(event,sender: device.card)
+        XCTAssertEqual(store.extended.completedDeviceCommands.count,1)
+    }
 }
