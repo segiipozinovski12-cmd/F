@@ -32,6 +32,7 @@ struct BotFatherView: View {
             }
             if let failure { Text(failure).font(.callout) }
         }.navigationTitle("BotFather")
+            .onChange(of: store.generation) { _, _ in name = ""; username = ""; failure = nil }
     }
 }
 
@@ -42,6 +43,7 @@ struct BotManagementView: View {
     @State private var response = ""
     @State private var failure: String?
     @State private var rotating = false
+    @State private var deleting = false
     @State private var room: Room?
     private var bot: ManagedBot? { store.state.managedBots?.first { $0.id == botID } }
     var body: some View {
@@ -84,13 +86,21 @@ struct BotManagementView: View {
                     Button("Скопировать токен на 30 секунд") { SafeContent.copy(bot.token, seconds: 30) }
                     Button("Отозвать и заменить токен", role: .destructive) { rotating = true }.disabled(!bot.registered)
                 }
+                Section("/deletebot") {
+                    Button("Удалить бота и его ключи", role: .destructive) { deleting = true }
+                    Text("Сохранённые у собеседников сообщения останутся. Удалённое имя может быть занято другой новой личностью.").font(.caption)
+                }
             }
             if let failure { Text(failure).font(.callout) }
         }
         .navigationTitle(bot.map { "@" + $0.username } ?? "Бот")
         .navigationDestination(item: $room) { ChatView(roomID: $0.id) }
+        .onChange(of: store.generation) { _, _ in command = ""; response = ""; failure = nil; room = nil }
         .confirmationDialog("Старый токен сразу перестанет работать", isPresented: $rotating, titleVisibility: .visible) {
             Button("Заменить токен", role: .destructive) { rotate() }
+        }
+        .confirmationDialog("Удалить бота без восстановления ключей?", isPresented: $deleting, titleVisibility: .visible) {
+            Button("Удалить", role: .destructive) { Task { do { try await store.deleteManagedBot(botID) } catch { failure = error.localizedDescription } } }
         }
     }
     private func update(_ change: (inout ManagedBot) -> Void) {

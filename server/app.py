@@ -20,6 +20,7 @@ import bots
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
 ID = re.compile(r'^[a-f0-9]{64}$')
 CODE = re.compile(r'^[2-9A-HJ-NP-Z]{4}$')
@@ -52,11 +53,20 @@ def card_bytes(card):
     return f"VO1D-CARD-1\n{card['id']}\n{card['signingKey']}\n{card['agreementKey']}".encode()
 
 
+def agreement_key(value):
+    raw = b64(value, 32)
+    try:
+        X25519PrivateKey.generate().exchange(X25519PublicKey.from_public_bytes(raw))
+    except ValueError:
+        raise APIError(400, 'Invalid X25519 agreement key')
+    return raw
+
+
 def verify_card(card):
     if not isinstance(card, dict) or not all(isinstance(card.get(k), str) for k in ('id', 'signingKey', 'agreementKey', 'binding')):
         raise APIError(400, 'Invalid identity')
     signing = b64(card['signingKey'], 32)
-    b64(card['agreementKey'], 32)
+    agreement_key(card['agreementKey'])
     if hashlib.sha256(signing).hexdigest() != card['id']:
         raise APIError(400, 'Identity fingerprint mismatch')
     try:
@@ -156,7 +166,7 @@ class Relay:
         # Sanctions affect account-authorized sending, never unlock chat content.
         path = env.get('PATH_INFO', '')
         if (env.get('REQUEST_METHOD') in ('POST','PUT') and path in
-            ('/v1/envelopes','/v1/blob','/v2/prekeys','/v1/call/authority','/v2/bots')) or path == '/v1/call/socket':
+            ('/v1/envelopes','/v1/blob','/v2/prekeys','/v2/call-authority','/v2/bots')) or path == '/v1/call/socket':
             moderation.enforce(db, row[0], APIError)
             bots.enforce(db, row[0], APIError)
         db.execute('UPDATE privacy SET last_active=? WHERE identity=?',(int(time.time()),row[0]))

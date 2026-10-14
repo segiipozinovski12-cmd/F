@@ -1,5 +1,7 @@
 # VO1D Messenger 2 · work branch
 
+VO1D NEXT is developed on `codex/vo1d-next`: permanent first-claim `@vo1d`, opt-in encrypted reports/MFA moderation, real `@vo1d_bot_father` bots, local Security Check, Private Spaces and Secure Notes. [Implementation and remaining release gates](docs/VO1D-NEXT.md), [moderation](docs/MODERATION.md), [bots](docs/BOTS.md). This branch is not a completed P0–P4 release.
+
 Нативный мессенджер для iPhone и iPad, SwiftUI, iOS 17+. Личность без номера, почты и загрузки адресной книги. Новые сообщения используют официальный libsignal PQXDH/Double Ratchet; есть встроенный Tor и private capability delivery. Интерфейс — глубокий чёрный и белый. Независимый аудит не проводился, полная анонимность не гарантируется.
 
 ## Запуск

@@ -46,15 +46,17 @@ struct ReportContent: Codable {
     var source: String
     var comment: String
     var messages: [ReportEvidence]
+    var appealFor: String? = nil
     var createdAt = Date()
     func validated(for envelope: Envelope) throws -> ReportContent {
         guard kind == "VO1D-REPORT-1", reportID == envelope.id, comment.count <= 4000,
               messages.count <= 10, ["profile", "chat", "message", "appeal"].contains(source),
               subject.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
               Set(messages.map(\.id)).count == messages.count,
-              messages.allSatisfy({ $0.text.count <= 20000 && ($0.attachment?.data.count ?? 0) <= 65536 }) else {
+              messages.allSatisfy({ $0.id.count <= 160 && $0.text.count <= 20000 && ($0.attachment?.data.count ?? 0) <= 65536 && ($0.attachment?.name.count ?? 0) <= 255 && ($0.attachment?.mime.count ?? 0) <= 120 }) else {
             throw MessengerError.invalid("Содержимое жалобы не прошло проверку")
         }
+        if let appealFor, UUID(uuidString: appealFor) == nil { throw MessengerError.invalid("Неверный номер исходного решения") }
         return self
     }
 }
@@ -204,10 +206,11 @@ extension ChatStore {
             return ReportEvidence(id: message.id, sender: message.sender, text: message.text, createdAt: message.createdAt, attachment: attachment)
         }
         let id = UUID().uuidString
-        let content = ReportContent(reportID: id, subject: target.subject, reason: reason, source: target.source, comment: comment, messages: evidence)
+        let content = ReportContent(reportID: id, subject: target.subject, reason: reason, source: target.source, comment: comment, messages: evidence, appealFor: appealFor)
         let clear = try Wire.encoder.encode(content)
         guard clear.count + 28 <= min(config.maxEvidenceBytes, 256 * 1024) else { throw MessengerError.invalid("Уменьши число выбранных доказательств") }
         let envelope = try Crypto.sealPayload(clear, from: identity, to: moderator, id: id)
+        _ = try content.validated(for: envelope)
         let pending = PendingReport(submission: ReportSubmission(subject: target.subject, reason: reason.rawValue, source: target.source, consent: true, envelope: envelope), appealFor: appealFor)
         let previous = state
         state.moderationPins = (state.moderationPins ?? [:]).merging([origin: moderator]) { old, _ in old }

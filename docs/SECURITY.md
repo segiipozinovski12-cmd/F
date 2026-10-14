@@ -1,5 +1,7 @@
 # Security model, messages v2 / calls v2
 
+VO1D NEXT adds opt-in moderation and bot endpoints. See [MODERATION.md](MODERATION.md) for consent, permanent administrator keys/MFA, retention, metadata, limits and the report seal's lack of forward secrecy; [BOTS.md](BOTS.md) for endpoint trust and credential scopes. Neither grants general access to human E2EE chat keys. Private Spaces use separate identity/vault namespaces and device authentication; they do not prove network unlinkability.
+
 This is a functional, unaudited implementation. New messages use pinned libsignal PQXDH/Double Ratchet; old history remains readable. It provides pseudonymous end-to-end encrypted messaging, not untraceability or zero metadata. See [PROTOCOL-V2.md](PROTOCOL-V2.md), [the 60-item ledger](ANONYMITY-V2.md) and [audit handoff](AUDIT-PACK.md).
 
 ## Identity and authentication

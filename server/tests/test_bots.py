@@ -95,5 +95,13 @@ class BotTests(unittest.TestCase):
         _, second = self.create_body()
         self.assertEqual(self.request('/v2/bots', 'POST', second, self.a)[0], 403)
 
+    def test_delete_is_owner_only_and_idempotent(self):
+        _, body = self.create_body(); self.request('/v2/bots', 'POST', body, self.a)
+        path = '/v2/bots/' + body['card']['id']
+        self.assertEqual(self.request(path, 'DELETE', token=self.b)[0], 404)
+        self.assertEqual(self.request(path, 'DELETE', token=self.a)[0], 200)
+        self.assertEqual(self.request(path, 'DELETE', token=self.a)[0], 200)
+        self.assertEqual(self.worker(body['token'], '/v1/inbox')[0], 401)
+
 
 if __name__ == '__main__': unittest.main()

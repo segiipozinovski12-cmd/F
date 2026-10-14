@@ -152,6 +152,7 @@ struct ReportCenterView: View {
         .navigationTitle("Жалобы и решения")
         .task { await refresh() }
         .refreshable { await refresh() }
+        .onChange(of: store.generation) { _, _ in notices = []; appeal = nil; failure = nil; Task { await refresh() } }
         .sheet(item: $appeal) { item in
             ReportComposerView(target: ReportTarget(subject: store.myID, source: "appeal"), appealFor: item.id)
         }
@@ -240,6 +241,12 @@ struct ModerationDashboardView: View {
         .onChange(of: store.generation) { _, _ in clear(); access = nil }
         .onChange(of: store.locked) { _, value in if value { clear() } }
         .onDisappear { clear() }
+        .task(id: token) {
+            guard let activeToken = token else { return }
+            let seconds = max(1, expiresAt - Int(Date().timeIntervalSince1970))
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            if token == activeToken { clear() }
+        }
         .sheet(item: $selected, onDismiss: { Task { await refresh() } }) { item in
             if let token { ModeratorCaseView(item: item, token: token, role: access?.role ?? "reviewer") }
         }
@@ -248,8 +255,10 @@ struct ModerationDashboardView: View {
         Group {
             if access?.mfaEnabled != true {
                 Button("Настроить MFA") {
+                    let current = store.generation
                     run { api in
                         let result = try await api.setupModeratorMFA()
+                        guard current == store.generation, !store.locked, scenePhase == .active else { return }
                         secret = result.secret
                     }
                 }
@@ -261,9 +270,10 @@ struct ModerationDashboardView: View {
             }
             SecureField("Код аутентификатора", text: $code).keyboardType(.numberPad)
             Button("Открыть панель") {
+                let current = store.generation
                 run { api in
                     let login = try await api.loginModerator(code: code)
-                    guard scenePhase == .active, !store.locked else { return }
+                    guard current == store.generation, scenePhase == .active, !store.locked else { return }
                     token = login.token; expiresAt = login.expiresAt; secret = ""; code = ""
                     await refresh()
                 }
@@ -290,9 +300,11 @@ struct ModerationDashboardView: View {
     }
     private func run(_ operation: @escaping (APIClient) async throws -> Void) {
         guard let api = store.api else { return }
+        let current = store.generation
         working = true
+        failure = nil
         Task {
-            do { try await operation(api); failure = nil } catch { failure = error.localizedDescription }
+            do { try await operation(api) } catch { if current == store.generation { failure = error.localizedDescription } }
             working = false
         }
     }
@@ -319,9 +331,10 @@ struct ModerationDashboardView: View {
         run { api in
             let sealed = try await api.moderationEvidence(item.id, appeal: true, token: token)
             let content = try Wire.decoder.decode(ReportContent.self, from: Crypto.openPayload(sealed.envelope, identity: identity, sender: sealed.senderCard)).validated(for: sealed.envelope)
-            guard content.source == "appeal", content.subject == item.identity else { throw MessengerError.invalid("Апелляция не соответствует делу") }
+            guard content.source == "appeal", content.subject == item.identity, content.appealFor == nil || content.appealFor == item.report else { throw MessengerError.invalid("Апелляция не соответствует делу") }
             guard current == store.generation, self.token == token, !store.locked else { return }
             appealContent = content
+            if content.appealFor == nil { failure = "Апелляция ранней версии: номер дела не связан с шифротекстом. Проверь исходное решение вручную." }
         }
     }
 }
@@ -354,7 +367,7 @@ struct ModeratorCaseView: View {
                                 Text(evidence.sender.prefix(12)).font(.caption.monospaced())
                                 Text(evidence.text).textSelection(.enabled)
                                 if let attachment = evidence.attachment {
-                                    Text("Файл: \(attachment.name) · \(attachment.data.count) байт").font(.caption)
+                                    ReportEvidenceFileView(attachment: attachment)
                                 }
                             }
                         }

@@ -50,6 +50,9 @@ extension APIClient {
     func rotateBotToken(id: String, token: String) async throws {
         let _: OK = try await request("v2/bots/\(id)/token", method: "POST", body: Wire.encoder.encode(["token": token]))
     }
+    func deleteBot(_ id: String) async throws {
+        let _: OK = try await request("v2/bots/\(id)", method: "DELETE")
+    }
     func botDirectory(_ id: String) async throws -> BotDirectoryEntry? {
         struct Response: Decodable { var bot: BotDirectoryEntry? }
         let result: Response = try await request("v2/bots/directory/\(id)")
@@ -58,6 +61,18 @@ extension APIClient {
 }
 
 extension ChatStore {
+    func deleteManagedBot(_ id: String) async throws {
+        guard let api, let bot = state.managedBots?.first(where: { $0.id == id }) else { return }
+        let expected = generation
+        try await api.deleteBot(id)
+        guard expected == generation else { throw CancellationError() }
+        let previous = state
+        state.managedBots?.removeAll { $0.id == id }
+        do { try save() } catch { state = previous; throw error }
+        try Vault(profileID: bot.keyProfileID).delete()
+        try Keychain.delete(profileID: bot.keyProfileID)
+        botStatuses[id] = nil
+    }
     func createBot(name: String, username: String) throws {
         let clean = username.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "@ "))
         guard let api, (state.managedBots ?? []).count < 20, !name.isEmpty, name.count <= 40,
@@ -131,12 +146,13 @@ final class NativeBotWorker {
     let api: APIClient
     var state: VaultState
     init(bot: ManagedBot, preferences: PrivacyPreferences) throws {
+        let loadedKeys = try Keychain.load(profileID: bot.keyProfileID)
+        guard try loadedKeys.card.hasSameKeys(as: bot.card) else { throw MessengerError.invalid("Ключи бота не совпадают") }
+        let loadedVault = try Vault(profileID: bot.keyProfileID)
+        let loadedState = try loadedVault.read(key: loadedKeys.storage)
+        let client = try APIClient(server: bot.server, identity: loadedKeys, privacy: preferences, botToken: bot.token)
         self.bot = bot
-        keys = try Keychain.load(profileID: bot.keyProfileID)
-        guard try keys.card.hasSameKeys(as: bot.card) else { throw MessengerError.invalid("Ключи бота не совпадают") }
-        vault = try Vault(profileID: bot.keyProfileID)
-        state = try vault.read(key: keys.storage)
-        api = try APIClient(server: bot.server, identity: keys, privacy: preferences, botToken: bot.token)
+        keys = loadedKeys; vault = loadedVault; state = loadedState; api = client
     }
     func save() throws { try vault.write(state, key: keys.storage) }
     func run(canContinue: () -> Bool) async throws {
@@ -209,15 +225,15 @@ final class NativeBotWorker {
         if let text = BotCommandRouter.reply(to: event, sender: sender, bot: bot.card, commands: bot.commands) {
             if let route = event.replyMailbox { try route.validate() }
             let room = event.room.wireCopy
-            let reply = ChatMessage(id: UUID().uuidString, roomID: room.id, sender: bot.id, text: text, createdAt: Date(), expiresAt: nil, replyTo: event.message?.id, attachment: nil)
+            let reply = ChatMessage(id: UUID().uuidString, roomID: room.id, sender: bot.id, text: text, createdAt: Date(), expiresAt: event.message?.expiresAt, replyTo: event.message?.id, attachment: nil)
             let response = ChatEvent(kind: "message", room: room, message: reply, senderName: bot.name)
             let encrypted = try SignalProtocol.encrypt(Wire.encoder.encode(response), to: sender, identity: keys, state: decrypted.0)
             let outgoing: Envelope
             if let route = event.replyMailbox {
-                let opaque = try PrivateMailboxCrypto.seal(encrypted.1, from: keys, to: sender, route: route, id: response.id, expiry: nil)
+                let opaque = try PrivateMailboxCrypto.seal(encrypted.1, from: keys, to: sender, route: route, id: response.id, expiry: reply.expiresAt)
                 outgoing = Envelope(id: opaque.id, sender: bot.id, recipient: sender.id, ephemeralKey: "", salt: "", expiresAt: opaque.expiresAt, ciphertext: "", signature: "", opaque: opaque)
             } else {
-                outgoing = try Crypto.sealPayload(encrypted.1, from: keys, to: sender, id: response.id)
+                outgoing = try Crypto.sealPayload(encrypted.1, from: keys, to: sender, expiry: reply.expiresAt, id: response.id)
             }
             next.extended?.signal = encrypted.0
             next.outbox.append(PendingDelivery(envelope: outgoing))

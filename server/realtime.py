@@ -419,11 +419,15 @@ class RealtimeGateway:
             if route["b"] == user and not route["accepted"]:
                 await ws.send_json({"type":"invite","from":route["a"],"callID":call_id,"key":route["key"],"keySignature":route["keySignature"],**route.get('extra',{})})
 
+        last_session_check = time.monotonic()
         try:
             async for message in ws:
                 try:
                     with self.relay.db() as db:
                         moderation.enforce(db, user, APIError)
+                        if delegated is None and time.monotonic() - last_session_check >= 5:
+                            self.relay.user(self._env(request), db)
+                            last_session_check = time.monotonic()
                 except APIError:
                     await ws.close(code=4003, message=b'account restricted')
                     break
@@ -489,6 +493,10 @@ class RealtimeGateway:
                         trusted=db.execute("SELECT 1 FROM trusted WHERE owner=? AND peer=?",(target,user)).fetchone()
                         if settings and settings[0] and not trusted:
                             blocked=True
+                        try:
+                            moderation.enforce(db, target, APIError)
+                        except APIError:
+                            blocked = True
                     if not known:
                         await self._send_error(ws, "unknown_peer")
                         continue

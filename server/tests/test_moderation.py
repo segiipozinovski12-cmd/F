@@ -224,6 +224,12 @@ class ModerationTests(unittest.TestCase):
         self.assertEqual(self.mr('/v2/moderation/queue')[0], 403)
         self.assertEqual(self.request('/v1/username', 'DELETE', token=self.a)[0], 409)
 
+    def test_valid_signature_cannot_register_non_contributory_agreement_key(self):
+        private, card = test_relay.identity()
+        card['agreementKey'] = test_relay.encode(bytes(32))
+        card['binding'] = test_relay.encode(private.sign(card_bytes(card)))
+        self.assertEqual(self.request('/v1/register', 'POST', card)[0], 400)
+
 
 if __name__ == '__main__':
     unittest.main()

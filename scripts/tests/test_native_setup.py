@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import io
+import os
 import zipfile
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -26,6 +27,8 @@ isolate = load('isolate_signal')
 
 
 def require_symlinks(case):
+    if os.name == 'nt':
+        case.skipTest('POSIX framework links and executable modes are exercised on macOS/Linux CI')
     with tempfile.TemporaryDirectory() as directory:
         target = Path(directory) / 'target'
         target.touch()

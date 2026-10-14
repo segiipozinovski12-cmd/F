@@ -58,15 +58,9 @@ def public(row):
 
 
 def erase(db, owner):
-    import prekeys
+    import privacy
     for row in db.execute('SELECT identity FROM bots WHERE owner=?', (owner,)).fetchall():
-        bot = row[0]
-        prekeys.erase(db, bot)
-        db.execute('DELETE FROM sessions WHERE identity=?', (bot,))
-        db.execute('DELETE FROM envelopes WHERE sender=? OR recipient=?', (bot, bot))
-        db.execute('DELETE FROM usernames WHERE identity=?', (bot,))
-        db.execute('DELETE FROM identities WHERE id=?', (bot,))
-        db.execute('DELETE FROM privacy WHERE identity=?', (bot,))
+        privacy.erase(db, row[0])
     db.execute('DELETE FROM bots WHERE owner=? OR identity=?', (owner, owner))
 
 
@@ -79,12 +73,18 @@ def handle(db, user, env, body, error, b64):
     if method == 'GET' and path.startswith('/v2/bots/directory/'):
         row = db.execute('SELECT * FROM bots WHERE identity=?', (path.rsplit('/', 1)[1],)).fetchone()
         return {'bot': public(row) if row else None}
+    if db.execute('SELECT 1 FROM bots WHERE identity=?', (user,)).fetchone():
+        raise error(403, 'Bot identities cannot manage other bots')
     if method == 'GET' and path == '/v2/bots':
         return {'bots': [public(r) for r in db.execute('SELECT * FROM bots WHERE owner=? ORDER BY created', (user,))]}
     if method == 'POST' and path == '/v2/bots':
         if set(body) != {'card', 'name', 'username', 'token', 'ownershipSignature'}:
             raise error(400, 'Bot card, name, username, scoped token and ownership proof required')
         card = verify_card(body['card'])
+        import moderation
+        permanent = moderation.owner(db)
+        if permanent and permanent['owner'] == card['id']:
+            raise error(400, 'The permanent administrator cannot be converted to a bot')
         username, name, token = body.get('username'), body.get('name'), body.get('token')
         if not isinstance(username, str) or not NAME.fullmatch(username) or not username.endswith('_bot') or username in RESERVED_USERNAMES:
             raise error(400, 'Bot username must be 5-20 lowercase characters and end in _bot')
@@ -116,6 +116,17 @@ def handle(db, user, env, body, error, b64):
         db.execute('INSERT INTO usernames VALUES (?,?,?)', (username, card['id'], now))
         db.execute('INSERT INTO bots(identity,owner,username,name,token_digest,enabled,created) VALUES (?,?,?,?,?,1,?)', (card['id'], user, username, name, digest, now))
         return {'ok': True, 'bot': public(db.execute('SELECT * FROM bots WHERE identity=?', (card['id'],)).fetchone())}
+    deletion = re.fullmatch(r'/v2/bots/([a-f0-9]{64})', path)
+    if method == 'DELETE' and deletion:
+        bot_id = deletion.group(1)
+        row = db.execute('SELECT owner FROM bots WHERE identity=?', (bot_id,)).fetchone()
+        if row is None:
+            return {'ok': True}
+        if row['owner'] != user:
+            raise error(404, 'Owned bot not found')
+        import privacy
+        privacy.erase(db, bot_id)
+        return {'ok': True}
     match = re.fullmatch(r'/v2/bots/([a-f0-9]{64})/(token|settings)', path)
     if method == 'POST' and match:
         bot_id, operation = match.groups()

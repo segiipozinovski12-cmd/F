@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import SwiftUI
+import LocalAuthentication
 
 enum ProfileScope: String, Codable, CaseIterable, Identifiable {
     case general, contact, group
@@ -14,6 +15,7 @@ struct LocalProfile: Codable, Identifiable, Hashable {
     var label: String
     var scope: ProfileScope? = nil
     var boundID: String? = nil
+    var isPrivateSpace: Bool? = nil
 }
 struct ProfileRegistry: Codable {
     var activeID = "default"
@@ -43,7 +45,7 @@ struct ProfileRegistry: Codable {
     }
 }
 extension ChatStore {
-    func createProfile(label: String, scope: ProfileScope = .general) async throws {
+    func createProfile(label: String, scope: ProfileScope = .general, privateSpace: Bool = false) async throws {
         guard profileRegistry.profiles.count < 12 else { throw MessengerError.invalid("Доступно до 12 независимых личностей") }
         let cleaned = label.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !cleaned.isEmpty, cleaned.count <= 40 else { throw MessengerError.invalid("Укажи локальное имя до 40 символов") }
@@ -54,15 +56,28 @@ extension ChatStore {
         var settings = preferences
         settings.streamIsolation = ""; settings.backgroundCalls = false
         if scope != .general { settings.discoverable = false; settings.requirePrivateDelivery = true }
+        if privateSpace {
+            initial.appLock = true; initial.readReceipts = false; initial.notificationsEnabled = false
+            settings.discoverable = false; settings.requirePrivateDelivery = true
+            settings.requireRequests = true; settings.verifiedOnlyCalls = true
+            settings.confirmLinks = true; settings.protectRecording = true; settings.typingSignals = false
+            settings.notificationPreview = false; settings.deliveryReceipts = false; settings.linkPreviews = false
+        }
         var local = ExtendedState(); local.privacy = settings; initial.extended = local
         try newVault.write(initial,key:newIdentity.storage)
         var registry = profileRegistry
-        registry.profiles.append(LocalProfile(id:id,label:cleaned,scope:scope)); try registry.save(); profileRegistry = registry
+        registry.profiles.append(LocalProfile(id:id,label:cleaned,scope:scope,isPrivateSpace:privateSpace ? true : nil)); try registry.save(); profileRegistry = registry
         try await switchProfile(id)
     }
     func switchProfile(_ id: String) async throws {
         guard id != profileID else { return }
         guard profileRegistry.profiles.contains(where: { $0.id == id }) else { throw MessengerError.invalid("Личность отсутствует") }
+        let privateSpace = profileRegistry.profiles.first(where: { $0.id == id })?.isPrivateSpace == true
+        if privateSpace {
+            let expected = generation
+            guard try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Открыть Private Space VO1D") else { return }
+            guard expected == generation else { throw CancellationError() }
+        }
         let nextIdentity = try Keychain.load(profileID:id), nextVault = try Vault(profileID:id)
         var nextState = try nextVault.read(key:nextIdentity.storage)
         if nextState.extended == nil { nextState.extended = ExtendedState() }
@@ -72,8 +87,8 @@ extension ChatStore {
         CallManager.shared.disconnect(); api?.invalidate(); api = nil
         BackgroundCalls.clear(); MediaFiles.clear(); ResumableDownload.clear(); NotificationCoordinator.shared.clearAll()
         profileRegistry = registry; identity = nextIdentity; ownCard = try nextIdentity.card; vault = nextVault; state = nextState
-        deliveryIssues = nextState.deliveryRetryState ?? [:]; typing = [:]; activeRoomID = nil; notificationRoomID = nil
-        revealedHiddenRooms = false; locked = state.appLock; sessionUnlocked = !state.onboarded; error = nil
+        deliveryIssues = nextState.deliveryRetryState ?? [:]; botStatuses = [:]; typing = [:]; activeRoomID = nil; notificationRoomID = nil
+        revealedHiddenRooms = false; locked = privateSpace ? false : state.appLock; sessionUnlocked = privateSpace || !state.onboarded; error = nil
         connection = state.onboarded ? "Подключение…" : "Новая независимая личность"
         if state.onboarded { await connectProductionRelay() }
     }

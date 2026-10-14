@@ -178,7 +178,7 @@ def authorize(db, user, env, error, roles=('owner', 'admin', 'reviewer')):
 
 
 def sealed(body, user, db, now, error, b64):
-    from app import header_bytes
+    from app import header_bytes, agreement_key
     e = body.get('envelope')
     keys = {'id', 'sender', 'recipient', 'ephemeralKey', 'salt', 'ciphertext', 'signature', 'expiresAt'}
     current = owner(db)
@@ -190,7 +190,7 @@ def sealed(body, user, db, now, error, b64):
         raise error(400, 'Invalid report sender or administrator recipient')
     if type(e['expiresAt']) is not int or not now < e['expiresAt'] <= now + RETENTION + 60:
         raise error(400, 'Report expiry must be within seven days')
-    b64(e['ephemeralKey'], 32)
+    agreement_key(e['ephemeralKey'])
     b64(e['salt'], 32)
     ciphertext = b64(e['ciphertext'])
     if not 28 <= len(ciphertext) <= MAX_EVIDENCE:
@@ -202,6 +202,10 @@ def sealed(body, user, db, now, error, b64):
         raise error(403, 'Invalid report signature')
     encoded = json.dumps(e, sort_keys=True, separators=(',', ':'))
     return e, encoded, card
+
+
+def evidence_bytes(db):
+    return db.execute('SELECT coalesce(sum(length(envelope)),0) FROM (SELECT envelope FROM reports UNION ALL SELECT envelope FROM report_appeals)').fetchone()[0]
 
 
 def handle(relay, db, user, env, body, error, b64):
@@ -234,7 +238,7 @@ def handle(relay, db, user, env, body, error, b64):
             raise error(429, 'A recent report for this user is already queued')
         if db.execute('SELECT count(*) FROM reports').fetchone()[0] >= 10000:
             raise error(429, 'Moderation queue is full')
-        if db.execute('SELECT coalesce(sum(length(envelope)),0) FROM reports').fetchone()[0] + len(encoded) > 64 * 1024 * 1024:
+        if evidence_bytes(db) + len(encoded) > 64 * 1024 * 1024:
             raise error(429, 'Moderation evidence storage quota reached')
         db.execute('INSERT INTO reports VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                    (e['id'], user, subject, reason, source, digest, encoded, card, 'open', now, e['expiresAt'], now))
@@ -262,6 +266,8 @@ def handle(relay, db, user, env, body, error, b64):
             if previous['identity'] == user and previous['report'] == case and previous['id'] == e['id'] and previous['digest'] == digest:
                 return {'ok': True, 'id': e['id']}
             raise error(409, 'An appeal has already been submitted')
+        if evidence_bytes(db) + len(encoded) > 64 * 1024 * 1024:
+            raise error(429, 'Moderation evidence storage quota reached')
         db.execute('INSERT INTO report_appeals VALUES (?,?,?,?,?,?,?,?,?)', (e['id'], user, case, digest, encoded, card, now, e['expiresAt'], 'open'))
         audit(db, user, 'appeal', case, now)
         return {'ok': True, 'id': e['id']}
@@ -300,6 +306,12 @@ def handle(relay, db, user, env, body, error, b64):
     if method == 'GET' and path == '/v2/moderation/audit':
         rows = db.execute('SELECT seq,entry,previous,digest FROM moderation_audit ORDER BY seq DESC LIMIT 200').fetchall()
         return {'events': [dict(r) for r in rows]}
+    if method == 'GET' and path == '/v2/moderation/metrics':
+        counts = {r[0]: r[1] for r in db.execute('SELECT status,count(*) FROM reports GROUP BY status')}
+        oldest = db.execute("SELECT min(created) FROM reports WHERE status IN ('open','reviewing')").fetchone()[0]
+        return {'queue': counts, 'evidenceBytes': evidence_bytes(db),
+                'openAppeals': db.execute("SELECT count(*) FROM report_appeals WHERE status='open'").fetchone()[0],
+                'oldestOpenSeconds': max(0, now - oldest) if oldest else 0}
     if method == 'GET' and path == '/v2/moderation/roles':
         if current_role != 'owner':
             raise error(403, 'Only the permanent administrator can list moderator roles')
@@ -350,6 +362,8 @@ def handle(relay, db, user, env, body, error, b64):
             raise error(404, 'Report not found')
         if row['updated'] != expected:
             raise error(409, 'Case changed; refresh before deciding')
+        if row['status'] in ('resolved', 'dismissed') and current_role == 'reviewer':
+            raise error(403, 'Only administrators can reopen a closed decision')
         if current and row['subject'] == current['owner'] and action != 'none':
             raise error(403, 'Permanent administrator cannot be reassigned or sanctioned through reports')
         if action == 'lift':

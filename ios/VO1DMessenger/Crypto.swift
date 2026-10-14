@@ -55,7 +55,8 @@ enum Crypto {
     }
     static func validate(_ card: ContactCard) throws {
         let signing = try decode(card.signingKey, count: 32)
-        _ = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: decode(card.agreementKey, count: 32))
+        let agreement = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: decode(card.agreementKey, count: 32))
+        _ = try Curve25519.KeyAgreement.PrivateKey().sharedSecretFromKeyAgreement(with: agreement)
         guard hex(SHA256.hash(data: signing)) == card.id,
               try Curve25519.Signing.PublicKey(rawRepresentation: signing).isValidSignature(decode(card.binding, count: 64), for: cardBytes(card)) else {
             throw MessengerError.invalid("Отпечаток контакта или подпись не совпадают")

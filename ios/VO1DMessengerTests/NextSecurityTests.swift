@@ -96,6 +96,11 @@ final class NextSecurityTests: XCTestCase {
         XCTAssertFalse(SafeContent.linkWarnings(URL(string: "https://xn--example-9za.org")!).isEmpty)
         XCTAssertThrowsError(try LocalIdentity(signing: Data(repeating: 1, count: 31), agreement: Data(repeating: 2, count: 32), storage: Data(repeating: 3, count: 32)).validate())
         XCTAssertNoThrow(try LocalIdentity.create().validate())
+        let valid = try LocalIdentity.create()
+        var invalidCard = try valid.card
+        invalidCard.agreementKey = Data(repeating: 0, count: 32).base64EncodedString()
+        invalidCard.binding = try valid.signingPrivate.signature(for: Crypto.cardBytes(invalidCard)).base64EncodedString()
+        XCTAssertThrowsError(try Crypto.validate(invalidCard))
     }
 
     func testBackupExcludesBotCredentialsAndPendingReports() throws {

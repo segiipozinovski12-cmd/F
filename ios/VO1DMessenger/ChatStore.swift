@@ -72,7 +72,7 @@ final class ChatStore: ObservableObject {
             state.extended = migrated
         }
         let credentialsChanged = try ensureCredentials()
-        locked = state.appLock
+        locked = state.appLock || activeProfile?.isPrivateSpace == true
         sessionUnlocked = !state.onboarded
 
         var relayChanged = false
@@ -101,7 +101,8 @@ final class ChatStore: ObservableObject {
     }
     func save() throws {
         guard fatalError == nil, let identity, let vault else { throw MessengerError.invalid("Хранилище недоступно") }
-        state.deliveryRetryState = deliveryIssues.filter { key, _ in state.outbox.contains(where: { $0.id == key }) }
+        let pendingIDs = Set(state.outbox.map(\.id))
+        state.deliveryRetryState = deliveryIssues.filter { pendingIDs.contains($0.key) }
         try vault.write(state, key: identity.storage)
         BackgroundCalls.save(self)
     }
@@ -550,6 +551,10 @@ final class ChatStore: ObservableObject {
               !room.isGroup,
               let peer = room.members.first(where: { $0.id != myID }) else {
             error = "Звонок доступен только в подключённом личном чате"
+            return
+        }
+        if state.contacts.contains(where: { $0.id == peer.id && $0.isBot == true }) {
+            error = "Боты этой версии поддерживают текстовые команды, без звонков"
             return
         }
         CallManager.shared.startCall(peer: peer, name: room.title)
@@ -1777,6 +1782,7 @@ final class ChatStore: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func setLock(_ enabled: Bool) async {
+        if !enabled && activeProfile?.isPrivateSpace == true { error = "В Private Space защита входа обязательна"; return }
         if enabled {
             let context = LAContext()
             do {

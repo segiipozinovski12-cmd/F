@@ -95,9 +95,10 @@ final class APIClient {
 
     func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true, moderationToken: String? = nil) async throws -> T {
         guard callToken == nil else { throw MessengerError.invalid("Фоновое разрешение доступно только для звонков") }
+        let attemptedToken = token
         let (data, status) = try await raw(path, method: method, body: body, moderationToken: moderationToken)
         if status == 401 && retry && botToken == nil {
-            try await authenticate()
+            if token == attemptedToken || token == nil { try await authenticate() }
             return try await request(path, method: method, body: body, retry: false, moderationToken: moderationToken)
         }
         guard (200..<300).contains(status) else {
@@ -178,6 +179,7 @@ final class APIClient {
         if token == nil {
             try await authenticate()
         }
+        let attemptedToken = token
 
         var request = URLRequest(url: base.appendingPathComponent("v1/blob"))
         request.httpMethod = "PUT"
@@ -194,7 +196,7 @@ final class APIClient {
         }
 
         if http.statusCode == 401 && retry {
-            try await authenticate()
+            if token == attemptedToken || token == nil { try await authenticate() }
             return try await uploadBlob(ciphertext, retry: false)
         }
 
@@ -211,11 +213,15 @@ final class APIClient {
             throw MessengerError.invalid("Некорректный blob ID")
         }
         if token==nil { try await authenticate() }
+        let attemptedToken = token
         var request=URLRequest(url:base.appendingPathComponent("v1/blob/"+id))
         if let token { request.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization") }
         do { return try await ResumableDownload().download(request,id:id,configuration:session.configuration) }
         catch let error as HTTPFailure {
-            if error.status==401 && retry { try await authenticate(); return try await downloadBlob(id,retry:false) }
+            if error.status==401 && retry {
+                if token == attemptedToken || token == nil { try await authenticate() }
+                return try await downloadBlob(id,retry:false)
+            }
             throw error
         }
     }
@@ -224,6 +230,7 @@ final class APIClient {
         if token == nil {
             try await authenticate()
         }
+        let attemptedToken = token
 
         var request = URLRequest(url: base.appendingPathComponent("v1/blob/\(id)"))
         request.httpMethod = "DELETE"
@@ -238,7 +245,7 @@ final class APIClient {
         }
 
         if http.statusCode == 401 && retry {
-            try await authenticate()
+            if token == attemptedToken || token == nil { try await authenticate() }
             return try await deleteBlob(id, retry: false)
         }
 
