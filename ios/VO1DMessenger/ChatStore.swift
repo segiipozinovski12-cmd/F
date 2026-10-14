@@ -1434,11 +1434,10 @@ final class ChatStore: ObservableObject {
                 }
                 if assigned { try save() }
             }
-            for pending in Array(state.outbox.filter { ($0.notBefore ?? .distantPast) <= Date() }.prefix(24)) {
+            for pending in SmartQueue.ready(state.outbox, issues: deliveryIssues) {
                 if let authorization = pending.authorizationID, extended.revokedDevices[authorization] != nil || extended.deviceLinks.contains(where: { $0.id == authorization && $0.certificate.expiresAt <= Int(Date().timeIntervalSince1970) }) {
                     state.outbox.removeAll { $0.id == pending.id }; try save(); continue
                 }
-                if let issue=deliveryIssues[pending.id], issue.nextAttempt > Date() { continue }
                 do {
                     let envelope = try await prepareSignalDelivery(pending, api: api, identity: identity, generation: currentGeneration)
                     guard currentGeneration == generation, !locked else { return }
@@ -1782,6 +1781,8 @@ final class ChatStore: ObservableObject {
         for i in state.messages.indices where expiredIDs.contains(state.messages[i].id) { state.messages[i].state="expired" }
         state.outbox.removeAll { $0.envelope.expiresAt <= Int(now.timeIntervalSince1970) }
         if var extra=state.extended {
+            extra.privateLinks.removeAll { $0.expiresAt <= Int(now.timeIntervalSince1970) }
+            extra.ownMailboxes.removeAll { $0.address.expiresAt <= Int(now.timeIntervalSince1970) }
             extra.consumedGhosts = extra.consumedGhosts.filter { $0.value > now }
             for index in extra.archives.indices { extra.archives[index].messages.removeAll { ($0.expiresAt ?? .distantFuture) <= now } }
             extra.pendingEvents.removeAll { ($0.event.message?.expiresAt ?? $0.event.at.addingTimeInterval(7*86400))<=now }

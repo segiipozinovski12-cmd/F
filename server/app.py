@@ -350,7 +350,7 @@ class Relay:
                     raise APIError(400, 'Invalid envelope identity')
                 if not now < e['expiresAt'] <= now + RETENTION + 60:
                     raise APIError(400, 'Invalid expiry')
-                b64(e['ephemeralKey'], 32)
+                agreement_key(e['ephemeralKey'])
                 b64(e['salt'], 32)
                 cipher = b64(e['ciphertext'])
                 if not 28 <= len(cipher) <= MAX_ENVELOPE:

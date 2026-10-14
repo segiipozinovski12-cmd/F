@@ -156,7 +156,8 @@ def handle(relay, env, body, ip_hash, error, decode):
                 raise error(400,'Invalid opaque envelope')
             if type(body.get('expiresAt')) is not int or not now<body['expiresAt']<=min(now+7*86400,mailbox_expiry):
                 raise error(400,'Invalid envelope expiry')
-            decode(body['ephemeralKey'],32); decode(body['salt'],32)
+            from app import agreement_key
+            agreement_key(body['ephemeralKey']); decode(body['salt'],32)
             encrypted=decode(body['ciphertext'])
             if len(encrypted) not in (2048+28,8192+28,32768+28,131072+28,524288+28,2097152+28,5242880+28):
                 raise error(400,'Ciphertext must use a supported padding bucket')

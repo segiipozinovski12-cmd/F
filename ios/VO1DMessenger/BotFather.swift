@@ -181,7 +181,9 @@ final class NativeBotWorker {
         }
     }
     func preparePrivateInvite(canContinue: () -> Bool) async throws {
-        guard canContinue(), (state.extended?.privateLinks.count ?? 0) < 32 else { throw MessengerError.invalid("Доступно до 32 ссылок бота") }
+        state.extended?.privateLinks.removeAll { $0.expiresAt <= Int(Date().timeIntervalSince1970) }
+        state.extended?.ownMailboxes.removeAll { $0.address.expiresAt <= Int(Date().timeIntervalSince1970) }
+        guard canContinue(), (state.extended?.privateLinks.count ?? 0) < 32, (state.extended?.ownMailboxes.count ?? 0) < 512 else { throw MessengerError.invalid("Доступно до 32 ссылок и 512 приватных адресов бота") }
         try await maintainPrekeys(canContinue: canContinue)
         let bits = try await api.publicWorkBits()
         let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: nil, bits: bits) }.value
@@ -243,7 +245,10 @@ final class NativeBotWorker {
         try save()
         if !ack.isEmpty { try await api.ack(ack) }
         guard canContinue() else { return }
-        for mailbox in (state.extended?.ownMailboxes ?? []).filter({ $0.registered && $0.address.expiresAt > Int(Date().timeIntervalSince1970) }).prefix(32) {
+        let activeMailboxes = (state.extended?.ownMailboxes ?? []).filter { $0.registered && $0.address.expiresAt > Int(Date().timeIntervalSince1970) }
+        let start = activeMailboxes.isEmpty ? 0 : max(0, state.extended?.privateInboxOffset ?? 0) % activeMailboxes.count
+        for offset in 0..<min(32, activeMailboxes.count) {
+            let position = (start + offset) % activeMailboxes.count, mailbox = activeMailboxes[position]
             let privateInbox = try await api.privateInbox(mailbox)
             guard canContinue() else { return }
             var privateAck: [String] = []
@@ -255,7 +260,7 @@ final class NativeBotWorker {
                 try consume(packet, sender: opened.0, envelopeID: envelope.id)
                 privateAck.append(envelope.id)
             }
-            try save()
+            state.extended?.privateInboxOffset = (position + 1) % activeMailboxes.count; try save()
             if !privateAck.isEmpty { try await api.privateAck(privateAck, mailbox: mailbox) }
             guard canContinue() else { return }
         }
@@ -293,10 +298,22 @@ final class NativeBotWorker {
         state = next
     }
     private func drain(canContinue: () -> Bool) async throws {
-        for pending in state.outbox.prefix(8) {
+        state.outbox.removeAll { $0.envelope.expiresAt <= Int(Date().timeIntervalSince1970) }
+        let ids = Set(state.outbox.map(\.id))
+        state.deliveryRetryState = (state.deliveryRetryState ?? [:]).filter { ids.contains($0.key) }
+        try save()
+        for pending in SmartQueue.ready(state.outbox, issues: state.deliveryRetryState ?? [:], limit: 8) {
             guard canContinue() else { return }
-            if pending.envelope.expiresAt > Int(Date().timeIntervalSince1970) { try await api.send(pending.envelope) }
+            do { try await api.send(pending.envelope) }
+            catch {
+                guard canContinue() else { return }
+                let attempts = (state.deliveryRetryState?[pending.id]?.attempts ?? 0) + 1
+                let permanent = (error as? HTTPFailure).map { [400,404,409,413].contains($0.status) } ?? false
+                state.deliveryRetryState?[pending.id] = DeliveryIssue(id: pending.id, detail: error.localizedDescription, attempts: attempts, nextAttempt: permanent ? .distantFuture : Date().addingTimeInterval(min(300, pow(2, Double(min(8, attempts))))))
+                try save(); continue
+            }
             guard canContinue() else { return }
+            state.deliveryRetryState?[pending.id] = nil
             state.outbox.removeAll { $0.id == pending.id }; try save()
         }
     }

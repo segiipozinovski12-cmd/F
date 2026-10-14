@@ -192,4 +192,18 @@ final class NextSecurityTests: XCTestCase {
             XCTAssertThrowsError(try Crypto.openPayload(changed, identity: recipient, sender: sender.card))
         }
     }
+    func testStoppedQueueHeadCannotStarveEligibleRecipients() throws {
+        let now = Date(), keys = try LocalIdentity.create(), peer = try LocalIdentity.create()
+        var pending: [PendingDelivery] = [], issues: [String: DeliveryIssue] = [:]
+        for index in 0..<30 {
+            let item = PendingDelivery(envelope: try Crypto.sealPayload(Data("item".utf8), from: keys, to: peer.card))
+            pending.append(item)
+            if index < 24 { issues[item.id] = DeliveryIssue(id: item.id, detail: "stopped", attempts: 3, nextAttempt: .distantFuture) }
+        }
+        let restored = try Wire.decoder.decode([String: DeliveryIssue].self, from: Wire.encoder.encode(issues))
+        XCTAssertEqual(SmartQueue.ready(pending, issues: restored, now: now, limit: 4).map(\.id), Array(pending[24..<28]).map(\.id))
+        pending[24].notBefore = now.addingTimeInterval(60)
+        pending[25].envelope.expiresAt = Int(now.timeIntervalSince1970) - 1
+        XCTAssertEqual(SmartQueue.ready(pending, issues: restored, now: now).map(\.id), Array(pending[26..<30]).map(\.id))
+    }
 }

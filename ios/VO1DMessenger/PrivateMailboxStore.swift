@@ -13,6 +13,7 @@ extension ChatStore {
             }
             var ready = mailbox; ready.registered = true; return ready
         }
+        guard extended.ownMailboxes.count < 512 else { throw MessengerError.invalid("Достигнут лимит приватных адресов; отзови неиспользуемые") }
         let bits = try await api.publicWorkBits()
         let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: peerID,roomID:roomID,bits:bits) }.value
         guard expected == generation else { throw CancellationError() }
@@ -68,7 +69,10 @@ extension ChatStore {
     }
     func collectPrivateInbox(api: APIClient, identity: LocalIdentity, generation expected: Int) async throws {
         let active = extended.ownMailboxes.filter { $0.registered && $0.address.expiresAt > Int(Date().timeIntervalSince1970) }
-        for mailbox in active {
+        guard !active.isEmpty else { return }
+        let start = max(0, extended.privateInboxOffset ?? 0) % active.count
+        for offset in 0..<min(32, active.count) {
+            let position = (start + offset) % active.count, mailbox = active[position]
             let envelopes = try await api.privateInbox(mailbox)
             guard expected == generation else { throw CancellationError() }
             var ack: [String] = []
@@ -95,6 +99,7 @@ extension ChatStore {
                 state.processed.append(envelope.id); ack.append(envelope.id)
             }
             // Commit ratchet advancement and content together, then delete relay copies.
+            var latest = extended; latest.privateInboxOffset = (position + 1) % active.count; state.extended = latest
             try save()
             if !ack.isEmpty { try await api.privateAck(ack, mailbox: mailbox) }
         }

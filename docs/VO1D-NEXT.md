@@ -35,7 +35,7 @@ The branch retains existing conversations, Tor/strict SOCKS routes, private mail
 
 The first published native implementation is commit `8e7fff9208584ab9d90b1bbc9cbb3844723fdfcd`; [Actions run 38447488565](https://github.com/segiipozinovski12-cmd/F/actions/runs/38447488565). Server and both complete native jobs passed: Simulator Debug, device Debug, XCTest, unsigned device Release and packaging on macOS 15 and 26. Later source changes require their own CI result; do not attribute them to this earlier commit.
 
-Locally, the expanded server suite passed **104 tests**, including first-claim races, MFA/replay/roles, independent appeals, concurrent assignment, cursor pagination, private-link retry resurrection, bot ownership/token revocation, parser mutation and live socket revocation. The setup suite has ten tests; eight passed on Windows and two POSIX framework link/executable-mode cases run on macOS/Linux. Existing server tests close the direct SQLite connection correctly instead of leaking a Windows file handle.
+Locally, the expanded server suite passed **106 tests**, including first-claim races, MFA/replay/roles, independent appeals, concurrent assignment, cursor pagination, private-link retry resurrection, signed/opaque non-contributory key rejection, bot ownership/token revocation, parser mutation and live socket revocation. The setup suite has ten tests; eight passed on Windows and two POSIX framework link/executable-mode cases run on macOS/Linux. Existing server tests close the direct SQLite connection correctly instead of leaking a Windows file handle.
 
 The final local report load run used 100 distinct authenticated identities and eight concurrent WSGI requests: 100 stored reports, zero failures, zero chat envelopes; elapsed 1.285 s, median 37.246 ms, p95 490.656 ms. This includes JSON/signature/key validation and local SQLite, excludes fixture creation, and excludes real HTTP/TLS, Tor, APNs, devices and production traffic. It is a regression probe, not a throughput/SLA claim.
 
@@ -54,6 +54,8 @@ python3 scripts/generate_project.py --project-only
 Use the full native preparation/build/test instructions in [IPHONE-BUILD.md](IPHONE-BUILD.md) on macOS. The final work report records later checks and exact commit IDs.
 
 ## Remaining P0–P4 work
+
+The follow-up also prevents stopped deliveries at the queue head from starving later eligible messages, persists bounded bot retry state, and rotates polling across up to 32 private mailboxes per synchronization with a persisted cursor. Expired addresses/links are pruned; local address creation is bounded. Low-order X25519 public keys are rejected on normal and private envelope submission without changing valid envelope encoding. These are tested implementation changes; they do not complete the external checks below.
 
 P0: independently review the custom outer/private/report envelopes and protocol composition; exercise power-loss, locked Keychain, full disk, Tor bootstrap/bridge failures, DNS/packet captures and two-device key recovery. Evidence uses the existing static-recipient seal and does not gain Signal forward secrecy. Do not deploy without that tradeoff being reviewed and communicated.
 

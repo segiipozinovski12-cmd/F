@@ -119,6 +119,7 @@ struct ExtendedState: Codable {
     var archives: [HistoryArchive] = []
     var signal: SignalSnapshot? = nil
     var ownMailboxes: [LocalMailbox] = []
+    var privateInboxOffset: Int? = nil
     var peerMailboxes: [String: MailboxAddress] = [:]
     var invitationBundles: [String: SignalBundle] = [:]
     var privateInvite: Invite? = nil
@@ -152,7 +153,7 @@ struct ExtendedState: Codable {
         case issuedGroupInvites, pendingGroupInvites, acceptedGroupInvites
         case signal
         case archives, privateBlobDeletes
-        case ownMailboxes, peerMailboxes, invitationBundles, privateInvite
+        case ownMailboxes, privateInboxOffset, peerMailboxes, invitationBundles, privateInvite
         case privateInviteLink, privateLinks, consumedGhosts
         case lastOpenedAt, privatePollVotes, privatePollSelections, privacy, folders, bookmarks, notes, aliases, favorites, hiddenRooms, trustedIDs, pendingEvents, declinedRooms, reminders, snippets, roomRetention, roomFontSize, receiptExceptions, protectedMessages, ocrText, roomNotes
     }
@@ -169,6 +170,7 @@ struct ExtendedState: Codable {
         privateBlobDeletes=try container.decodeIfPresent([String: OwnedPrivateBlob].self,forKey:.privateBlobDeletes) ?? [:]
         archives=try container.decodeIfPresent([HistoryArchive].self,forKey:.archives) ?? []
         ownMailboxes=try container.decodeIfPresent([LocalMailbox].self,forKey:.ownMailboxes) ?? []
+        privateInboxOffset=try container.decodeIfPresent(Int.self,forKey:.privateInboxOffset)
         peerMailboxes=try container.decodeIfPresent([String: MailboxAddress].self,forKey:.peerMailboxes) ?? [:]
         invitationBundles=try container.decodeIfPresent([String: SignalBundle].self,forKey:.invitationBundles) ?? [:]
         privateInvite=try container.decodeIfPresent(Invite.self,forKey:.privateInvite)

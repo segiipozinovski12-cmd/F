@@ -38,7 +38,7 @@ class MailboxTests(unittest.TestCase):
     def envelope(self,box):
         import uuid
         b64=lambda b:base64.b64encode(b).decode()
-        return dict(id=str(uuid.uuid4()),mailbox=box['id'],ephemeralKey=b64(bytes(32)),salt=b64(bytes(32)),
+        return dict(id=str(uuid.uuid4()),mailbox=box['id'],ephemeralKey=b64(bytes([9]) + bytes(31)),salt=b64(bytes(32)),
                     expiresAt=int(time.time())+3600,ciphertext=b64(bytes(2076)))
 
     def test_deleted_address_cannot_be_recreated_by_late_retry(self):
@@ -131,3 +131,9 @@ class MailboxTests(unittest.TestCase):
         self.assertEqual(self.call(box, 'invites', 'POST', bodies[0])[0], 200)
         self.assertEqual(self.request('/v2/private-invites/'+tokens[0])[0], 404)
         self.assertEqual(self.request('/v2/private-invites/'+tokens[1])[0], 200)
+
+    def test_non_contributory_opaque_key_rejected_without_insertion(self):
+        box = self.mailbox(); envelope = self.envelope(box)
+        envelope['ephemeralKey'] = base64.b64encode(bytes(32)).decode()
+        self.assertEqual(self.call(box, 'envelopes', 'POST', envelope, 'write')[0], 400)
+        self.assertEqual(self.call(box, 'inbox')[1]['envelopes'], [])
