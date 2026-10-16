@@ -409,7 +409,7 @@ struct ComposeView: View {
                                 Text(
                                     isChannel
                                         ? "Канал можно создать пустым и добавить участников позже."
-                                        : (isMulti ? "Для группы добавь хотя бы один обычный контакт." : "Сначала добавь человека по VO1D ID или @username.")
+                                        : (isMulti ? "Группу можно создать одному и пригласить участников позже." : "Сначала добавь человека по VO1D ID или @username.")
                                 )
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.secondary)
@@ -503,14 +503,13 @@ struct ComposeView: View {
                             .buttonStyle(PrimaryButton())
                             .disabled(
                                 creating ||
-                                title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                                (!isChannel && selected.isEmpty)
+                                title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             )
 
                             Text(
                                 isChannel
                                     ? "В канале писать могут только админы. Участников можно добавить позже."
-                                    : "VO1D Bot · XROSB не добавляется в группы."
+                                    : "Группу можно создать без приглашений. В строгом режиме участники должны сначала обменяться приватными QR; приглашение нужно принять."
                             )
                             .font(.caption2)
                             .foregroundStyle(Theme.secondary)
