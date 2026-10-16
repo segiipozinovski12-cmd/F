@@ -145,6 +145,7 @@ struct ChatEvent: Codable {
 }
 
 struct Envelope: Codable, Identifiable {
+    var nearbyOnly: Bool? = nil
     var id: String
     var sender: String
     var recipient: String
@@ -162,6 +163,7 @@ struct Envelope: Codable, Identifiable {
 }
 
 struct PendingDelivery: Codable, Identifiable {
+    var storyID: String? = nil
     var authorizationID: String? = nil
     var notBefore: Date? = nil
     var envelope: Envelope

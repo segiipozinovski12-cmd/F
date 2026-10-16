@@ -156,7 +156,12 @@ final class NearbyTransport: ObservableObject {
     }
     func flush() throws {
         guard let store, let identity = store.identity, store.sessionUnlocked, !store.locked else { return }
-        for pending in SmartQueue.ready(store.state.outbox, issues: store.deliveryIssues, limit: 12) {
+        var sent = 0
+        for pending in store.state.outbox {
+            guard sent < 12 else { break }
+            guard pending.envelope.expiresAt > Int(Date().timeIntervalSince1970),
+                  (pending.notBefore ?? .distantPast) <= Date(),
+                  store.deliveryIssues[pending.id]?.nextAttempt != .distantFuture else { continue }
             guard let peer = authenticated.first(where: { $0.value == pending.envelope.recipient })?.key,
                   let target = store.state.contacts.first(where: { $0.id == pending.envelope.recipient && !$0.blocked && $0.verified }),
                   pending.envelope.opaque == nil else { continue }
@@ -168,6 +173,9 @@ final class NearbyTransport: ObservableObject {
                 // Signal keys online/private QR. No weaker fallback is created.
                 guard let result = try? SignalProtocol.encrypt(Wire.encoder.encode(event), to: target.card, identity: identity, state: current, bundle: nil) else { continue }
                 envelope = try Crypto.sealPayload(result.1, from: identity, to: target.card, expiry: event.contentExpiry, id: envelope.id)
+                // A locally addressed envelope must never accidentally leave
+                // through the account relay on the next synchronization pass.
+                envelope.nearbyOnly = true
                 let previous = store.state
                 var local = store.extended; local.signal = result.0; store.state.extended = local
                 guard let index = store.state.outbox.firstIndex(where: { $0.id == pending.id }) else { continue }
@@ -175,6 +183,7 @@ final class NearbyTransport: ObservableObject {
                 do { try store.save() } catch { store.state = previous; throw error }
             }
             try send(["kind": "envelope", "body": Wire.encoder.encode(envelope).base64EncodedString()], to: peer)
+            sent += 1
         }
     }
 }

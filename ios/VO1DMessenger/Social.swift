@@ -53,7 +53,7 @@ extension ChatEvent {
 extension ChatStore {
     var social: SocialState { state.social ?? SocialState() }
     var ownSharedProfile: SharedProfile {
-        var profile = SharedProfile(name: state.nickname, bio: state.bio ?? "", avatar: state.profileAvatar.flatMap { SocialImage.jpeg($0, maxSide: 384, limit: 160_000) }, updatedAt: Date(), status: hasPremium ? social.status : "")
+        var profile = SharedProfile(name: state.nickname, bio: state.bio ?? "", avatar: state.profileAvatar.flatMap { $0.count <= 160_000 ? $0 : SocialImage.jpeg($0, maxSide: 384, limit: 160_000) }, updatedAt: Date(), status: hasPremium ? social.status : "")
         profile.premium = hasPremium ? social.premium : nil
         profile.collectibles = Array(social.collectibles.filter { (try? $0.validate(owner: myID)) != nil }.prefix(12))
         return profile
@@ -113,6 +113,7 @@ extension ChatStore {
         guard story.author == myID else { return }
         let previous = state
         do {
+            state.outbox.removeAll { $0.storyID == story.id }
             for contact in state.contacts where (social.storyAudience[story.id] ?? []).contains(contact.id) && !contact.blocked {
                 let room = try socialRoom(contact)
                 var event = ChatEvent(kind: "storyDelete", room: room, target: story.id, senderName: state.nickname)
@@ -163,6 +164,7 @@ extension ChatStore {
     }
     func expireSocial() {
         guard var value = state.social else { return }
+        guard value.stories.contains(where: { $0.expiresAt <= Date() }) || value.deletedStories.values.contains(where: { $0 <= Date() }) else { return }
         value.stories.removeAll { $0.expiresAt <= Date() }
         let live = Set(value.stories.map(\.id)); value.storyAudience = value.storyAudience.filter { live.contains($0.key) }
         value.deletedStories = value.deletedStories.filter { $0.value > Date() }
@@ -171,7 +173,13 @@ extension ChatStore {
     func restoreDiscovery(using client: APIClient) async throws {
         let expected = generation
         struct Discovery: Decodable { var code: String?; var username: String? }
-        let discovery: Discovery = try await client.request("v1/discovery")
+        let discovery: Discovery
+        do { discovery = try await client.request("v1/discovery") }
+        catch let failure as HTTPFailure where failure.status == 404 {
+            // Let the previous v2 relay keep serving chats during a rolling
+            // upgrade; only its existing username API is used in this case.
+            discovery = Discovery(code: nil, username: nil)
+        }
         guard expected == generation else { throw CancellationError() }
         if let username = discovery.username { state.username = username }
         else if let username = state.username {

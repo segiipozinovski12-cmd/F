@@ -11,4 +11,8 @@ chown relay:relay "$DB_DIR"
 export PORT
 export VO1D_DB
 
+# Explicit one-time user-requested production rollout. The helper validates the
+# exact repo/branch/domain and persistent mount, then backs up before resetting.
+gosu relay python reset_rollout.py
+
 exec gosu relay python realtime.py

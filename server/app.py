@@ -182,13 +182,20 @@ class Relay:
         import hmac
         ip_hash = hmac.new(self.rate_secret,network_privacy.client_address(env).encode(),hashlib.sha256).hexdigest()
         if method == 'GET' and path == '/v2/capabilities':
-            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True, 'socialEvents': 1}
+            with self.db() as db:
+                epoch = db.execute("SELECT value FROM relay_meta WHERE key='account_epoch'").fetchone()
+            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True, 'socialEvents': 1, 'accountEpoch': epoch[0] if epoch else None}
         if method == 'POST' and path == '/v2/blobs/ticket':
             return private_blobs.ticket(self,body,ip_hash,APIError)
         if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
             return mailboxes.handle(self,env,body,ip_hash,APIError,b64)
         if method == 'GET' and path == '/health':
-            return {'status': 'ok', 'protocol': 2}
+            revision = os.environ.get('RAILWAY_GIT_COMMIT_SHA', '')
+            with self.db() as db:
+                reset = db.execute("SELECT value FROM relay_meta WHERE key='completed_reset_rollout'").fetchone()
+                pending = db.execute("SELECT 1 FROM relay_meta WHERE key='bootstrap_first_session'").fetchone()
+            return {'status': 'ok', 'protocol': 2, 'revision': revision[:40] if re.fullmatch('[a-f0-9]{40}', revision) else None,
+                    'accountReset': reset[0] if reset else None, 'adminBootstrapPending': bool(pending)}
         if path in ('/v1/register', '/v1/challenge', '/v1/session'):
             self.rate('auth:' + ip_hash, 90)
         if path == '/v1/register':
@@ -233,6 +240,10 @@ class Relay:
                     return result
             if method == 'POST' and path == '/v1/register':
                 card = verify_card(body)
+                epoch = db.execute("SELECT value FROM relay_meta WHERE key='account_epoch'").fetchone()
+                known = db.execute('SELECT 1 FROM identities WHERE id=?', (card['id'],)).fetchone()
+                if epoch and not known and (body.get('accountEpoch') != epoch[0] or body.get('enroll') is not True):
+                    raise APIError(410, 'Server accounts were reset. Explicit registration in the updated app is required.')
                 admin = moderation.owner(db)
                 if admin and admin['owner'] == card['id']:
                     pinned = json.loads(admin['card'])

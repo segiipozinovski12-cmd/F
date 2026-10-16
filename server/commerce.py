@@ -93,3 +93,10 @@ def handle(db, user, env, body, error):
     db.execute('INSERT INTO commerce_receipts VALUES (?,?,?)', (receipt['id'], user, encoded))
     db.execute('UPDATE commerce_vouchers SET used_by=?,receipt=? WHERE digest=?', (user, encoded, digest))
     return receipt
+
+
+def erase(db, user):
+    # Preserve only the spent-code tombstone, without a deleted account ID or
+    # signed receipt. Otherwise old paid codes could become spendable again.
+    db.execute('DELETE FROM commerce_receipts WHERE owner=?', (user,))
+    db.execute("UPDATE commerce_vouchers SET owner=NULL,used_by='deleted',receipt=NULL WHERE owner=? OR used_by=?", (user, user))

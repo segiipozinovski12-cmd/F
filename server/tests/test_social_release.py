@@ -51,23 +51,48 @@ class SocialReleaseTests(unittest.TestCase):
                 results = list(pool.map(lambda token: self.request('/v2/commerce/redeem', 'POST', {'code': code}, token), [self.a, self.b]))
             self.assertEqual(sorted(r[0] for r in results), [200, 409])
 
+    def test_account_deletion_scrubs_commerce_but_keeps_spent_voucher_unusable(self):
+        with patch.dict(os.environ, {'VO1D_COMMERCE_SIGNING_KEY': base64.b64encode(os.urandom(32)).decode()}):
+            with self.relay.db() as db: code = commerce.issue(db, 'premium')
+            self.assertEqual(self.request('/v2/commerce/redeem', 'POST', {'code': code}, self.a)[0], 200)
+            self.assertEqual(self.request('/v1/account', 'DELETE', token=self.a)[0], 200)
+            with self.relay.db() as db:
+                row = db.execute('SELECT * FROM commerce_vouchers').fetchone()
+                self.assertIsNone(row['owner']); self.assertEqual(row['used_by'], 'deleted'); self.assertIsNone(row['receipt'])
+                self.assertEqual(db.execute('SELECT count(*) FROM commerce_receipts').fetchone()[0], 0)
+            self.assertEqual(self.request('/v2/commerce/redeem', 'POST', {'code': code}, self.b)[0], 409)
+
     def test_offline_reset_preserves_backup_and_first_verified_login_wins(self):
         old_path = Path(self.relay.path)
         backup = old_path.parent / 'backup'
-        reset(old_path, backup)
+        reset(old_path, backup, rollout_id="test-reset")
         self.relay = Relay(old_path)
         self.assertEqual(self.request('/v1/discovery', token=self.a)[0], 401)
         with self.relay.db() as db:
             self.assertEqual(db.execute('SELECT count(*) FROM identities').fetchone()[0], 0)
         with __import__('sqlite3').connect(backup/'relay.sqlite3') as db:
             self.assertEqual(db.execute('SELECT count(*) FROM identities').fetchone()[0], 2)
-        # Registering a card alone cannot claim administrator authority.
-        self.request('/v1/register', 'POST', self.alice_card)
+        health = self.request('/health')[1]
+        self.assertEqual(health['accountReset'], 'test-reset')
+        self.assertTrue(health['adminBootstrapPending'])
+        # Old clients cannot silently recreate deleted accounts or win admin.
+        self.assertEqual(self.request('/v1/register', 'POST', self.alice_card)[0], 410)
+        epoch = self.request('/v2/capabilities')[1]['accountEpoch']
+        for card in (self.alice_card, self.bob_card):
+            self.assertEqual(self.request('/v1/register', 'POST', dict(card, accountEpoch=epoch, enroll=True))[0], 200)
+        # Registering a public card still cannot claim administrator authority.
         with self.relay.db() as db: self.assertEqual(db.execute('SELECT count(*) FROM permanent_admin').fetchone()[0], 0)
         token = self.login(self.bob, self.bob_card)
         self.assertEqual(self.request('/v1/discovery', token=token)[1]['username'], 'vo1d')
+        self.assertFalse(self.request('/health')[1]['adminBootstrapPending'])
         token2 = self.login(self.alice, self.alice_card)
         self.assertEqual(self.request('/v1/username', 'POST', {'username': 'vo1d'}, token2)[0], 409)
+
+    def test_reset_rollout_refuses_other_services_and_missing_persistent_volume(self):
+        import reset_rollout
+        with patch.dict(os.environ, {}, clear=True), patch.object(reset_rollout, 'reset') as operation:
+            self.assertFalse(reset_rollout.apply_requested_reset())
+            operation.assert_not_called()
 
 
 if __name__ == '__main__': unittest.main()

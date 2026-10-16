@@ -31,14 +31,16 @@ final class APIClient {
     private let botExecutor: String?
     private let botInstance: String?
     private var authenticationTask: Task<Void, Error>?
+    private let allowEnrollment: Bool
 
-    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil, botToken: String? = nil, botExecutor: String? = nil, botInstance: String? = nil) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil, botToken: String? = nil, botExecutor: String? = nil, botInstance: String? = nil, allowEnrollment: Bool = false) throws {
         base = try Self.validateURL(server,privacy:privacy)
         self.privacy = privacy
         self.identity = identity
         self.authenticationCard = authenticationCard
         self.callToken = callToken
         self.botToken = botToken
+        self.allowEnrollment = allowEnrollment
         self.botExecutor = botExecutor; self.botInstance = botInstance
         let config = try TransportConfiguration.make(privacy)
         session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
@@ -131,7 +133,15 @@ final class APIClient {
         let card: ContactCard
         if let authenticationCard { card = authenticationCard }
         else { card = try identity.card }
-        let _: OK = try await request("v1/register", method: "POST", body: Wire.encoder.encode(card), retry: false)
+        struct Capabilities: Decodable { var accountEpoch: String? }
+        let capabilities: Capabilities = try await request("v2/capabilities", retry: false)
+        struct Registration: Encodable {
+            var id: String; var signingKey: String; var agreementKey: String; var binding: String
+            var accountEpoch: String?; var enroll: Bool
+        }
+        let registration = Registration(id: card.id, signingKey: card.signingKey, agreementKey: card.agreementKey, binding: card.binding,
+                                        accountEpoch: capabilities.accountEpoch, enroll: allowEnrollment)
+        let _: OK = try await request("v1/register", method: "POST", body: Wire.encoder.encode(registration), retry: false)
         struct Challenge: Decodable { var nonce: String }
         let challenge: Challenge = try await request("v1/challenge", method: "POST", body: Wire.encoder.encode(["id": card.id]), retry: false)
         let bytes = Data("VO1D-AUTH-1\n\(card.id)\n\(challenge.nonce)".utf8)
@@ -286,6 +296,7 @@ final class APIClient {
     }
 
     func send(_ envelope: Envelope) async throws {
+        guard envelope.nearbyOnly != true else { throw MessengerError.invalid("Этот конверт предназначен только для устройства рядом") }
         guard envelope.deferredEvent == nil else { throw MessengerError.invalid("Локальное сообщение ещё не зашифровано протоколом v2") }
         if let opaque = envelope.opaque { try await sendOpaque(opaque); return }
         guard !envelope.ciphertext.isEmpty else { throw MessengerError.invalid("Пустой шифротекст") }

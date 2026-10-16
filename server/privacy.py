@@ -30,6 +30,8 @@ def erase(db, identity):
     import prekeys
     import moderation
     import bots
+    import commerce
+    commerce.erase(db, identity)
     bots.erase(db, identity)
     moderation.erase(db, identity)
     prekeys.erase(db, identity)
@@ -40,7 +42,6 @@ def erase(db, identity):
                           ('usernames','identity'),('sessions','identity'),('challenges','identity'),
                           ('invites','owner'),('push_tokens','identity'),('blobs','owner')]:
         db.execute(f'DELETE FROM {table} WHERE {column}=?', (identity,))
-    db.execute('DELETE FROM commerce_receipts WHERE owner=?', (identity,))
     for table in ('trusted','blocks'):
         db.execute(f'DELETE FROM {table} WHERE owner=? OR peer=?', (identity,identity))
 

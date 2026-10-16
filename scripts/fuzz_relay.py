@@ -19,14 +19,14 @@ REPLAY = '--replay' in sys.argv
 if not REPLAY:
     import atheris
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'server'))
-with nullcontext() if REPLAY else atheris.instrument_imports(include=['app','bots','moderation','prekeys','mailboxes','privacy','private_blobs','network_privacy','call_authority']):
+with nullcontext() if REPLAY else atheris.instrument_imports(include=['app','bots','moderation','prekeys','mailboxes','privacy','private_blobs','network_privacy','call_authority','commerce']):
     from app import Relay, card_bytes
     import moderation
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-PATHS = ['/v2/reports','/v2/appeals','/v2/bots','/v2/prekeys','/v2/moderation/decision','/v2/moderation/assign','/v2/moderation/appeal-decision','/v2/moderation/mfa/recover','/v1/envelopes','/v2/mailboxes']
+PATHS = ['/v2/reports','/v2/appeals','/v2/bots','/v2/prekeys','/v2/moderation/decision','/v2/moderation/assign','/v2/moderation/appeal-decision','/v2/moderation/mfa/recover','/v1/envelopes','/v2/mailboxes','/v2/commerce/redeem']
 
 class Harness:
     def __init__(self):
@@ -64,6 +64,7 @@ class Harness:
 
 def main():
     os.environ['VO1D_MODERATION_KEY'] = base64.b64encode(os.urandom(32)).decode()
+    os.environ['VO1D_COMMERCE_SIGNING_KEY'] = base64.b64encode(os.urandom(32)).decode()
     harness = Harness()
     if REPLAY:
         for seed in harness.seeds(): harness.run(seed)

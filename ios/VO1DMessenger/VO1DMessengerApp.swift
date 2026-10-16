@@ -80,6 +80,16 @@ struct RootView: View {
                     AccessKeyGateView()
                 } else if store.locked {
                     BiometricGateView()
+                } else if store.serverResetRequired {
+                    VStack(spacing: 22) {
+                        BrandMark(size: 90)
+                        Text("Новый старт VO1D").font(.largeTitle.bold())
+                        Text("Серверные аккаунты были сброшены. Локальная зашифрованная история сохранена на этом iPhone. Для входа зарегистрируй личность заново.")
+                            .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        Button(store.busy ? "Регистрируем…" : "Зарегистрироваться заново") {
+                            Task { await store.configure(name: store.state.nickname, server: store.state.server) }
+                        }.buttonStyle(PrimaryButton()).disabled(store.busy)
+                    }.padding(28)
                 } else {
                     MainShell()
                 }

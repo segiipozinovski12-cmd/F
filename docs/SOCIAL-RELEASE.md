@@ -101,27 +101,43 @@ remain work. A blockchain transaction is not proof of communication anonymity.
 Configured Tor/SOCKS routing remains the app's transport; external browser checkout
 would not inherit it and therefore is not presented as anonymous in this update.
 
-## Operator reset — not executed against production
+## Requested production reset
 
-The available environment has source/GitHub access, not a running Railway database
-or deployment credentials. `scripts/reset_accounts.py` prepares the requested reset
-without exposing a remote unauthenticated wipe endpoint. In a host checkout, stop
-the relay first, then run:
+The task explicitly requested deletion of all server accounts and first-login
+administrator assignment. `server/reset_rollout.py` is a one-time startup rollout,
+not an HTTP wipe endpoint. It only runs for the exact repository owner/name, branch
+`codex/vo1d-next`, production domain `f-production-bdfe.up.railway.app`, persistent
+Railway volume mounted at `/data`, and existing `/data/relay.sqlite3`. Missing or
+mismatched platform metadata skips the reset. A busy checkpoint aborts without
+replacing the database. `VO1D_DISABLE_REQUESTED_RESET=1` disables the rollout.
+
+The helper verifies a private SQLite backup, moves encrypted blobs into that
+backup on the same volume, replaces the database, and records completion atomically
+in the replacement DB. The persistent backup is at
+`/data/reset-backup-vo1d-user-request-20261016-8f5ef8e8`. A recorded rollout is never
+repeated on ordinary redeploy. Remove its entrypoint invocation after confirming
+completion; disable it before restoring a pre-reset backup.
+
+Old account tokens, usernames, moderator ownership and call authorities are erased.
+Old clients cannot silently re-register deleted identities: an unknown account after
+reset requires the current public epoch and an explicit enrollment marker from the
+new client. The app shows a re-registration screen while preserving encrypted local
+history. The first subsequent **signature-authenticated session**, not a public card
+registration, atomically receives permanent `@vo1d` ownership. Set up MFA afterward.
+No synthetic production account is created by the rollout or its verification.
+
+Public `/health` reports the deployed revision, completed reset ID and whether first
+administrator enrollment is pending. These values permit verification without
+publishing user IDs or accessing messages. They do not reveal the backup contents.
+
+For a separately operated offline reset, stop the relay and run:
 
 ```bash
 python3 scripts/reset_accounts.py --db /data/relay.sqlite3
 python3 scripts/reset_accounts.py --db /data/relay.sqlite3 --blob-dir /data/blobs --backup /data/reset-backup-UNIQUE --server-stopped --confirm DELETE-ALL-ACCOUNTS
 ```
 
-The first command is a read-only preview. The second verifies a private SQLite backup,
-moves blobs into that backup, replaces the database and clears old account/session/
-username/moderator records. Requires Python 3.12 and a same-filesystem blob backup.
-The first subsequent **signature-authenticated session**, not a bare public card
-registration, atomically receives permanent `@vo1d` ownership. Other first-login
-contenders cannot claim the same role. Control registration/network exposure until
-the intended owner has claimed it, then configure MFA. Old device vaults and backups
-are not remotely erased; reset/re-register the clients as needed. Retain the backup
-for rollback and dispose of it separately when appropriate.
-
-Railway must deploy this branch from `/server` with persistent `/data`. Merely
-building the iPhone client neither upgrades that server nor resets accounts.
+The first command is a read-only preview. Requires Python 3.12. Device vaults and
+host backups are not remotely erased; local history can be deleted separately.
+Retain the private backup for rollback and dispose of it separately when appropriate.
+Railway must keep persistent `/data`; building Xcode does not itself reset a server.

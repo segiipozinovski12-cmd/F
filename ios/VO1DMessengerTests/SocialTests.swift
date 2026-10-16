@@ -82,3 +82,38 @@ extension SocialTests {
         XCTAssertFalse(key.isValidSignature(ack, for: NearbyProof.ack(UUID().uuidString, sender: "sender", recipient: "recipient")))
     }
 }
+
+
+extension SocialTests {
+    @MainActor func testDeletingUnsentStoryRemovesQueuedCopiesAndQueuesRetraction() throws {
+        let store = ChatStore(), saved = store.state
+        defer { store.state = saved; try? store.save() }
+        let peer = try LocalIdentity.create().card
+        store.state = VaultState(); store.state.contacts = [Contact(card: peer, name: "Bob")]
+        var local = ExtendedState(); local.trustedIDs = [peer.id]; store.state.extended = local
+        try store.publishStory(text: "Ephemeral", image: nil, audience: [peer.id])
+        let story = try XCTUnwrap(store.social.stories.first)
+        XCTAssertTrue(store.state.outbox.contains { $0.storyID == story.id })
+        try store.deleteStory(story)
+        XCTAssertFalse(store.state.outbox.contains { $0.storyID == story.id })
+        XCTAssertTrue(store.social.stories.isEmpty)
+        let bytes = try XCTUnwrap(store.state.outbox.last?.envelope.deferredEvent)
+        XCTAssertEqual(try Wire.decoder.decode(ChatEvent.self, from: bytes).kind, "storyDelete")
+    }
+}
+
+extension SocialTests {
+    @MainActor func testNearbyEnvelopeCannotLeaveThroughAccountRelayOrStarveNetworkQueue() async throws {
+        let alice = try LocalIdentity.create()
+        let api = try APIClient(server: "https://relay.example", identity: alice)
+        defer { api.invalidate() }
+        var envelope = Envelope(id: UUID().uuidString, sender: "sender", recipient: "recipient", ephemeralKey: "", salt: "", expiresAt: Int(Date().timeIntervalSince1970) + 60, ciphertext: "", signature: "")
+        envelope.nearbyOnly = true
+        do { try await api.send(envelope); XCTFail("Nearby data escaped to account API") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("только для устройства рядом")) }
+        let local = PendingDelivery(envelope: envelope, messageID: nil)
+        var remote = envelope; remote.nearbyOnly = nil; remote.id = UUID().uuidString
+        let network = PendingDelivery(envelope: remote, messageID: nil)
+        XCTAssertEqual(SmartQueue.ready(Array(repeating: local, count: 40) + [network], issues: [:], limit: 1).first?.id, network.id)
+    }
+}

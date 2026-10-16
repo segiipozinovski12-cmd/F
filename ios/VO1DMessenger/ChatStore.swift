@@ -14,6 +14,7 @@ final class ChatStore: ObservableObject {
     @Published var locked = false
     @Published var sessionUnlocked = false
     @Published var fatalError: String?
+    @Published var serverResetRequired = false
     @Published var typing: [String: Date] = [:]
     @Published var activeRoomID: String?
     @Published var notificationRoomID: String?
@@ -156,6 +157,7 @@ final class ChatStore: ObservableObject {
             connection = "Подключён"
         } catch {
             guard expected == generation else { return }
+            if (error as? HTTPFailure)?.status == 410 { serverResetRequired = true }
             connection = "Нет связи"
         }
     }
@@ -179,7 +181,7 @@ final class ChatStore: ObservableObject {
         try await prepareNetworkRoute()
         guard expected == generation else { throw CancellationError() }
 
-        let client = try APIClient(server: server, identity: identity, privacy: preferences)
+        let client = try APIClient(server: server, identity: identity, privacy: preferences, allowEnrollment: firstLaunch || serverResetRequired)
 
         do {
             try await client.authenticate()
@@ -219,6 +221,7 @@ final class ChatStore: ObservableObject {
         state.publicCode = publicCode
         try await restoreDiscovery(using: client)
         state.onboarded = true
+        serverResetRequired = false
         if firstLaunch { state.credentialsAcknowledged = false }
         sessionUnlocked = true
         _ = ensureBuiltinBot()
@@ -925,7 +928,7 @@ final class ChatStore: ObservableObject {
     func enqueue(_ event: ChatEvent, room: Room, to recipients: [ContactCard]? = nil, messageID: String? = nil) throws {
         guard let identity else { throw MessengerError.invalid("Нет ключей") }
         let targets = recipients ?? room.members.filter { $0.id != myID }
-        let pending = try targets.map { PendingDelivery(envelope: try sealEvent(event, from: identity, to: $0), messageID: messageID) }
+        let pending = try targets.map { PendingDelivery(storyID: event.story?.id, envelope: try sealEvent(event, from: identity, to: $0), messageID: messageID) }
         state.outbox.append(contentsOf: pending)
     }
     private func validateAttachment(_ attachment: Attachment) throws {
@@ -1451,6 +1454,7 @@ final class ChatStore: ObservableObject {
                 if assigned { try save() }
             }
             for pending in SmartQueue.ready(state.outbox, issues: deliveryIssues) {
+                guard pending.envelope.nearbyOnly != true else { continue }
                 if let authorization = pending.authorizationID, extended.revokedDevices[authorization] != nil || extended.deviceLinks.contains(where: { $0.id == authorization && $0.certificate.expiresAt <= Int(Date().timeIntervalSince1970) }) {
                     state.outbox.removeAll { $0.id == pending.id }; try save(); continue
                 }
@@ -1517,6 +1521,11 @@ final class ChatStore: ObservableObject {
         } catch {
             guard currentGeneration == generation else { return }
             connection = "Нет связи · очередь сохранена"
+            if (error as? HTTPFailure)?.status == 410 {
+                serverResetRequired = true
+                CallManager.shared.disconnect()
+                NearbyTransport.shared.stop()
+            }
             // The visible status keeps transient network failures from producing alert loops.
         }
     }
@@ -1845,6 +1854,7 @@ final class ChatStore: ObservableObject {
     }
     func resetLocalIdentity() throws {
         NearbyTransport.shared.stop()
+        serverResetRequired = false
         CallManager.shared.disconnect()
         try vault?.delete()
         BackgroundCalls.clear()

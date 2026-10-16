@@ -5,6 +5,7 @@ enum SmartQueue {
         // Apply eligibility before limiting: a paused/failed head must not starve
         // independent recipients farther down the durable queue.
         Array(pending.lazy.filter {
+            $0.envelope.nearbyOnly != true &&
             $0.envelope.expiresAt > Int(now.timeIntervalSince1970) &&
             ($0.notBefore ?? .distantPast) <= now &&
             (issues[$0.id]?.nextAttempt ?? .distantPast) <= now
