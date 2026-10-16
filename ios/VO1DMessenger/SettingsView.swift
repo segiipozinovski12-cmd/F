@@ -549,7 +549,9 @@ struct SettingsView: View {
                 width: max(1, image.size.width * scale),
                 height: max(1, image.size.height * scale)
             )
-            let renderer = UIGraphicsImageRenderer(size: target)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let renderer = UIGraphicsImageRenderer(size: target, format: format)
             let rendered = renderer.image { _ in
                 image.draw(in: CGRect(origin: .zero, size: target))
             }
