@@ -186,6 +186,9 @@ final class CallManager: ObservableObject {
     private var callSecrets: CallSecrets?
     private var audioSessionActive = false
     private var socketReady = false
+    // Keep one deliberate outgoing call until the WSS handshake finishes.
+    private var pendingOutgoing: (ContactCard, String)?
+    private var pendingDialTimeout: Task<Void, Never>?
     private var nameResolver: ((String) -> String)?
     private var recordSink: ((CallRecord) -> Void)?
 
@@ -226,6 +229,9 @@ final class CallManager: ObservableObject {
     }
 
     func disconnect() {
+        pendingDialTimeout?.cancel()
+        pendingDialTimeout = nil
+        pendingOutgoing = nil
         pendingConfiguration = nil
         if let current = session {
             provider.reportCall(with: current.id, endedAt: Date(), reason: .failed)
@@ -247,10 +253,21 @@ final class CallManager: ObservableObject {
     func startCall(peer: ContactCard, name: String) {
         guard session == nil, allowedPeer?(peer.id) != false else { return }
         guard socketReady else {
-            transport = "RECONNECTING"
-            connectSocket()
+            pendingOutgoing = (peer, name)
+            transport = "CONNECTING"
+            if socket == nil { connectSocket() }
+            pendingDialTimeout?.cancel()
+            pendingDialTimeout = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(12))
+                guard !Task.isCancelled, let self, !self.socketReady, self.pendingOutgoing != nil else { return }
+                self.pendingOutgoing = nil
+                self.transport = "CALL SERVER UNAVAILABLE"
+            }
             return
         }
+        pendingOutgoing = nil
+        pendingDialTimeout?.cancel()
+        pendingDialTimeout = nil
         guard let identity else { return }
 
         do {
@@ -459,6 +476,12 @@ final class CallManager: ObservableObject {
         if type == "ready" {
             socketReady = true
             transport = "WSS"
+            if let pending = pendingOutgoing, session == nil {
+                pendingOutgoing = nil
+                pendingDialTimeout?.cancel()
+                pendingDialTimeout = nil
+                startCall(peer: pending.0, name: pending.1)
+            }
             if session?.phase == .reconnecting { await sendResume(type:"resume") }
             if let current=session, current.incoming, callKey==nil {
                 await preparePushedMedia(current)
