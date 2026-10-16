@@ -54,11 +54,11 @@ extension ChatStore {
         let result = try SignalProtocol.encrypt(Wire.encoder.encode(event), to: target, identity: identity, state: current, bundle: bundle)
         let envelope: Envelope
         if let route = privateRoute(peerID:target.id,roomID:event.room.id) {
-            let opaque = try PrivateMailboxCrypto.seal(result.1, from: identity, to: target, route: route, id: pending.envelope.id, expiry: event.message?.expiresAt)
+            let opaque = try PrivateMailboxCrypto.seal(result.1, from: identity, to: target, route: route, id: pending.envelope.id, expiry: event.contentExpiry)
             envelope = Envelope(id: opaque.id, sender: try identity.card.id, recipient: target.id, ephemeralKey: "", salt: "", expiresAt: opaque.expiresAt, ciphertext: "", signature: "", opaque: opaque)
         } else {
             guard !preferences.requirePrivateDelivery else { throw MessengerError.invalid("Нужен приватный адрес контакта") }
-            envelope = try Crypto.sealPayload(result.1, from: identity, to: target, expiry: event.message?.expiresAt, id: pending.envelope.id)
+            envelope = try Crypto.sealPayload(result.1, from: identity, to: target, expiry: event.contentExpiry, id: pending.envelope.id)
         }
         let previous = state
         var local = extended; local.signal = result.0; local.invitationBundles[target.id] = nil; state.extended = local
@@ -77,10 +77,8 @@ extension ChatStore {
             try acceptReplyMailbox(event.replyMailbox, sender: sender,roomID:event.room.id)
             return event
         }
-        if extended.signal?.trusted["\(sender.id):1"] != nil {
-            throw MessengerError.invalid("Понижение защиты: контакт уже использует v2")
-        }
-        // Legacy history and incoming migration messages remain readable; no new v1 sends.
-        return try Wire.decoder.decode(ChatEvent.self, from: payload)
+        // Old history remains readable in the encrypted vault. A live packet
+        // must always use Signal, including the first packet from a new contact.
+        throw MessengerError.invalid("Собеседнику нужна версия VO1D с Signal v2; слабый сетевой формат отклонён")
     }
 }

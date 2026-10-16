@@ -5,6 +5,8 @@ struct InboxView: View {
     @State private var search = ""
     @State private var filter = "Все"
     @State private var composing = false
+    @State private var archiveRevealed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var rooms: [Room] {
         store.state.rooms.filter { room in
@@ -53,6 +55,14 @@ struct InboxView: View {
                         statusStrip
                         searchBar
                         filters
+                        StoriesStrip()
+                        if archiveRevealed && filter != "Архив" && store.state.rooms.contains(where: { $0.archived }) {
+                            Button { withAnimation { filter = "Архив" } } label: {
+                                Label("Архив · \(store.state.rooms.filter { $0.archived }.count)", systemImage: "archivebox")
+                                    .frame(maxWidth: .infinity, alignment: .leading).panel()
+                            }.buttonStyle(.plain).transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                        if filter == "Архив" { Button("Вернуться к чатам") { withAnimation { filter = "Все"; archiveRevealed = false } } }
                         if !store.requestRooms.isEmpty {
                             NavigationLink { MessageRequestsView() } label: {
                                 Label("Запросы на переписку · \(store.requestRooms.count)",systemImage:"person.badge.clock").panel()
@@ -144,7 +154,11 @@ struct InboxView: View {
                     }
                     .padding(22)
                 }
-                .refreshable { await store.sync() }
+                .refreshable {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)) { archiveRevealed.toggle() }
+                    await store.sync()
+                }
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: rooms.map(\.id))
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $composing) { ComposeView() }
@@ -213,7 +227,7 @@ struct InboxView: View {
     private var filters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы", "Архив"] + store.extended.folders.map(\.id), id: \.self) { item in
+                ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы"] + store.extended.folders.map(\.id), id: \.self) { item in
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { filter = item }
                     } label: {
@@ -481,6 +495,7 @@ struct ComposeView: View {
                                     title = ""
                                     Haptics.success()
                                     room = created
+                                    Task { await store.sync() }
                                 } catch {
                                     Haptics.warning()
                                     store.error = error.localizedDescription
@@ -504,7 +519,7 @@ struct ComposeView: View {
                             .disabled(
                                 creating ||
                                 title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                                (!isChannel && selected.isEmpty)
+                                selected.count > 15
                             )
 
                             Text(

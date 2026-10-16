@@ -219,6 +219,9 @@ struct ChatView: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
+                        if let room, !room.isGroup, let peer = room.members.first(where: { $0.id != store.myID }), !store.isLocalUtilityRoom(roomID) {
+                            NavigationLink("Профиль собеседника") { ProfilePreviewView(peerID: peer.id) }
+                        }
                         Button("Отправить одноразовый текст · 30 секунд", systemImage: "eye.slash") { ghostConfirm = true }
                             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editing != nil || store.isLocalUtilityRoom(roomID))
                         Button("Фильтр по автору и дате") { filterSheet=true }
@@ -610,7 +613,7 @@ struct ChatView: View {
                             SafeContent.copy(message.text,seconds:store.preferences.clipboardSeconds)
                         }
                     }
-                    Menu("Реакция") { ForEach(["❤️", "👍", "🔥", "😂", "👀"], id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
+                    Menu("Реакция") { ForEach(ReactionCatalog.all, id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
                     if mine && message.call == nil {
                         Button("Редактировать", systemImage: "pencil") { editing = message; reply = nil; text = message.text }
                         Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
@@ -791,6 +794,9 @@ struct ChatView: View {
                 }.font(.system(size: 10)).opacity(0.55).frame(maxWidth: .infinity, alignment: .trailing)
                 if !message.reactions.isEmpty {
                     Text(message.reactions.values.sorted().joined(separator: " ")).font(.subheadline).padding(.horizontal, 8).padding(.vertical, 4).background(.black.opacity(0.08), in: Capsule())
+                        .contentTransition(.numericText())
+                        .animation(.spring(response: 0.3, dampingFraction: 0.66), value: message.reactions)
+                        .transition(.scale(scale: 0.7).combined(with: .opacity))
                 }
             }
     }
@@ -950,6 +956,7 @@ struct ChatView: View {
     func perform(_ action: () throws -> Void) {
         do {
             try action()
+            Task { await store.sync() }
         } catch {
             Haptics.warning()
             store.error = error.localizedDescription

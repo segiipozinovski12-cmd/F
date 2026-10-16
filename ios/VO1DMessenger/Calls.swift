@@ -169,6 +169,7 @@ final class CallManager: ObservableObject {
     @Published private(set) var muted = false
     @Published private(set) var speaker = true
     @Published private(set) var transport = "OFFLINE"
+    @Published private(set) var lastFailure: String?
 
     private let provider: CXProvider
     private let bridge: CallKitBridge
@@ -213,6 +214,7 @@ final class CallManager: ObservableObject {
     ) {
         self.nameResolver = nameResolver
         self.recordSink = recordSink
+        if self.api === api, socket != nil { return }
         if session != nil, socket != nil {
             // An accepted background call retains the delegated identity used
             // for its handshake until it ends, even after foreground unlock.
@@ -245,6 +247,16 @@ final class CallManager: ObservableObject {
     }
 
     func startCall(peer: ContactCard, name: String) {
+        Task {
+            let granted = await withCheckedContinuation { continuation in
+                AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+            }
+            guard granted else { lastFailure = "Разреши микрофон в настройках iOS → VO1D"; return }
+            beginOutgoing(peer: peer, name: name)
+        }
+    }
+
+    private func beginOutgoing(peer: ContactCard, name: String) {
         guard session == nil, allowedPeer?(peer.id) != false else { return }
         guard socketReady else {
             transport = "RECONNECTING"
@@ -344,10 +356,11 @@ final class CallManager: ObservableObject {
                     if socketReady && callKey != nil { break }
                     try await Task.sleep(for:.milliseconds(100))
                 }
-                guard socketReady,callKey != nil else { failCurrent(reason:.failed); return }
+                guard socketReady,callKey != nil, let ready = session,
+                      ready.id == current.id, !ready.peerID.isEmpty else { failCurrent(reason:.failed); return }
                 guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
-                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID,ownerID:canonicalCard?.id)
-                packet["type"]="answer"; packet["to"]=current.peerID; packet["callID"]=current.callID
+                var packet=try callSecrets.offer(identity:identity,callID:ready.callID,to:ready.peerID,ownerID:canonicalCard?.id)
+                packet["type"]="answer"; packet["to"]=ready.peerID; packet["callID"]=ready.callID
                 try await send(packet)
                 activateMediaIfReady()
             } catch {
@@ -468,6 +481,9 @@ final class CallManager: ObservableObject {
 
         if type == "error" {
             let code = packet["code"] as? String ?? "call_error"
+            lastFailure = ["peer_offline": "Собеседник не в сети. Без APNs оба приложения должны быть открыты.",
+                           "peer_unavailable": "Собеседник должен принять запрос на переписку и разрешить звонки.",
+                           "peer_busy": "Собеседник уже разговаривает."][code] ?? "Ошибка звонка: \(code)"
             if ["peer_offline", "peer_busy", "peer_unavailable", "unknown_peer", "unknown_call", "call_mismatch", "invalid_resume"].contains(code) {
                 failCurrent(reason: code == "peer_offline" ? .unanswered : .failed)
             }
@@ -516,7 +532,7 @@ final class CallManager: ObservableObject {
                   let key = callKey else { return }
 
             guard let callSecrets,let sequence=packet["sequence"] as? String,
-                  let clear=try callSecrets.open(encrypted,sequence:sequence,key:key,callID:callID) else { return }
+                  let clear=try? callSecrets.open(encrypted,sequence:sequence,key:key,callID:callID) else { return }
             audio.play(clear)
 
         case "end":

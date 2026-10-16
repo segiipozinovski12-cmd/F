@@ -31,6 +31,14 @@ struct SettingsView: View {
                         }
                         .padding(.bottom, 4)
 
+                        NavigationLink { ProfilePreviewView() } label: {
+                            Label("МОЙ ПРОФИЛЬ", systemImage: "person.crop.circle")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(.plain)
+                        NavigationLink { PremiumView() } label: {
+                            Label("VO1D PREMIUM", systemImage: "sparkles")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(.plain)
                         profileCard
                         NavigationLink { ProfilesView() } label: {
                             Label("НЕЗАВИСИМЫЕ ЛИЧНОСТИ",systemImage:"person.crop.rectangle.stack")
@@ -239,7 +247,7 @@ struct SettingsView: View {
 
                     store.state.nickname = String(cleanedName.prefix(40))
                     store.state.bio = String(bio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-                    store.persist()
+                    do { try store.shareProfile(); await store.sync() } catch { store.error = error.localizedDescription }
                     usernameAvailable = true
                     usernameStatus = store.state.username.map { "Текущий @\($0)" } ?? ""
                 }
@@ -531,7 +539,7 @@ struct SettingsView: View {
                 return
             }
 
-            let maxSide: CGFloat = 512
+            let maxSide: CGFloat = 384
             let scale = min(1, maxSide / max(image.size.width, image.size.height))
             let target = CGSize(
                 width: max(1, image.size.width * scale),
@@ -542,8 +550,8 @@ struct SettingsView: View {
                 image.draw(in: CGRect(origin: .zero, size: target))
             }
 
-            guard let jpeg = rendered.jpegData(compressionQuality: 0.78),
-                  jpeg.count <= 1_500_000 else {
+            guard let jpeg = rendered.jpegData(compressionQuality: 0.65),
+                  jpeg.count <= 160_000 else {
                 throw MessengerError.invalid("Аватар получился слишком большим")
             }
 

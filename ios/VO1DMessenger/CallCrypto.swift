@@ -10,7 +10,7 @@ final class CallSecrets {
     private var peerID: String?
 
     private static func offerBytes(callID: String,from: String,to: String,key: String) -> Data {
-        Data("VO1D-CALL-KEY-2\n\(callID)\n\(from)\n\(to)\n\(key)".utf8)
+        Data("VO1D-CALL-KEY-3\n\(callID)\n\(from)\n\(to)\n\(key)".utf8)
     }
 
     func offer(identity: LocalIdentity,callID: String,to peerID: String,ownerID: String? = nil) throws -> [String:String] {
@@ -35,7 +35,7 @@ final class CallSecrets {
         self.ownID=ownID
         self.peerID=peer.id
         let salt=Data(SHA256.hash(data:Data(callID.utf8)))
-        let context=Data(("VO1D-CALL-2\n"+[ownID,peer.id].sorted().joined(separator:"\n")).utf8)
+        let context=Data(("VO1D-CALL-3\n"+[ownID,peer.id].sorted().joined(separator:"\n")).utf8)
         return shared.hkdfDerivedSymmetricKey(using:SHA256.self,salt:salt,sharedInfo:context,outputByteCount:32)
     }
 
@@ -45,7 +45,7 @@ final class CallSecrets {
         sent += 1
         let sequence=String(sent)
         let aad=Data("VO1D-CALL-AUDIO-2\n\(callID)\n\(ownID)\n\(peerID)\n\(sequence)".utf8)
-        let box=try AES.GCM.seal(frame,using:key,authenticating:aad)
+        let box=try AES.GCM.seal(frame,using:frameKey(key,callID:callID,from:ownID,to:peerID,sequence:sent),authenticating:aad)
         guard let bytes=box.combined else { throw MessengerError.invalid("Ошибка аудиокадра") }
         return (bytes,sequence)
     }
@@ -54,8 +54,16 @@ final class CallSecrets {
         guard let ownID,let peerID else { throw MessengerError.invalid("Ключи звонка не согласованы") }
         guard let number=UInt64(sequence),number>received else { return nil }
         let aad=Data("VO1D-CALL-AUDIO-2\n\(callID)\n\(peerID)\n\(ownID)\n\(sequence)".utf8)
-        let result=try AES.GCM.open(AES.GCM.SealedBox(combined:frame),using:key,authenticating:aad)
+        let result=try AES.GCM.open(AES.GCM.SealedBox(combined:frame),using:frameKey(key,callID:callID,from:peerID,to:ownID,sequence:number),authenticating:aad)
         received=number
         return result
+    }
+
+    // Separate keys for each direction and each 4096-frame epoch. The signed
+    // v3 handshake prevents silent cross-version fallback. This is symmetric
+    // key separation, not a post-quantum or continuously ratcheted call claim.
+    private func frameKey(_ root: SymmetricKey, callID: String, from: String, to: String, sequence: UInt64) -> SymmetricKey {
+        HKDF<SHA256>.deriveKey(inputKeyMaterial: root, salt: Data(callID.utf8),
+            info: Data("VO1D-CALL-FRAME-3\n\(from)\n\(to)\n\((sequence - 1) / 4096)".utf8), outputByteCount: 32)
     }
 }

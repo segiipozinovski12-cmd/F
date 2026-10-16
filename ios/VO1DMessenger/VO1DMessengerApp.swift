@@ -53,6 +53,7 @@ struct RootView: View {
     @State private var splash = true
     @State private var incomingContact: String?
     @State private var pendingLink: URL?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var captured = UIScreen.main.isCaptured
     private var canRunForegroundSession: Bool { scenePhase == .active && store.fatalError == nil }
 
@@ -121,7 +122,10 @@ struct RootView: View {
         .sheet(isPresented:Binding(get:{ store.notificationRoomID != nil && store.sessionUnlocked && !store.locked },set:{ if !$0 { store.notificationRoomID=nil } })) {
             if let id=store.notificationRoomID, !store.extended.hiddenRooms.contains(id) { NavigationStack { ChatView(roomID:id) } }
         }
-        .animation(.easeInOut(duration: 0.32), value: splash)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: splash)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.38), value: store.sessionUnlocked)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: store.locked)
+        .onChange(of: calls.lastFailure) { _, value in if let value { store.error = value } }
         .task {
             try? await Task.sleep(for: .milliseconds(650))
             splash = false

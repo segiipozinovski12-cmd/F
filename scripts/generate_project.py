@@ -98,6 +98,9 @@ def configurations(name, settings):
     ids=[]
     for mode in ['Debug','Release']:
         allsettings=dict(settings)
+        commerce_pin = os.environ.get('VO1D_COMMERCE_PUBLIC_KEY', '')
+        if commerce_pin:
+            allsettings['VO1D_COMMERCE_PUBLIC_KEY'] = commerce_pin
         if name in ('app','test'):
             if local_team:
                 allsettings['DEVELOPMENT_TEAM'] = local_team

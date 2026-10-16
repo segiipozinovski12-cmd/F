@@ -80,5 +80,7 @@
 	<string>Dark</string>
 	<key>VO1DPushEnabled</key>
 	<false/>
+	<key>VO1DCommercePublicKey</key>
+	<string>$(VO1D_COMMERCE_PUBLIC_KEY)</string>
 </dict>
 </plist>

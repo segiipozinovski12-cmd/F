@@ -17,6 +17,7 @@ import network_privacy
 import private_blobs
 import moderation
 import bots
+import commerce
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -89,6 +90,7 @@ class Relay:
             db.executescript('''
                 PRAGMA journal_mode=WAL;
                 PRAGMA secure_delete=ON;
+                CREATE TABLE IF NOT EXISTS relay_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS identities (id TEXT PRIMARY KEY, card TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS challenges (nonce TEXT PRIMARY KEY, identity TEXT, expires INTEGER);
                 CREATE TABLE IF NOT EXISTS sessions (digest TEXT PRIMARY KEY, identity TEXT, expires INTEGER);
@@ -120,6 +122,7 @@ class Relay:
             private_blobs.install(db)
             moderation.install(db)
             bots.install(db)
+            commerce.install(db)
 
     @contextmanager
     def db(self):
@@ -179,7 +182,7 @@ class Relay:
         import hmac
         ip_hash = hmac.new(self.rate_secret,network_privacy.client_address(env).encode(),hashlib.sha256).hexdigest()
         if method == 'GET' and path == '/v2/capabilities':
-            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True}
+            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True, 'socialEvents': 1}
         if method == 'POST' and path == '/v2/blobs/ticket':
             return private_blobs.ticket(self,body,ip_hash,APIError)
         if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
@@ -201,6 +204,8 @@ class Relay:
                 self.rate('moderator-mfa:' + user, 8, 300)
             if method == 'POST' and path in ('/v2/reports','/v2/appeals'):
                 self.rate('reports:' + user, 30, 3600)
+            if path.startswith('/v2/commerce'):
+                self.rate('commerce:' + user, 12)
         with self.db() as db:
             self.clean(db)
             if not public:
@@ -215,6 +220,9 @@ class Relay:
                 if result is not None:
                     return result
                 result = call_authority.handle(db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
+                result = commerce.handle(db,user,env,body,APIError)
                 if result is not None:
                     return result
                 result = prekeys.handle(db,user,env,body,APIError,b64)
@@ -274,6 +282,14 @@ class Relay:
                 # DELETE condition makes concurrent replay lose, even under multiple workers.
                 if db.execute('DELETE FROM challenges WHERE nonce=?', (nonce,)).rowcount != 1:
                     raise APIError(401, 'Challenge already consumed')
+                bootstrap = db.execute("SELECT value FROM relay_meta WHERE key='bootstrap_first_session'").fetchone()
+                if bootstrap and bootstrap[0] == '1':
+                    # The challenge has been verified and its DELETE holds the
+                    # writer lock: concurrent first logins cannot both win.
+                    if moderation.owner(db) is None:
+                        moderation.claim(db, identity, 'vo1d', now, APIError)
+                        db.execute('INSERT INTO usernames VALUES (?,?,?)', ('vo1d', identity, now))
+                    db.execute("DELETE FROM relay_meta WHERE key='bootstrap_first_session'")
                 token = secrets.token_urlsafe(32)
                 db.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), identity, now + 86400))
                 return {'token': token}
@@ -289,6 +305,10 @@ class Relay:
                     except sqlite3.IntegrityError:
                         continue
                 raise APIError(500, 'Unable to allocate compact ID')
+            if method == 'GET' and path == '/v1/discovery':
+                code = db.execute('SELECT code FROM codes WHERE identity=?', (user,)).fetchone()
+                username = db.execute('SELECT username FROM usernames WHERE identity=?', (user,)).fetchone()
+                return {'code': code[0] if code else None, 'username': username[0] if username else None}
             if method == 'GET' and path.startswith('/v1/code/'):
                 code = path.rsplit('/', 1)[1].upper()
                 if not CODE.fullmatch(code):

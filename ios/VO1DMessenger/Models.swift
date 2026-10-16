@@ -124,6 +124,8 @@ struct ChatMessage: Codable, Identifiable, Hashable {
 
 /// All event content, including group membership and attachments, lives inside AEAD.
 struct ChatEvent: Codable {
+    var sharedProfile: SharedProfile? = nil
+    var story: PrivateStory? = nil
     var deviceCommand: DeviceCommand? = nil
     var deviceCommandResult: DeviceCommandResult? = nil
     var deviceRevision: Int? = nil
@@ -168,6 +170,7 @@ struct PendingDelivery: Codable, Identifiable {
 }
 
 struct VaultState: Codable {
+    var social: SocialState? = nil
     var rejectedBotPackets: Int? = nil
     var managedBots: [ManagedBot]? = nil
     var secureNotes: [SecureNote]? = nil

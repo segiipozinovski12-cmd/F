@@ -91,6 +91,7 @@ extension ChatStore {
             changeExtended { $0.pendingEvents.removeAll { $0.room.id == roomID } }
             try save()
             for id in Set(events.map { $0.sender.id }) { try? await trustOnServer(id,trusted:true) }
+            try shareProfile(to: Set(events.map { $0.sender.id }))
         } catch {
             state = original
             try? save()
@@ -141,7 +142,7 @@ extension ChatStore {
 
     func createFolder(_ name: String) {
         let clean = String(name.trimmingCharacters(in:.whitespacesAndNewlines).prefix(32))
-        guard !clean.isEmpty, extended.folders.count < 20 else { return }
+        guard !clean.isEmpty, extended.folders.count < (hasPremium ? 60 : 20) else { return }
         changeExtended { $0.folders.append(ChatFolder(name:clean)) }
     }
 
@@ -270,7 +271,7 @@ extension ChatStore {
         try validateScopedRoom(event.room)
         event = try Crypto.sanitized(event, from: identity, to: target)
         return Envelope(id: UUID().uuidString, sender: try identity.card.id, recipient: target.id,
-            ephemeralKey: "", salt: "", expiresAt: Int(Date().timeIntervalSince1970) + 7 * 86400,
+            ephemeralKey: "", salt: "", expiresAt: min(Int(Date().timeIntervalSince1970) + 7 * 86400, Int((event.contentExpiry ?? .distantFuture).timeIntervalSince1970)),
             ciphertext: "", signature: "", deferredEvent: try Wire.encoder.encode(event))
     }
 
