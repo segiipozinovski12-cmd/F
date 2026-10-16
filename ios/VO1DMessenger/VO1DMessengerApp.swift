@@ -84,10 +84,15 @@ struct RootView: View {
                     VStack(spacing: 22) {
                         BrandMark(size: 90)
                         Text("Новый старт VO1D").font(.largeTitle.bold())
-                        Text("Серверные аккаунты были сброшены. Локальная зашифрованная история сохранена на этом iPhone. Для входа зарегистрируй личность заново.")
+                        Text("Серверные аккаунты были сброшены. Локальная зашифрованная история сохранена на этом iPhone. При новой регистрации включится поиск по ID; маршрут подключения сохранится. Строгий режим приглашений можно выбрать в настройках.")
                             .multilineTextAlignment(.center).foregroundStyle(.secondary)
                         Button(store.busy ? "Регистрируем…" : "Зарегистрироваться заново") {
-                            Task { await store.configure(name: store.state.nickname, server: store.state.server) }
+                            Task {
+                                do {
+                                    try store.selectPrivacyProfile(.everyday)
+                                    await store.configure(name: store.state.nickname, server: store.state.server)
+                                } catch { store.error = error.localizedDescription }
+                            }
                         }.buttonStyle(PrimaryButton()).disabled(store.busy)
                     }.padding(28)
                 } else {

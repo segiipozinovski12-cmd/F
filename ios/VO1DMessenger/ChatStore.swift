@@ -162,18 +162,18 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    func configure(name: String, server: String) async {
+    func configure(name: String, server: String, username: String? = nil) async {
         busy = true
         defer { busy = false }
 
         do {
-            try await configureAttempt(name: name, server: server, allowIdentityRecovery: true)
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: true, username: username)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func configureAttempt(name: String, server: String, allowIdentityRecovery: Bool) async throws {
+    private func configureAttempt(name: String, server: String, allowIdentityRecovery: Bool, username: String? = nil) async throws {
         guard let identity else { throw MessengerError.invalid("Ключи устройства недоступны") }
         let expected = generation
         let firstLaunch = !state.onboarded
@@ -203,7 +203,7 @@ final class ChatStore: ObservableObject {
             _ = try ensureCredentials()
             try save()
 
-            try await configureAttempt(name: name, server: server, allowIdentityRecovery: false)
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: false, username: username)
             return
         }
 
@@ -220,6 +220,10 @@ final class ChatStore: ObservableObject {
         _ = try ensureCredentials()
         state.publicCode = publicCode
         try await restoreDiscovery(using: client)
+        if let username = username?.trimmingCharacters(in: .whitespacesAndNewlines), !username.isEmpty, state.username != "vo1d" {
+            state.username = try await client.claimUsername(username)
+            guard expected == generation else { throw CancellationError() }
+        }
         state.onboarded = true
         serverResetRequired = false
         if firstLaunch { state.credentialsAcknowledged = false }

@@ -246,7 +246,8 @@ struct SplashView: View {
 struct WelcomeView: View {
     @EnvironmentObject var store: ChatStore
     @State private var name = ""
-    @State private var privacyProfile = PrivacyProfile.privateDelivery
+    @State private var privacyProfile = PrivacyProfile.everyday
+    @State private var username = ""
     @State private var relay = ""
     @State private var appeared = false
 
@@ -322,6 +323,11 @@ struct WelcomeView: View {
                                 guard !clean.isEmpty, !store.busy else { return }
                                 join(name:clean)
                             }
+                        TextField("@username для поиска · необязательно", text: $username)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled().voidField()
+                            .onChange(of: username) { _, value in username = String(value.lowercased().filter { "abcdefghijklmnopqrstuvwxyz0123456789_".contains($0) }.prefix(20)) }
+                        Text("Ник — отображаемое имя. Поиск работает по уникальному @username или короткому VO1D ID.")
+                            .font(.caption).foregroundStyle(Theme.secondary)
 
                         Button {
                             let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -397,7 +403,7 @@ struct WelcomeView: View {
             do {
                 try store.selectPrivacyProfile(privacyProfile)
                 let selected = relay.trimmingCharacters(in:.whitespacesAndNewlines)
-                await store.configure(name:name,server:selected.isEmpty ? AppConfig.productionRelay : selected)
+                await store.configure(name:name,server:selected.isEmpty ? AppConfig.productionRelay : selected, username: username)
             } catch { store.error = error.localizedDescription }
         }
     }

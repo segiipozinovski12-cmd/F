@@ -6,6 +6,7 @@ this branch as independently audited or universally anonymous.
 
 ## Reliability and UX
 
+* The onboarding default is now searchable everyday mode. The previous private-delivery default disabled code/username discovery and required QR routes. Mode switching explicitly restores discovery without disabling the selected Tor route. Optional unique username enrollment is separate from display name.
 * Four-character `@name` searches go to username discovery. Bare four-character
   values try compact ID, then username only on 400/404. Network errors do not
   silently change the lookup type.
@@ -46,6 +47,8 @@ are pruned on expiration and excluded from backup exports. Recipient copies,
 screenshots and host backups cannot be erased remotely.
 
 ## Cryptography
+
+Nearby-only envelopes are explicitly barred from the account relay and do not block later network deliveries.
 
 New live messages, including initial contact packets, require the existing official
 libsignal PQXDH/Double Ratchet. Legacy local history remains readable; unauthenticated
@@ -104,7 +107,11 @@ would not inherit it and therefore is not presented as anonymous in this update.
 ## Requested production reset
 
 The task explicitly requested deletion of all server accounts and first-login
-administrator assignment. `server/reset_rollout.py` is a one-time startup rollout,
+administrator assignment. Production `/health` confirmed completion at
+2026-10-16 22:24 UTC on revision `7c4b63cd60ba83103de6fb2a7263de85f42c7eaa`:
+`accountReset=vo1d-user-request-20261016-8f5ef8e8`, `adminBootstrapPending=true`.
+No production identity was created for verification. The automatic entrypoint
+invocation was then removed, so future deployments cannot rerun the reset. `server/reset_rollout.py` is a one-time startup rollout,
 not an HTTP wipe endpoint. It only runs for the exact repository owner/name, branch
 `codex/vo1d-next`, production domain `f-production-bdfe.up.railway.app`, persistent
 Railway volume mounted at `/data`, and existing `/data/relay.sqlite3`. Missing or

@@ -21,6 +21,7 @@ extension ChatStore {
         var local = extended
         switch profile {
         case .everyday:
+            local.privacy.discoverable = true; local.privacy.requirePrivateDelivery = false
             local.privacy.requireRequests = true; local.privacy.typingSignals = false; local.privacy.notificationPreview = false
         case .privateDelivery:
             local.privacy.requirePrivateDelivery = true; local.privacy.discoverable = false
@@ -49,8 +50,8 @@ enum PrivacyProfile: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .everyday: return "Сохраняет выбранный маршрут. Новые сообщения используют libsignal; для первого контакта можно использовать код."
-        case .privateDelivery: return "Требует приватного приглашения. Скрывает отправителя в очереди; relay продолжает видеть сетевые соединения и время."
-        case .tor: return "Включает встроенный Tor, приватные адреса и работу без APNs. Подключение медленнее, расход батареи выше; фоновые вызовы выключены."
+        case .privateDelivery: return "Только приватные приглашения: поиск по коду и username отключён. Скрывает отправителя в очереди; relay видит соединения и время."
+        case .tor: return "Встроенный Tor и приватные приглашения без публичного поиска и APNs. Подключение медленнее, расход батареи выше; фоновые вызовы выключены."
         }
     }
 }

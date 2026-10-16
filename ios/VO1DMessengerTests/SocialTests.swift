@@ -117,3 +117,18 @@ extension SocialTests {
         XCTAssertEqual(SmartQueue.ready(Array(repeating: local, count: 40) + [network], issues: [:], limit: 1).first?.id, network.id)
     }
 }
+
+extension SocialTests {
+    @MainActor func testSearchableModeRestoresDiscoveryWithoutDisablingTorRoute() throws {
+        let store = ChatStore(), saved = store.state
+        defer { store.state = saved; try? store.save() }
+        var local = ExtendedState(); local.privacy.embeddedTor = true; store.state.extended = local
+        try store.selectPrivacyProfile(.privateDelivery)
+        XCTAssertFalse(store.preferences.discoverable)
+        XCTAssertTrue(store.preferences.requirePrivateDelivery)
+        try store.selectPrivacyProfile(.everyday)
+        XCTAssertTrue(store.preferences.discoverable)
+        XCTAssertFalse(store.preferences.requirePrivateDelivery)
+        XCTAssertTrue(store.preferences.embeddedTor)
+    }
+}
