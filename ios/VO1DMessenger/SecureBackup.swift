@@ -103,6 +103,10 @@ enum SecureBackup {
         local.privacy.streamIsolation = ""
         payload.state.outbox = []; payload.state.processed = []
         payload.state.pendingReports = nil; payload.state.deliveryRetryState = nil
+        // Stories are ephemeral content, not durable history exports.
+        payload.state.social?.stories = []
+        payload.state.social?.storyAudience = [:]
+        payload.state.social?.deletedStories = [:]
         payload.state.managedBots = nil
         payload.state.messages.removeAll { $0.viewOnceSeconds != nil || $0.attachment?.viewSeconds != nil }
         for index in local.archives.indices { local.archives[index].messages.removeAll { $0.viewOnceSeconds != nil || $0.attachment?.viewSeconds != nil } }

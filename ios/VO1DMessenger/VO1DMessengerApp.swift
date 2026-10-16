@@ -32,6 +32,7 @@ struct VO1DMessengerApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {
+                        NearbyTransport.shared.stop()
                         leftAt=Date()
                         store.revealedHiddenRooms=false
                         if store.state.appLock && store.preferences.autoLockSeconds==0 { store.locked=true }
@@ -126,6 +127,7 @@ struct RootView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.38), value: store.sessionUnlocked)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: store.locked)
         .onChange(of: calls.lastFailure) { _, value in if let value { store.error = value } }
+        .onChange(of: store.locked) { _, locked in if locked { NearbyTransport.shared.stop() } }
         .task {
             try? await Task.sleep(for: .milliseconds(650))
             splash = false

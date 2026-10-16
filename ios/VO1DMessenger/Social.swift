@@ -85,9 +85,13 @@ extension ChatStore {
         try save()
     }
     func publishStory(text: String, image: Data?, audience: Set<String>) throws {
-        guard !audience.isEmpty else { throw MessengerError.invalid("Выбери, кому видна история") }
+        guard !audience.isEmpty, audience.count <= 50 else { throw MessengerError.invalid("Выбери от 1 до 50 получателей истории") }
         let now = Date(), story = PrivateStory(author: myID, text: text.trimmingCharacters(in: .whitespacesAndNewlines), image: image, createdAt: now, expiresAt: now.addingTimeInterval(86400))
         try story.validate(sender: myID)
+        let queuedBytes = state.outbox.reduce(0) { $0 + ($1.envelope.deferredEvent?.count ?? $1.envelope.ciphertext.utf8.count) }
+        guard queuedBytes + ((image?.count ?? 0) + text.utf8.count + 180_000) * audience.count <= 40 * 1024 * 1024 else {
+            throw MessengerError.invalid("Сначала дождись отправки очереди историй")
+        }
         guard social.stories.filter({ $0.author == myID && $0.expiresAt > now }).count < (hasPremium ? 30 : 5) else {
             throw MessengerError.invalid("Достигнут лимит активных историй")
         }
@@ -126,7 +130,7 @@ extension ChatStore {
               event.room.id == "dm:" + [myID, sender.id].sorted().joined(separator: ":"),
               let contact = state.contacts.first(where: { $0.card == sender && !$0.blocked }),
               extended.trustedIDs.contains(sender.id) else { return true }
-        try validateScopedContact(sender.id)
+        try validateScopedRoom(event.room)
         var value = social
         if let profile = event.sharedProfile {
             try profile.validate()
@@ -144,7 +148,7 @@ extension ChatStore {
             guard let story = event.story else { throw MessengerError.invalid("Нет истории") }
             try story.validate(sender: sender.id)
             if value.deletedStories[sender.id + story.id] == nil && !value.stories.contains(where: { $0.id == story.id && $0.author == sender.id }) &&
-                value.stories.count < 500 && value.stories.filter({ $0.author == sender.id }).count < 30 {
+                value.stories.count < 100 && value.stories.reduce(0, { $0 + ($1.image?.count ?? 0) }) + (story.image?.count ?? 0) <= 20 * 1024 * 1024 && value.stories.filter({ $0.author == sender.id }).count < 30 {
                 value.stories.append(story)
             }
         case "storyDelete":

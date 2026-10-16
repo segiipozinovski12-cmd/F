@@ -31,13 +31,20 @@ struct ProfilePreviewView: View {
                     Text(profile.name).font(.largeTitle.bold())
                     if mine, let username = store.state.username { Text("@\(username)").font(.callout.monospaced()).foregroundStyle(.secondary) }
                     if !profile.status.isEmpty { Text(profile.status).font(.title3) }
-                    if mine && store.hasPremium { Label("VO1D PREMIUM", systemImage: "sparkles").font(.caption.bold()) }
+                    if (mine && store.hasPremium) || (!mine && profile.premium?.kind == "premium" && (profile.premium?.expiresAt ?? 0) > Int(Date().timeIntervalSince1970)) { Label("VO1D PREMIUM", systemImage: "sparkles").font(.caption.bold()) }
                     if !profile.bio.isEmpty { Text(profile.bio).multilineTextAlignment(.center).padding(.top, 6) }
                 }
                 if mine {
                     Text("Так твой профиль выглядит для контактов, которым ты его отправил.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     NavigationLink { StoryComposerView() } label: { Label("Добавить историю", systemImage: "plus.circle") }.buttonStyle(.borderedProminent)
                     NavigationLink { PremiumView() } label: { Label("Premium и коллекция", systemImage: "diamond") }
+                }
+                ForEach((mine ? store.social.collectibles : profile.collectibles ?? []).filter { (try? $0.validate(owner: id)) != nil }) { item in
+                    VStack(spacing: 10) {
+                        Image(systemName: item.symbol).font(.system(size: 44))
+                        Text(item.label).font(.headline)
+                        Text("#" + String(item.id.prefix(8)).uppercased()).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity).padding(24).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24))
                 }
                 ForEach(store.social.stories.filter { $0.author == id && $0.expiresAt > Date() }.sorted { $0.createdAt > $1.createdAt }) { story in
                     StoryCard(story: story)

@@ -98,7 +98,8 @@ def configurations(name, settings):
     ids=[]
     for mode in ['Debug','Release']:
         allsettings=dict(settings)
-        commerce_pin = os.environ.get('VO1D_COMMERCE_PUBLIC_KEY', '')
+        previous_pins = re.findall(r'VO1D_COMMERCE_PUBLIC_KEY\s*=\s*"([^"]+)"\s*;', previous)
+        commerce_pin = os.environ.get('VO1D_COMMERCE_PUBLIC_KEY', previous_pins[0] if previous_pins else '')
         if commerce_pin:
             allsettings['VO1D_COMMERCE_PUBLIC_KEY'] = commerce_pin
         if name in ('app','test'):

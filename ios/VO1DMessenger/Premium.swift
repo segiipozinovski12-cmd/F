@@ -77,6 +77,16 @@ struct PremiumView: View {
                 }.disabled(busy || code.isEmpty)
                 Text("Код выдаётся оператором. Автоматическая оплата в этой версии не подключена.").font(.caption).foregroundStyle(.secondary)
             }
+            if store.hasPremium {
+                Section("Статус профиля") {
+                    TextField("Например: 🌙 вне шума", text: Binding(get: { store.social.status }, set: { text in
+                        var value = store.social; value.status = String(text.prefix(32)); store.state.social = value; store.persist()
+                    }))
+                    Button("Поделиться обновлением с контактами") {
+                        do { try store.shareProfile(); Task { await store.sync() } } catch { store.error = error.localizedDescription }
+                    }
+                }
+            }
             Section("Коллекция") {
                 if store.social.collectibles.isEmpty { Text("Здесь появятся подписанные коллекционные предметы.").foregroundStyle(.secondary) }
                 ForEach(store.social.collectibles.filter { (try? $0.validate(owner: store.myID)) != nil }) { item in

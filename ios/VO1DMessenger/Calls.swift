@@ -252,6 +252,15 @@ final class CallManager: ObservableObject {
                 AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
             }
             guard granted else { lastFailure = "Разреши микрофон в настройках iOS → VO1D"; return }
+            if !socketReady {
+                if socket == nil { connectSocket() }
+                for _ in 0..<200 {
+                    if socketReady { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard api != nil else { return }
+                }
+            }
+            guard socketReady else { lastFailure = "Не удалось подключить канал звонка. Проверь сеть и маршрут Tor."; return }
             beginOutgoing(peer: peer, name: name)
         }
     }
@@ -289,7 +298,11 @@ final class CallManager: ObservableObject {
             action.isVideo = false
             controller.request(CXTransaction(action: action)) { [weak self] error in
                 guard error != nil else { return }
-                Task { @MainActor in self?.failCurrent(reason: .failed) }
+                Task { @MainActor in
+                    guard self?.session?.id == uuid else { return }
+                    self?.lastFailure = error?.localizedDescription
+                    self?.failCurrent(reason: .failed)
+                }
             }
         } catch {
             cleanup()

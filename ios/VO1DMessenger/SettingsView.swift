@@ -45,6 +45,10 @@ struct SettingsView: View {
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
                         }.buttonStyle(.plain)
                         keysCard
+                        NavigationLink { NearbyView() } label: {
+                            Label("СВЯЗЬ РЯДОМ БЕЗ ИНТЕРНЕТА", systemImage: "antenna.radiowaves.left.and.right")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(.plain)
                         NavigationLink { BotFatherView() } label: {
                             Label("@vo1d_bot_father · МОИ БОТЫ", systemImage: "terminal")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()

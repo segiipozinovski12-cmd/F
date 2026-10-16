@@ -1207,6 +1207,7 @@ final class ChatStore: ObservableObject {
     func action(_ kind: String, message: ChatMessage, value: String? = nil, persistImmediately: Bool = true) throws {
         if kind == "reaction", !ReactionCatalog.accepts(value ?? "") { throw MessengerError.invalid("Неподдерживаемая реакция") }
         guard let room = state.rooms.first(where: { $0.id == message.roomID }), let index = state.messages.firstIndex(where: { $0.id == message.id }) else { return }
+        let reaction = kind == "reaction" && state.messages[index].reactions[myID] == value ? "" : value
         guard kind != "edit" || state.messages[index].viewOnceSeconds == nil else { throw MessengerError.invalid("Одноразовый текст нельзя изменить") }
         if kind == "edit" || kind == "delete" {
             guard message.sender == myID else { return }
@@ -1224,15 +1225,15 @@ final class ChatStore: ObservableObject {
             state.messages[index].edited = true
         }
             if kind == "delete" { state.messages.remove(at: index) }
-            if kind == "reaction" { state.messages[index].reactions[myID] = value }
+            if kind == "reaction" { state.messages[index].reactions[myID] = reaction?.isEmpty == true ? nil : reaction }
             if persistImmediately { try save() }
             return
         }
 
-        try enqueue(ChatEvent(kind: kind, room: room, target: message.id, value: value, senderName: state.nickname), room: room)
+        try enqueue(ChatEvent(kind: kind, room: room, target: message.id, value: kind == "reaction" ? reaction : value, senderName: state.nickname), room: room)
         if kind == "edit" { state.messages[index].text = String((value ?? "").prefix(16000)); state.messages[index].edited = true }
         if kind == "delete" { state.messages.remove(at: index) }
-        if kind == "reaction" { state.messages[index].reactions[myID] = value }
+        if kind == "reaction" { state.messages[index].reactions[myID] = reaction?.isEmpty == true ? nil : reaction }
         if persistImmediately { try save() }
     }
     func forward(_ message: ChatMessage, to roomID: String) throws {
@@ -1432,6 +1433,7 @@ final class ChatStore: ObservableObject {
 
     func sync() async {
         guard fatalError == nil, !syncing, !locked, state.onboarded, let api, let identity else { return }
+        try? NearbyTransport.shared.flush()
         syncing = true; let currentGeneration = generation
         defer { syncing = false }
         do {
@@ -1842,6 +1844,7 @@ final class ChatStore: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func resetLocalIdentity() throws {
+        NearbyTransport.shared.stop()
         CallManager.shared.disconnect()
         try vault?.delete()
         BackgroundCalls.clear()

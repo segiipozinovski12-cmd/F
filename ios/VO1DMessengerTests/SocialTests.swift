@@ -65,3 +65,20 @@ final class SocialTests: XCTestCase {
         XCTAssertEqual(try Wire.decoder.decode(ChatEvent.self, from: clear.1).story?.text, "PRIVATE_STORY")
     }
 }
+
+extension SocialTests {
+    func testNearbyProofRejectsReplayDifferentKeyAndAckSubstitution() throws {
+        let alice = try LocalIdentity.create(), mallory = try LocalIdentity.create()
+        let nonce = try Crypto.random(32).base64EncodedString(), other = try Crypto.random(32).base64EncodedString()
+        let proof = try alice.signingPrivate.signature(for: NearbyProof.challenge(nonce)).base64EncodedString()
+        XCTAssertTrue(try NearbyProof.verify(card: alice.card, nonce: nonce, signature: proof))
+        XCTAssertFalse(try NearbyProof.verify(card: alice.card, nonce: other, signature: proof))
+        XCTAssertFalse(try NearbyProof.verify(card: mallory.card, nonce: nonce, signature: proof))
+        let id = UUID().uuidString, bytes = NearbyProof.ack(id, sender: "sender", recipient: "recipient")
+        let ack = try alice.signingPrivate.signature(for: bytes)
+        let key = try Curve25519.Signing.PublicKey(rawRepresentation: Crypto.decode(alice.card.signingKey))
+        XCTAssertTrue(key.isValidSignature(ack, for: bytes))
+        XCTAssertFalse(key.isValidSignature(ack, for: NearbyProof.ack(id, sender: "recipient", recipient: "sender")))
+        XCTAssertFalse(key.isValidSignature(ack, for: NearbyProof.ack(UUID().uuidString, sender: "sender", recipient: "recipient")))
+    }
+}

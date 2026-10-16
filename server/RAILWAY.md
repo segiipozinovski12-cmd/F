@@ -1,6 +1,6 @@
 # Railway relay 2 work branch
 
-1. Select repository `segiipozinovski12-cmd/F`, branch `codex/anonymous-v2`. Take a database/volume backup before upgrading.
+1. Select repository `segiipozinovski12-cmd/F`, branch `codex/vo1d-next`. Take a database/volume backup before upgrading.
 2. Set Root Directory to `/server`; use its Dockerfile.
 3. Mount a persistent volume at `/data`, set healthcheck `/health`, generate an HTTPS domain.
 4. The entrypoint uses injected `PORT`, prepares the data directory and starts aiohttp as UID 10001. There is one process; obsolete Gunicorn worker/thread variables have no effect.
