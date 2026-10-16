@@ -517,10 +517,17 @@ final class ChatStore: ObservableObject {
                 .lowercased()
                 .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
 
-            if normalized.count == 4 {
-                card = try await api.card(publicCode: normalized)
+            if input.hasPrefix("@") {
+                // A four-letter @username must never be mistaken for a compact ID.
+                card = try await api.card(username: usernameCandidate)
+                name = "@\(usernameCandidate)"
+            } else if normalized.count == 4 {
+                do { card = try await api.card(publicCode: normalized) }
+                catch let failure as HTTPFailure where failure.status == 404 {
+                    throw MessengerError.invalid("VO1D ID не найден. Попроси собеседника включить обнаружение в настройках приватности или обменяйтесь QR.")
+                }
                 name = "Ghost \(card.shortID.prefix(6))"
-            } else if input.hasPrefix("@") || (usernameCandidate.count >= 4 && usernameCandidate.count <= 20 && input.count != 64) {
+            } else if usernameCandidate.count >= 4 && usernameCandidate.count <= 20 && input.count != 64 {
                 card = try await api.card(username: usernameCandidate)
                 name = "@\(usernameCandidate)"
             } else {
@@ -635,8 +642,8 @@ final class ChatStore: ObservableObject {
             seen.insert($0.id).inserted
         }
 
-        guard !cleanContacts.isEmpty, cleanContacts.count <= 15 else {
-            throw MessengerError.invalid("Выбери от 1 до 15 доступных контактов")
+        guard cleanContacts.count <= 15 else {
+            throw MessengerError.invalid("В группе может быть не больше 16 участников")
         }
 
         for contact in cleanContacts { try Crypto.validate(contact.card) }
