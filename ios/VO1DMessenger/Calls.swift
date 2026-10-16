@@ -247,6 +247,7 @@ final class CallManager: ObservableObject {
     }
 
     func startCall(peer: ContactCard, name: String) {
+        lastFailure = nil
         Task {
             let granted = await withCheckedContinuation { continuation in
                 AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
@@ -347,6 +348,8 @@ final class CallManager: ObservableObject {
                 packet["type"]="invite"; packet["to"]=current.peerID; packet["callID"]=current.callID
                 try await send(packet)
             } catch {
+                guard session?.id == current.id else { return }
+                lastFailure = error.localizedDescription
                 failCurrent(reason: .failed)
             }
         }
@@ -358,25 +361,39 @@ final class CallManager: ObservableObject {
             return
         }
 
-        current.phase = .active
-        current.startedAt = Date()
+        current.phase = .connecting
         session = current
         action.fulfill()
 
         Task {
             do {
+                let granted = await withCheckedContinuation { continuation in
+                    AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+                }
+                guard session?.id == current.id else { return }
+                guard granted else {
+                    lastFailure = "Разреши микрофон в настройках iOS → VO1D"
+                    failCurrent(reason: .failed); return
+                }
                 for _ in 0..<100 {
                     if socketReady && callKey != nil { break }
                     try await Task.sleep(for:.milliseconds(100))
                 }
-                guard socketReady,callKey != nil, let ready = session,
-                      ready.id == current.id, !ready.peerID.isEmpty else { failCurrent(reason:.failed); return }
+                guard let ready = session, ready.id == current.id else { return }
+                guard socketReady,callKey != nil, !ready.peerID.isEmpty else {
+                    lastFailure = "Не удалось получить ключи и адрес собеседника"
+                    failCurrent(reason:.failed); return
+                }
                 guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
                 var packet=try callSecrets.offer(identity:identity,callID:ready.callID,to:ready.peerID,ownerID:canonicalCard?.id)
                 packet["type"]="answer"; packet["to"]=ready.peerID; packet["callID"]=ready.callID
                 try await send(packet)
+                guard session?.id == ready.id else { return }
+                var accepted = ready; accepted.phase = .active; accepted.startedAt = Date(); session = accepted
                 activateMediaIfReady()
             } catch {
+                guard session?.id == current.id else { return }
+                lastFailure = error.localizedDescription
                 failCurrent(reason: .failed)
             }
         }
@@ -395,6 +412,7 @@ final class CallManager: ObservableObject {
                 "to": current.peerID,
                 "callID": current.callID,
             ])
+            guard session?.id == current.id else { return }
             finishCurrent(status: localEndStatus(current))
         }
     }
@@ -606,7 +624,7 @@ final class CallManager: ObservableObject {
                 }
             }
             activateMediaIfReady()
-        } catch { failCurrent(reason:.failed) }
+        } catch { lastFailure = error.localizedDescription; failCurrent(reason:.failed) }
     }
 
     func reportPushedCall(peerID: String, callID: String, completion: @escaping () -> Void) {
@@ -653,6 +671,7 @@ final class CallManager: ObservableObject {
             audio.muted = muted
             audio.setSpeaker(speaker)
         } catch {
+            lastFailure = error.localizedDescription
             failCurrent(reason: .failed)
         }
     }
