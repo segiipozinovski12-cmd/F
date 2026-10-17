@@ -31,7 +31,7 @@ struct SettingsView: View {
                         }
                         .padding(.bottom, 4)
 
-                        profileCard
+                        profileCard.softAppear(index: 0)
                         NavigationLink { AppearanceSettingsView() } label: {
                             Label("ОФОРМЛЕНИЕ И ТЕМЫ", systemImage: "paintpalette")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()
@@ -40,7 +40,7 @@ struct SettingsView: View {
                             Label("НЕЗАВИСИМЫЕ ЛИЧНОСТИ",systemImage:"person.crop.rectangle.stack")
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
                         }.buttonStyle(MotionButtonStyle())
-                        keysCard
+                        keysCard.softAppear(index: 1)
                         NavigationLink { NearbyView() } label: {
                             Label("СВЯЗЬ РЯДОМ БЕЗ ИНТЕРНЕТА", systemImage: "antenna.radiowaves.left.and.right")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()
@@ -63,14 +63,15 @@ struct SettingsView: View {
                             Label("ПРИВАТНОСТЬ И ИНСТРУМЕНТЫ",systemImage:"lock.shield")
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
                         }.buttonStyle(MotionButtonStyle())
-                        privacyCard
-                        voiceCard
-                        callsCard
-                        relayCard
-                        emergencyCard
-                        vpnCard
-                        legalCard
-                        deleteCard
+                        privacyCard.softAppear(index: 2)
+                        retentionCard.softAppear(index: 3)
+                        voiceCard.softAppear(index: 4)
+                        callsCard.softAppear(index: 5)
+                        relayCard.softAppear(index: 6)
+                        emergencyCard.softAppear(index: 7)
+                        vpnCard.softAppear(index: 8)
+                        legalCard.softAppear(index: 9)
+                        deleteCard.softAppear(index: 10)
 
                         HStack {
                             Spacer()
@@ -87,6 +88,7 @@ struct SettingsView: View {
                 }
             }
             .navigationBarHidden(true)
+            .labelStyle(FeatureLabelStyle())
             .onAppear {
                 name = store.state.nickname
                 username = store.state.username ?? ""
@@ -96,6 +98,7 @@ struct SettingsView: View {
                     usernameStatus = "Текущий @\(username)"
                 }
             }
+            .task { await store.refreshPushStatus() }
             .onDisappear {
                 usernameCheckTask?.cancel()
             }
@@ -295,6 +298,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             sectionTitle("ПРИВАТНОСТЬ", icon: "lock.shield.fill")
 
+            Toggle("Запрашивать ключ при запуске", isOn: Binding(
+                get: { store.preferences.requireAccessKey },
+                set: { store.setRequireAccessKey($0) }
+            ))
+            Text("Если выключить, история откроется сразу после запуска. Face ID можно оставить включённым отдельно.")
+                .font(.caption2).foregroundStyle(Theme.secondary)
+
             Toggle("Face ID / код устройства", isOn: Binding(
                 get: { store.state.appLock },
                 set: { value in Task { await store.setLock(value) } }
@@ -313,7 +323,7 @@ struct SettingsView: View {
             ))
             .tint(.white)
 
-            Text("Локальные уведомления работают в приложении. Фоновые push требуют настроенного APNs на relay и подписанного профиля Apple.")
+            Text(store.pushStatus.isEmpty ? "Проверяем готовность уведомлений…" : store.pushStatus)
                 .font(.caption2)
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
@@ -323,6 +333,21 @@ struct SettingsView: View {
                 .buttonStyle(GhostButton())
         }
         .panel()
+    }
+
+    private var retentionCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionTitle("АВТОУДАЛЕНИЕ ЧАТОВ", icon: "timer")
+            Picker("После отсутствия новых сообщений", selection: store.preferenceBinding(\.autoDeleteChatsSeconds)) {
+                Text("Выключено").tag(0)
+                Text("1 час").tag(3600)
+                Text("24 часа").tag(86400)
+                Text("7 дней").tag(604800)
+                Text("30 дней").tag(2592000)
+            }.tint(.white)
+            Text("Удаляет неактивный чат и его историю на этом устройстве при следующем открытии или синхронизации. Открытый чат, черновики и неотправленные сообщения сохраняются. Копии у собеседника остаются.")
+                .font(.caption2).foregroundStyle(Theme.secondary)
+        }.panel()
     }
 
     private var voiceCard: some View {
@@ -551,7 +576,10 @@ struct SettingsView: View {
 
     private func sectionTitle(_ title: String, icon: String) -> some View {
         HStack {
-            Image(systemName: icon)
+            Image(systemName: icon).symbolVariant(.fill)
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 32, height: 32)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 11))
             Text(title).font(.caption.monospaced()).tracking(2.2)
             Spacer()
         }

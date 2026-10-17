@@ -22,14 +22,17 @@ extension ChatStore {
         switch profile {
         case .everyday:
             local.privacy.discoverable = true; local.privacy.requirePrivateDelivery = false
+            local.privacy.allowDiscoveryRequests = true
             local.privacy.requireRequests = true; local.privacy.typingSignals = false; local.privacy.notificationPreview = false
         case .privateDelivery:
-            local.privacy.requirePrivateDelivery = true; local.privacy.discoverable = false
+            local.privacy.requirePrivateDelivery = true; local.privacy.discoverable = true
+            local.privacy.allowDiscoveryRequests = true
             local.privacy.requireRequests = true; local.privacy.typingSignals = false
             local.privacy.deliveryReceipts = false; local.privacy.notificationPreview = false
         case .tor:
             local.privacy.embeddedTor = true; local.privacy.requirePrivateDelivery = true
             local.privacy.discoverable = false; local.privacy.requireRequests = true
+            local.privacy.allowDiscoveryRequests = false
             local.privacy.typingSignals = false; local.privacy.deliveryReceipts = false
             local.privacy.lowData = true; local.privacy.backgroundCalls = false
             state.notificationsEnabled = false
@@ -50,7 +53,7 @@ enum PrivacyProfile: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .everyday: return "Сохраняет выбранный маршрут. Новые сообщения используют libsignal; для первого контакта можно использовать код."
-        case .privateDelivery: return "Только приватные приглашения: поиск по коду и username отключён. Скрывает отправителя в очереди; relay видит соединения и время."
+        case .privateDelivery: return "Знакомство по коду или username через одобрение. После обмена адресами переписка использует приватную очередь."
         case .tor: return "Встроенный Tor и приватные приглашения без публичного поиска и APNs. Подключение медленнее, расход батареи выше; фоновые вызовы выключены."
         }
     }
@@ -58,8 +61,8 @@ enum PrivacyProfile: String, CaseIterable, Identifiable {
         switch self {
         case .everyday: return []
         case .privateDelivery: return [
-            "Тебя не найдут по четырёхсимвольному ID или @username. Для знакомства нужен QR или приватная ссылка.",
-            "Обычная отправка запрещена: без приватного адреса получателя сообщение останется в очереди.",
+            "По ID или @username можно прислать запрос на знакомство. Первая зашифрованная передача адреса раскрывает узлу ID участников; текст сообщений туда не включается.",
+            "До одобрения получателя переписка ждёт приватного адреса. QR и приватная ссылка позволяют обойти публичный поиск.",
             "Отметки доставки и индикатор набора выключены. Если push не включён отдельно, новые сообщения приходят при открытом VO1D.",
             "Этот режим сам по себе не скрывает IP: при прямом подключении узел видит адрес и время соединений. Tor выбирается отдельно."
         ]

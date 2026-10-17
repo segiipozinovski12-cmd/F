@@ -137,8 +137,6 @@ struct Avatar: View {
                     .font(.system(size: size * 0.36, weight: .black, design: .rounded))
             }
 
-            RoundedRectangle(cornerRadius: size * 0.34, style: .continuous)
-                .stroke(.white.opacity(0.13), lineWidth: 1)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -177,7 +175,6 @@ struct GhostButton: ButtonStyle {
             .padding(.horizontal, 16)
             .padding(.vertical, 15)
             .background(.white.opacity(configuration.isPressed ? 0.035 : 0.06), in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.1)))
             .scaleEffect(reduceMotion ? 1 : (configuration.isPressed ? 0.975 : 1))
             .animation(reduceMotion ? nil : Motion.press, value: configuration.isPressed)
     }
@@ -190,18 +187,19 @@ struct Panel: ViewModifier {
             .padding(18)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .background(palette.panel, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [.white.opacity(0.17), .white.opacity(0.035), .white.opacity(0.09)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            }
             .shadow(color: .black.opacity(0.26), radius: 18, y: 10)
+    }
+}
+
+struct FeatureLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 13) {
+            configuration.icon.font(.system(size: 16, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 34, height: 34)
+                .background(LinearGradient(colors: [.white.opacity(0.13), .white.opacity(0.035)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 12))
+            configuration.title
+        }
     }
 }
 
@@ -210,7 +208,6 @@ extension View {
     func voidField() -> some View {
         padding(16)
             .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.08)))
             .autocorrectionDisabled()
     }
 }

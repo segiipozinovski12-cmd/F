@@ -7,7 +7,7 @@ from contextlib import closing
 from app import Relay
 
 
-def reset(path, backup, blob_dir=None, rollout_id=None):
+def reset(path, backup, blob_dir=None, rollout_id=None, first_registration_admin=False):
     path, backup = Path(path), Path(backup)
     if not path.is_file() or path.is_symlink() or backup.exists():
         raise ValueError('Use an existing regular DB and a new backup directory')
@@ -31,7 +31,9 @@ def reset(path, backup, blob_dir=None, rollout_id=None):
     staged = path.with_name(path.name + '.reset-' + secrets.token_hex(8))
     relay = Relay(staged)
     with relay.db() as db:
-        db.execute("INSERT INTO relay_meta VALUES ('bootstrap_first_session','1')")
+        if first_registration_admin:
+            db.execute("INSERT INTO relay_meta VALUES ('bootstrap_admin_policy','first_verified_registration')")
+            db.execute("INSERT INTO relay_meta VALUES ('minimum_enrollment_version','2')")
         db.execute("INSERT INTO relay_meta VALUES ('account_epoch',?)", (secrets.token_hex(16),))
         if rollout_id:
             db.execute("INSERT INTO relay_meta VALUES ('completed_reset_rollout',?)", (rollout_id,))

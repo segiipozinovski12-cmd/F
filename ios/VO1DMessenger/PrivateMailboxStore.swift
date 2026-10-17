@@ -11,7 +11,10 @@ extension ChatStore {
                 if let i = local.ownMailboxes.firstIndex(where: { $0.id == mailbox.id }) { local.ownMailboxes[i].registered = true }
                 state.extended = local; try save()
             }
-            var ready = mailbox; ready.registered = true; return ready
+            var ready = mailbox; ready.registered = true
+            try? await PushCoordinator.shared.registerMailbox(ready, api: api)
+            guard expected == generation else { throw CancellationError() }
+            return ready
         }
         guard extended.ownMailboxes.count < 512 else { throw MessengerError.invalid("Достигнут лимит приватных адресов; отзови неиспользуемые") }
         let bits = try await api.publicWorkBits()
@@ -24,7 +27,10 @@ extension ChatStore {
         local = extended
         if let i = local.ownMailboxes.firstIndex(where: { $0.id == mailbox.id }) { local.ownMailboxes[i].registered = true }
         state.extended = local; try save()
-        var ready = mailbox; ready.registered = true; return ready
+        var ready = mailbox; ready.registered = true
+        try? await PushCoordinator.shared.registerMailbox(ready, api: api)
+        guard expected == generation else { throw CancellationError() }
+        return ready
     }
     func preparePrivateInvite() async throws {
         guard !locked, let api, let identity, let card = ownCard, extended.privateLinks.count < 32 else { throw MessengerError.invalid("Нужны подключение и свободное место для ссылки (до 32)") }

@@ -15,8 +15,8 @@ There is no issuer, checkout, blockchain transaction or subscription endpoint.
 Onboarding asks for a display name. A searchable username is optional in Settings;
 a display name is not a username. Everyday mode enables discovery without changing
 an already selected Tor/SOCKS route. Both onboarding and connection settings show
-explicit tradeoffs for private delivery/Tor, including disabled search, invitation
-requirements, background limitations, latency and metadata exposure.
+explicit tradeoffs for private delivery/Tor, including discovery address exchange, invitation requirements in maximum mode,
+background limitations, latency and metadata exposure.
 
 Settings → Appearance offers five dark app palettes, a default chat palette,
 per-conversation overrides, optional static texture, text size and compact rows.
@@ -32,8 +32,10 @@ Signal encryption, at most 24-hour transport/content expiry, size/queue quotas,
 original-audience deletion and bounded tombstones. They are excluded from backups.
 Recipients may save copies; remote deletion cannot remove those copies.
 
-32 reactions use a scrollable picker, grouped emoji/count chips, reversible
-selection, and a visible on-message burst when reactions change. Effects do not
+56 reactions use a scrollable picker, grouped emoji/count chips, reversible
+selection, and six motion styles: hearts, flame, laughter, electric sparks,
+celebration and orbit. Picker feedback starts after dismissal so its effect is
+visible; emoji chips pulse with count changes. Effects do not
 replay simply because a historical message scrolls into view. Motion and particle
 work only occurs for a new change; there is no continuous reaction timer.
 
@@ -94,34 +96,61 @@ Communication across 1000 km requires a real carrier/relay/network path. Queuein
 cannot create such a path. Nearby does not secretly enable radios, override iOS
 permissions, or broadcast a public account identity without local opt-in.
 
-## Permanent administrator
+## Calls, discovery, entry and cleanup
 
-Login/registration never automatically assigns a username. The first authenticated
-explicit claim of `@vo1d` owns it permanently. Concurrent claims have one winner;
-rename/account deletion cannot transfer ownership. The separately authorized full
-account reset below clears permanent ownership together with all other accounts.
-Owner powers remain protected by MFA. The persistent MFA-encryption key is
-configured in Railway environment variables and active in production. It is not
-stored in the repo.
+Outgoing calls show preparation and ringing, retain a pending invitation while the
+peer reconnects, refresh expired account authorization, and keep WSS alive with
+pings. Local hangup stops media immediately and sends a final signal; media or
+CallKit failures also release the server route. Audio capture uses the input
+node's output bus format. Internet connectivity is required: calls use data, not
+cellular telephone minutes. No telephone-number routing or per-country fee exists.
 
-## Completed account resets: do not repeat without a new explicit request
+Everyday and Private Delivery profiles allow an explicit encrypted contact request
+from a four-character code or username. The recipient approves before a chat and
+call trust are established. A Private Delivery introduction contains only the
+address exchange; regular message events cannot fall back to public delivery.
+The third, Tor/private-address profile rejects public introductions. Public
+lookup/introduction exposes identity IDs to the relay; it does not match a private
+invitation's metadata properties.
 
-The earlier user-authorized reset completed on 2026-10-16 at 22:24 UTC:
-`accountReset=vo1d-user-request-20261016-8f5ef8e8`.
-Its private rollback backup remains on the persistent Railway volume at
-`/data/reset-backup-vo1d-user-request-20261016-8f5ef8e8`.
-The user explicitly requested another full reset on 2026-10-17. It completed at
-15:16 UTC with `accountReset=vo1d-user-request-20261017-a4ba0300`. The verified
-database and encrypted-blob backup is retained at
-`/data/reset-backup-vo1d-user-request-20261017-a4ba0300`; the earlier backup is
-preserved. Server accounts, sessions, usernames and permanent administrator
-ownership were cleared. The first authenticated explicit claim of `@vo1d` can
-establish new permanent ownership. Device-local encrypted histories are untouched.
+Settings can disable the next-launch access-key prompt while keeping device
+biometrics separate. The default remains protected; Private Space requires its
+entry protection. Inactive chats can be removed locally after 1 hour, 24 hours,
+7 days or 30 days, or automatic removal can be switched off. Active chats, drafts,
+scheduled messages and pending delivery are protected from this cleanup. The last
+message activity is retained after disappearing messages expire. Other devices and
+exported backups remain outside local cleanup.
 
-The one-time startup invocation has been removed after production verification.
-Normal deployments/restarts do not reset accounts. The rotated public account
-epoch and explicit enrollment marker prevent old clients silently recreating
-previously reset accounts.
+Apple push uses neutral payloads for both ordinary and private queues. A private
+mailbox subscription requires its read capability. Opting in links those random
+mailboxes to an Apple device token; it does not add account/sender IDs to the
+private queue. Maximum mode opts out. Account switches, token invalidation,
+notification disable and mailbox deletion revoke subscriptions. A readiness check
+reports missing APNs configuration; an unsigned/free-team Debug build cannot
+receive remote push. `VO1D_ENABLE_DEBUG_PUSH=1` when generating the Xcode project
+opts a paid Apple Developer team into development APNs. Production requires a
+valid Apple APNs provider key on Railway, matching topic and signed entitlements.
+
+## Permanent administrator and requested account reset
+
+The earlier resets on 2026-10-16 and at 15:16 UTC on 2026-10-17 retained rollback
+backups. The latest explicit user request asks to remove server accounts and
+those backups permanently. Its unique rollout is
+`vo1d-user-request-20261017-c9eb809a`; it runs before HTTP starts only when
+`VO1D_REQUESTED_RESET` exactly matches that ID on the guarded production service.
+Normal deployments do not arm it. After a verified reset, the helper removes the
+named prior account backup directories and records its completion marker. Clear
+the arming variable after checking health and the runtime receipt. It is idempotent
+if a restart occurs before disarming. Local iPhone histories cannot be erased by
+resetting the server.
+
+This reset opts in to automatic permanent `@vo1d` ownership for the first new
+registration that completes a signed, single-use authentication challenge. Public
+card upload or a replay alone cannot win. Enrollment version 2 and the new account
+epoch require an updated client and an explicit registration action; enrollment
+permission is consumed after its first use. The winning username cannot be renamed,
+released or transferred by account deletion. MFA remains required for owner powers;
+the persistent MFA encryption key stays in Railway and is not committed.
 
 ## Validation
 

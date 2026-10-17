@@ -25,9 +25,11 @@ struct VO1DMessengerApp: App {
                 .tint(store.appearance.appTheme.palette.accent)
                 .buttonStyle(RoundedActionStyle())
                 .buttonBorderShape(.capsule)
+                .symbolVariant(.fill)
                 .scrollContentBackground(.hidden)
                 .presentationCornerRadius(30)
                 .task {
+                    PushCoordinator.shared.mailboxes = { store.extended.ownMailboxes }
                     PushCoordinator.shared.wake = {
                         await store.reloadProtectedData()
                         await store.connectProductionRelay()
@@ -114,6 +116,16 @@ struct RootView: View {
                     .zIndex(20)
             }
 
+            if calls.preparingCall && calls.session == nil && store.sessionUnlocked && !store.locked {
+                VStack {
+                    HStack(spacing: 12) {
+                        ProgressView().tint(.white)
+                        Text("Подключаем звонок…").font(.subheadline.weight(.semibold))
+                    }.padding(18).background(.ultraThinMaterial, in: Capsule())
+                    Spacer()
+                }.padding(.top, 12).transition(.move(edge: .top).combined(with: .opacity)).zIndex(15)
+            }
+
             if scenePhase == .background || (captured && store.preferences.protectRecording) {
                 Color.black.ignoresSafeArea()
                     .overlay {
@@ -147,6 +159,7 @@ struct RootView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: splash)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.38), value: store.sessionUnlocked)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: store.locked)
+        .animation(reduceMotion ? nil : Motion.layout, value: calls.preparingCall)
         .transaction { transaction in
             // Hiding sensitive content never waits for an exit animation.
             if store.locked || !store.sessionUnlocked || reduceMotion {
@@ -247,6 +260,9 @@ private struct CredentialRevealView: View {
                     Button("Я СОХРАНИЛ КЛЮЧИ") {
                         withAnimation(.spring(response: 0.42, dampingFraction: 0.85)) { entered = true }
                         store.acknowledgeCredentials()
+                        if store.state.notificationsEnabled == nil && store.preferences.allowDiscoveryRequests {
+                            Task { await store.setNotifications(true) }
+                        }
                     }
                     .buttonStyle(PrimaryButton())
                 }

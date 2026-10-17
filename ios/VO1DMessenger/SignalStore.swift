@@ -57,7 +57,11 @@ extension ChatStore {
             let opaque = try PrivateMailboxCrypto.seal(result.1, from: identity, to: target, route: route, id: pending.envelope.id, expiry: event.contentExpiry)
             envelope = Envelope(id: opaque.id, sender: try identity.card.id, recipient: target.id, ephemeralKey: "", salt: "", expiresAt: opaque.expiresAt, ciphertext: "", signature: "", opaque: opaque)
         } else {
-            guard !preferences.requirePrivateDelivery else { throw MessengerError.invalid("Нужен приватный адрес контакта") }
+            // The user explicitly initiated this empty introduction. Only its
+            // signed address exchange may use discovery delivery; never messages,
+            // attachments, receipts or other deferred events in private mode.
+            let introduction = preferences.permitsDiscoveryIntroduction(event)
+            guard !preferences.requirePrivateDelivery || introduction else { throw MessengerError.invalid("Ожидаем одобрения и приватного адреса контакта") }
             envelope = try Crypto.sealPayload(result.1, from: identity, to: target, expiry: event.contentExpiry, id: pending.envelope.id)
         }
         let previous = state

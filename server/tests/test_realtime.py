@@ -102,6 +102,7 @@ class RealtimeBlobTests(unittest.IsolatedAsyncioTestCase):
         signed = f"VO1D-CALL-KEY-2\n{call}\n{ac['id']}\n{bc['id']}\n{key}".encode()
         offer = {'type':'invite','to':bc['id'],'callID':call,'key':key,'keySignature':encode(ap.sign(signed))}
         await a.send_json(offer)
+        self.assertEqual((await a.receive_json(timeout=2))['type'], 'ringing')
         received = await b.receive_json(timeout=2)
         self.assertEqual(received['from'],ac['id'])
         self.assertEqual(received['keySignature'],offer['keySignature'])
@@ -121,6 +122,26 @@ class RealtimeBlobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await b.receive_json(timeout=2))['type'],'end')
         for ws in (a,b,c):
             await ws.close()
+
+    async def test_offline_peer_can_reconnect_to_pending_call_without_apns(self):
+        _, ac, at = await self.login(full=True)
+        _, bc, bt = await self.login(full=True)
+        a = await self.client.ws_connect('/v1/call/socket', headers={'Authorization':'Bearer '+at})
+        await a.receive_json(timeout=2)
+        call = str(uuid.uuid4())
+        await a.send_json({'type':'invite', 'to':bc['id'], 'callID':call,
+                          'key':encode(os.urandom(32)), 'keySignature':encode(os.urandom(64))})
+        waiting = await a.receive_json(timeout=2)
+        self.assertEqual((waiting['type'], waiting['delivery']), ('ringing','waiting'))
+        b = await self.client.ws_connect('/v1/call/socket', headers={'Authorization':'Bearer '+bt})
+        self.assertEqual((await b.receive_json(timeout=2))['type'], 'ready')
+        invite = await b.receive_json(timeout=2)
+        self.assertEqual((invite['type'], invite['callID'], invite['from']), ('invite',call,ac['id']))
+        self.assertEqual((await a.receive_json(timeout=2))['delivery'], 'online')
+        await b.send_json({'type':'answer', 'to':ac['id'], 'callID':call,
+                          'key':encode(os.urandom(32)), 'keySignature':encode(os.urandom(64))})
+        self.assertEqual((await a.receive_json(timeout=2))['type'], 'answer')
+        await a.close(); await b.close()
 
     async def test_untrusted_call_and_missing_key_are_rejected(self):
         _, ac, at = await self.login(full=True)

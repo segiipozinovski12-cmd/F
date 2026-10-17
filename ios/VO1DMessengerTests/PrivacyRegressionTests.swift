@@ -156,3 +156,45 @@ final class PrivacyRegressionTests: XCTestCase {
         XCTAssertNil(SocialImage.jpeg(data, maxSide: .infinity))
     }
 }
+
+extension PrivacyRegressionTests {
+    @MainActor func testEnrollmentPermissionIsConsumedBeforeBackgroundCallRefresh() async throws {
+        APIClient.testingProtocolClasses = [DelayedProtocol.self]
+        let client = try APIClient(server: "https://regression.invalid", identity: LocalIdentity.create(), allowEnrollment: true)
+        defer { DelayedProtocol.receive = nil; APIClient.testingProtocolClasses = nil; client.invalidate() }
+        var registrations: [[String: Any]] = []
+        DelayedProtocol.receive = { request in
+            do {
+                switch request.request.url?.path {
+                case "/v2/capabilities": try request.reply(["accountEpoch":"epoch"])
+                case "/v1/register":
+                    let data: Data
+                    if let body = request.request.httpBody { data = body }
+                    else if let stream = request.request.httpBodyStream {
+                        stream.open(); defer { stream.close() }
+                        var body = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+                        while stream.hasBytesAvailable {
+                            let count = stream.read(&buffer, maxLength: buffer.count)
+                            if count <= 0 { break }
+                            body.append(contentsOf: buffer.prefix(count))
+                        }
+                        data = body
+                    } else { throw NSError(domain: "Missing registration body", code: 1) }
+                    registrations.append(try JSONSerialization.jsonObject(with: data) as! [String: Any])
+                    try request.reply(["ok":true])
+                case "/v1/challenge": try request.reply(["nonce":"single-use-test-challenge"])
+                case "/v1/session": try request.reply(["token":"test-session"])
+                default: XCTFail("Unexpected authentication route")
+                }
+            } catch { XCTFail(error.localizedDescription) }
+        }
+        try await client.authenticate()
+        try await client.refreshCallAuthorization()
+        XCTAssertEqual(registrations.count, 1)
+        try await client.refreshCallAuthorization(force: true)
+        XCTAssertEqual(registrations.count, 2)
+        XCTAssertEqual(registrations[0]["enroll"] as? Bool, true)
+        XCTAssertEqual(registrations[1]["enroll"] as? Bool, false)
+        XCTAssertEqual(registrations[0]["enrollmentVersion"] as? Int, 2)
+    }
+}

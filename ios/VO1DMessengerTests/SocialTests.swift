@@ -124,11 +124,84 @@ extension SocialTests {
         defer { store.state = saved; try? store.save() }
         var local = ExtendedState(); local.privacy.embeddedTor = true; store.state.extended = local
         try store.selectPrivacyProfile(.privateDelivery)
-        XCTAssertFalse(store.preferences.discoverable)
+        XCTAssertTrue(store.preferences.discoverable)
         XCTAssertTrue(store.preferences.requirePrivateDelivery)
         try store.selectPrivacyProfile(.everyday)
         XCTAssertTrue(store.preferences.discoverable)
         XCTAssertFalse(store.preferences.requirePrivateDelivery)
         XCTAssertTrue(store.preferences.embeddedTor)
+    }
+}
+
+extension SocialTests {
+    @MainActor func testPrivateDiscoveryIntroductionNeedsApprovalAndMaximumModeRejectsIt() async throws {
+        let store = ChatStore(), saved = store.state, oldAPI = store.api
+        defer { store.state = saved; store.api = oldAPI; try? store.save() }
+        let own = try XCTUnwrap(store.ownCard), peer = try LocalIdentity.create().card
+        store.state = VaultState(); store.state.extended = ExtendedState(); store.api = nil
+        try store.selectPrivacyProfile(.privateDelivery)
+        let room = Room(id: "dm:" + [own.id, peer.id].sorted().joined(separator: ":"), title: "", members: [own, peer], creator: "", isGroup: false, createdAt: Date())
+        var introduction = ChatEvent(kind: "contactRequest", room: room, senderName: "New friend")
+        introduction.replyMailbox = MailboxAddress(id: try Crypto.random(32).base64URL, writeToken: try Crypto.random(32).base64URL, expiresAt: Int(Date().timeIntervalSince1970) + 86400)
+        try store.acceptReplyMailbox(introduction.replyMailbox, sender: peer, roomID: room.id)
+        try store.apply(introduction, sender: peer)
+        XCTAssertTrue(store.state.rooms.isEmpty)
+        XCTAssertFalse(store.extended.trustedIDs.contains(peer.id))
+        XCTAssertEqual(store.requestRooms.first?.title, "New friend")
+        try await store.acceptRequest(room.id)
+        XCTAssertEqual(store.state.rooms.first?.id, room.id)
+        XCTAssertTrue(store.extended.trustedIDs.contains(peer.id))
+        let accepted = try Wire.decoder.decode(ChatEvent.self, from: XCTUnwrap(store.state.outbox.first?.envelope.deferredEvent))
+        XCTAssertEqual(accepted.kind, "contactAccepted")
+        XCTAssertTrue(store.requestRooms.isEmpty)
+        store.state.rooms = []; store.state.extended = ExtendedState()
+        try store.selectPrivacyProfile(.tor)
+        try store.apply(introduction, sender: peer)
+        XCTAssertTrue(store.requestRooms.isEmpty)
+        XCTAssertTrue(store.state.rooms.isEmpty)
+    }
+
+    @MainActor func testPrivateDeliveryAllowsOnlyEmptyDiscoveryIntroductionWithoutRoute() throws {
+        let store = ChatStore(), saved = store.state
+        defer { store.state = saved; try? store.save() }
+        store.state = VaultState(); store.state.extended = ExtendedState()
+        let identity = try XCTUnwrap(store.identity), own = try identity.card, peer = try LocalIdentity.create().card
+        try store.selectPrivacyProfile(.privateDelivery)
+        let room = Room(id: "dm:" + [own.id, peer.id].sorted().joined(separator: ":"), title: "", members: [own, peer], creator: "", isGroup: false, createdAt: Date())
+        let event = ChatEvent(kind: "contactRequest", room: room, senderName: "Me")
+        XCTAssertNoThrow(try store.sealEvent(event, from: identity, to: peer))
+        var text = event; text.kind = "message"
+        XCTAssertThrowsError(try store.sealEvent(text, from: identity, to: peer))
+        var hiddenContent = event
+        hiddenContent.message = ChatMessage(id: "hidden", roomID: room.id, sender: own.id, text: "Not an empty introduction", createdAt: Date(), expiresAt: nil)
+        XCTAssertThrowsError(try store.sealEvent(hiddenContent, from: identity, to: peer))
+        try store.selectPrivacyProfile(.tor)
+        XCTAssertThrowsError(try store.sealEvent(event, from: identity, to: peer))
+    }
+
+    @MainActor func testAutoDeleteChatsCanBeDisabledAndProtectsDraftsAndActiveChat() throws {
+        let store = ChatStore(), saved = store.state, active = store.activeRoomID
+        defer { store.state = saved; store.activeRoomID = active; try? store.save() }
+        store.state = VaultState(); store.state.extended = ExtendedState()
+        let now = Date(), old = now.addingTimeInterval(-7200)
+        let own = try XCTUnwrap(store.ownCard), peer = try LocalIdentity.create().card
+        let room = Room(id: "old", title: "Old", members: [own, peer], creator: "", isGroup: false, createdAt: old)
+        var draft = room; draft.id = "draft"; draft.draft = "Unsent draft"
+        var open = room; open.id = "open"
+        store.state.rooms = [room, draft, open]; store.activeRoomID = open.id
+        store.autoDeleteInactiveChats(now: now)
+        XCTAssertEqual(store.state.rooms.count, 3)
+        store.changeExtended { $0.privacy.autoDeleteChatsSeconds = 3600 }
+        store.autoDeleteInactiveChats(now: now)
+        XCTAssertEqual(Set(store.state.rooms.map(\.id)), Set(["draft", "open"]))
+        XCTAssertNil(store.extended.roomActivity["old"])
+    }
+
+    func testNewPreferencesKeepEntryProtectionAndDeletionOffDuringMigration() throws {
+        let decoded = try JSONDecoder().decode(PrivacyPreferences.self, from: Data("{}".utf8))
+        XCTAssertTrue(decoded.requireAccessKey)
+        XCTAssertEqual(decoded.autoDeleteChatsSeconds, 0)
+        let invalid = try JSONDecoder().decode(PrivacyPreferences.self, from: Data("{\"autoDeleteChatsSeconds\":-1}".utf8))
+        XCTAssertEqual(invalid.autoDeleteChatsSeconds, 0)
     }
 }

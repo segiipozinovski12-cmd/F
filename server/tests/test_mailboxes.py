@@ -22,6 +22,21 @@ class MailboxTests(unittest.TestCase):
         self.assertEqual(self.request('/v2/mailboxes','POST',result)[0],200)
         return result
 
+    def test_push_registration_requires_read_capability_and_is_revoked_on_delete(self):
+        box = self.mailbox()
+        body = {'token':'a'*64, 'environment':'sandbox', 'enabled':True}
+        self.assertEqual(self.call(box,'push','POST',body,'write')[0], 403)
+        self.assertEqual(self.call(box,'push','POST',body)[0], 200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM private_mailbox_push').fetchone()[0], 1)
+        self.assertEqual(self.call(box,'push','POST',dict(body,enabled=False))[0], 200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM private_mailbox_push').fetchone()[0], 0)
+        self.assertEqual(self.call(box,'push','POST',body)[0], 200)
+        self.assertEqual(self.call(box,'','DELETE')[0], 200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM private_mailbox_push').fetchone()[0], 0)
+
     def call(self, box, action, method='GET', body=None, scope='read'):
         # The fixture prefixes Bearer; substitute a capability in the WSGI environment.
         original=self.relay.user

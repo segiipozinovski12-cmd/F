@@ -35,7 +35,8 @@ final class APIClient {
     private let botExecutor: String?
     private let botInstance: String?
     private var authenticationTask: Task<Void, Error>?
-    private let allowEnrollment: Bool
+    private var authenticatedAt: Date?
+    private var allowEnrollment: Bool
 
     init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil, botToken: String? = nil, botExecutor: String? = nil, botInstance: String? = nil, allowEnrollment: Bool = false) throws {
         base = try Self.validateURL(server,privacy:privacy)
@@ -145,10 +146,14 @@ final class APIClient {
         struct Registration: Encodable {
             var id: String; var signingKey: String; var agreementKey: String; var binding: String
             var accountEpoch: String?; var enroll: Bool
+            var enrollmentVersion = 2
         }
         let registration = Registration(id: card.id, signingKey: card.signingKey, agreementKey: card.agreementKey, binding: card.binding,
                                         accountEpoch: capabilities.accountEpoch, enroll: allowEnrollment)
         let _: OK = try await request("v1/register", method: "POST", body: Wire.encoder.encode(registration), retry: false)
+        // Enrollment is a one-shot user action, never a permission retained by
+        // background reconnects after an operator resets the account epoch.
+        allowEnrollment = false
         struct Challenge: Decodable { var nonce: String }
         let challenge: Challenge = try await request("v1/challenge", method: "POST", body: Wire.encoder.encode(["id": card.id]), retry: false)
         let bytes = Data("VO1D-AUTH-1\n\(card.id)\n\(challenge.nonce)".utf8)
@@ -156,6 +161,7 @@ final class APIClient {
         struct Session: Decodable { var token: String }
         let result: Session = try await request("v1/session", method: "POST", body: Wire.encoder.encode(["id": card.id, "nonce": challenge.nonce, "signature": signature]), retry: false)
         token = result.token
+        authenticatedAt = Date()
     }
 
     func ensurePublicCode() async throws -> String {
@@ -350,6 +356,10 @@ final class APIClient {
         request.setValue(authorization, forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
         return request
+    }
+
+    func refreshCallAuthorization(force: Bool = false) async throws {
+        if callToken == nil && (force || token == nil || Date().timeIntervalSince(authenticatedAt ?? .distantPast) > 23 * 3600) { try await authenticate() }
     }
 
     func deleteAccount() async throws {

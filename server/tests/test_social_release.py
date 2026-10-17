@@ -87,5 +87,37 @@ class SocialReleaseTests(unittest.TestCase):
             self.assertFalse(reset_rollout.apply_requested_reset())
             operation.assert_not_called()
 
+    def test_new_reset_assigns_admin_only_after_verified_registration(self):
+        path = Path(self.relay.path)
+        reset(path, path.parent / 'admin-backup', first_registration_admin=True)
+        self.relay = Relay(path)
+        epoch = self.request('/v2/capabilities')[1]['accountEpoch']
+        for card in (self.alice_card, self.bob_card):
+            old_client = dict(card, accountEpoch=epoch, enroll=True)
+            self.assertEqual(self.request('/v1/register', 'POST', old_client)[0], 410)
+            self.assertEqual(self.request('/v1/register', 'POST', dict(old_client, enrollmentVersion=2))[0], 200)
+        self.assertTrue(self.request('/health')[1]['adminBootstrapPending'])
+        # A replayed public card cannot win. Proof of the signing key is required.
+        self.assertEqual(self.request('/v1/session', 'POST', {'id':self.alice_card['id'], 'nonce':'bad', 'signature':'bad'})[0], 401)
+        bob = self.login(self.bob, self.bob_card)
+        self.assertEqual(self.request('/v1/discovery', token=bob)[1]['username'], 'vo1d')
+        alice = self.login(self.alice, self.alice_card)
+        self.assertIsNone(self.request('/v1/discovery', token=alice)[1]['username'])
+        self.assertEqual(self.request('/v1/username', 'POST', {'username':'other'}, bob)[0], 409)
+        self.assertEqual(self.request('/v1/username', 'DELETE', token=bob)[0], 409)
+        self.relay = Relay(path)
+        self.assertFalse(self.request('/health')[1]['adminBootstrapPending'])
+
+    def test_permanent_purge_removes_only_named_account_reset_backups(self):
+        from reset_rollout import purge_account_backups
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old = root / 'reset-backup-vo1d-user-request-20261017-a4ba0300'
+            old.mkdir(); (old / 'relay.sqlite3').write_bytes(b'private account records')
+            unrelated = root / 'unrelated'; unrelated.mkdir()
+            purge_account_backups(root)
+            self.assertFalse(old.exists()); self.assertTrue(unrelated.is_dir())
+            purge_account_backups(root)  # Idempotent after a completed reset.
+
 
 if __name__ == '__main__': unittest.main()

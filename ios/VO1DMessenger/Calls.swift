@@ -56,7 +56,9 @@ private final class CallAudioEngine {
         guard !running else { return }
 
         let input = engine.inputNode
-        let format = input.inputFormat(forBus: 0)
+        // The tap consumes the node's output format. The hardware-side input
+        // format may differ after Bluetooth or voice-chat route negotiation.
+        let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
             throw MessengerError.invalid("Микрофон недоступен")
         }
@@ -170,6 +172,7 @@ final class CallManager: ObservableObject {
     @Published private(set) var speaker = true
     @Published private(set) var transport = "OFFLINE"
     @Published private(set) var lastFailure: String?
+    @Published private(set) var preparingCall = false
 
     private let provider: CXProvider
     private let bridge: CallKitBridge
@@ -189,6 +192,11 @@ final class CallManager: ObservableObject {
     private var socketReady = false
     private var nameResolver: ((String) -> String)?
     private var recordSink: ((CallRecord) -> Void)?
+    private var connectTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
+    private var startTask: Task<Void, Never>?
+    private var configurationID = UUID()
+    private var connectionID = UUID()
 
     private init() {
         let configuration = CXProviderConfiguration(localizedName: "VO1D")
@@ -223,11 +231,17 @@ final class CallManager: ObservableObject {
         }
         self.api = api
         self.identity = identity
+        startTask?.cancel(); startTask = nil; preparingCall = false
+        configurationID = UUID()
         self.canonicalCard = ownerCard ?? (try? identity.card)
         connectSocket()
     }
 
     func disconnect() {
+        configurationID = UUID()
+        connectTask?.cancel(); connectTask = nil
+        heartbeatTask?.cancel(); heartbeatTask = nil
+        startTask?.cancel(); startTask = nil; preparingCall = false
         pendingConfiguration = nil
         if let current = session {
             provider.reportCall(with: current.id, endedAt: Date(), reason: .failed)
@@ -247,18 +261,25 @@ final class CallManager: ObservableObject {
     }
 
     func startCall(peer: ContactCard, name: String) {
+        guard session == nil, startTask == nil else { return }
+        guard NetworkState.shared.connected else { lastFailure = "Для интернет-звонка подключись к Wi-Fi или мобильной сети"; return }
+        guard allowedPeer?(peer.id) != false else { lastFailure = "Сначала подтверди общение с этим контактом и разреши звонки"; return }
         lastFailure = nil
-        Task {
+        preparingCall = true
+        let expected = configurationID
+        startTask = Task {
+            defer { if expected == configurationID { preparingCall = false; startTask = nil } }
             let granted = await withCheckedContinuation { continuation in
                 AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
             }
+            guard !Task.isCancelled, expected == configurationID else { return }
             guard granted else { lastFailure = "Разреши микрофон в настройках iOS → VO1D"; return }
             if !socketReady {
                 if socket == nil { connectSocket() }
                 for _ in 0..<200 {
                     if socketReady { break }
-                    try? await Task.sleep(for: .milliseconds(100))
-                    guard api != nil else { return }
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                    guard expected == configurationID, api != nil else { return }
                 }
             }
             guard socketReady else { lastFailure = "Не удалось подключить канал звонка. Проверь сеть и маршрут Tor."; return }
@@ -306,6 +327,7 @@ final class CallManager: ObservableObject {
                 }
             }
         } catch {
+            lastFailure = "Не удалось начать звонок: \(error.localizedDescription)"
             cleanup()
         }
     }
@@ -406,15 +428,8 @@ final class CallManager: ObservableObject {
         }
         action.fulfill()
 
-        Task {
-            try? await send([
-                "type": "end",
-                "to": current.peerID,
-                "callID": current.callID,
-            ])
-            guard session?.id == current.id else { return }
-            finishCurrent(status: localEndStatus(current))
-        }
+        sendEndSignal(current)
+        finishCurrent(status: localEndStatus(current))
     }
 
     fileprivate func performMute(_ action: CXSetMutedCallAction) {
@@ -443,41 +458,72 @@ final class CallManager: ObservableObject {
 
     private func connectSocket() {
         guard let api else { return }
-
+        connectTask?.cancel(); heartbeatTask?.cancel()
+        let expected = UUID(); connectionID = expected
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         socketReady = false
         transport = "CONNECTING"
 
-        do {
-            let request = try api.callSocketRequest()
-            let task = api.session.webSocketTask(with: request)
-            socket = task
-            task.resume()
-            receiveLoop(task)
-        } catch {
-            transport = "OFFLINE"
+        connectTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await api.refreshCallAuthorization()
+                guard !Task.isCancelled, connectionID == expected, self.api === api else { return }
+                let request = try api.callSocketRequest()
+                let task = api.session.webSocketTask(with: request)
+                socket = task
+                task.resume()
+                receiveLoop(task)
+                heartbeatTask = Task { [weak self, weak task] in
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                        guard let self, let task, self.socket === task else { return }
+                        do {
+                            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                                task.sendPing { error in
+                                    if let error { continuation.resume(throwing: error) }
+                                    else { continuation.resume() }
+                                }
+                            }
+                        } catch { task.cancel(with: .goingAway, reason: nil); return }
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled, connectionID == expected, self.api === api else { return }
+                transport = "OFFLINE"
+                if preparingCall { lastFailure = "Не удалось авторизовать звонки: \(error.localizedDescription)" }
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                guard connectionID == expected, self.api === api else { return }
+                connectSocket()
+            }
         }
     }
 
     private func receiveLoop(_ task: URLSessionWebSocketTask) {
+        let expected = connectionID
         Task { [weak self] in
             guard let self else { return }
             do {
                 let message = try await task.receive()
-                guard self.socket === task else { return }
+                guard self.socket === task, self.connectionID == expected else { return }
                 try await self.handle(message)
                 self.receiveLoop(task)
             } catch {
-                guard self.socket === task else { return }
+                guard self.socket === task, self.connectionID == expected else { return }
                 self.socket = nil
                 self.socketReady = false
+                self.heartbeatTask?.cancel()
                 self.transport = "OFFLINE"
                 if let current = self.session, current.startedAt != nil, self.callKey != nil { self.pauseCurrent() }
                 else if self.session != nil { self.failCurrent(reason: .failed) }
 
+                if (task.response as? HTTPURLResponse)?.statusCode == 401 || task.closeCode.rawValue == 4003 {
+                    try? await self.api?.refreshCallAuthorization(force: true)
+                }
+
                 try? await Task.sleep(for: .seconds(3))
-                if self.api != nil && self.socket == nil {
+                if self.connectionID == expected && self.api != nil && self.socket == nil {
                     self.connectSocket()
                 }
             }
@@ -534,6 +580,9 @@ final class CallManager: ObservableObject {
               current.peerID == peerID else { return }
 
         switch type {
+        case "ringing":
+            guard !current.incoming, current.startedAt == nil else { return }
+            var updated = current; updated.phase = .ringing; session = updated
         case "answer":
             guard !current.incoming,let callSecrets,let identity,let peerCard,
                   let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
@@ -604,6 +653,7 @@ final class CallManager: ObservableObject {
             let peer: ContactCard
             if let packed = packet["card"] as? String { peer = try Wire.decoder.decode(ContactCard.self, from: Crypto.decode(packed)); try Crypto.validate(peer) }
             else { peer=try await api.card(peerID) }
+            guard self.api === api else { return }
             guard peer.id == peerID else { throw MessengerError.invalid("ID звонящего не совпал с ключом") }
             guard session==nil || session?.callID==callID else { return }
             let secrets=callSecrets ?? CallSecrets()
@@ -620,7 +670,11 @@ final class CallManager: ObservableObject {
                 update.remoteHandle=CXHandle(type:.generic,value:name); update.localizedCallerName=name
                 update.hasVideo=false; update.supportsHolding=false; update.supportsGrouping=false; update.supportsUngrouping=false; update.supportsDTMF=false
                 provider.reportNewIncomingCall(with:uuid,update:update) { [weak self] error in
-                    if error != nil { Task { @MainActor in self?.finishCurrent(status:"failed") } }
+                    if let error { Task { @MainActor in
+                        guard self?.session?.id == uuid else { return }
+                        self?.lastFailure = "iOS не приняла входящий звонок: \(error.localizedDescription)"
+                        self?.finishCurrent(status:"failed")
+                    } }
                 }
             }
             activateMediaIfReady()
@@ -714,6 +768,7 @@ final class CallManager: ObservableObject {
             return
         }
         provider.reportCall(with: current.id, endedAt: Date(), reason: reason)
+        sendEndSignal(current)
 
         let status: String
         switch reason {
@@ -723,6 +778,18 @@ final class CallManager: ObservableObject {
             status = current.phase == .active ? "interrupted" : "failed"
         }
         finishCurrent(status: status)
+    }
+
+    private func sendEndSignal(_ current: VoiceCallSession) {
+        guard let socket, socketReady, !current.peerID.isEmpty else { return }
+        let packet = ["type":"end", "to":current.peerID, "callID":current.callID]
+        Task {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: packet)
+                guard let text = String(data: data, encoding: .utf8) else { return }
+                try await socket.send(.string(text))
+            } catch { socket.cancel(with: .goingAway, reason: nil) }
+        }
     }
 
     private func localEndStatus(_ current: VoiceCallSession) -> String {
@@ -873,7 +940,7 @@ struct CallScreen: View {
                     }
                 }
 
-                Text("Аудио шифруется между устройствами. Relay видит участников, время и объём realtime-трафика, но не получает голос в открытом виде.")
+                Text("Интернет-звонок в любую страну без оплаты телефонных минут. Используется Wi-Fi или мобильный интернет. Аудио зашифровано между устройствами; узел доставки видит время и участников.")
                     .font(.caption2)
                     .foregroundStyle(Theme.secondary)
                     .multilineTextAlignment(.center)
@@ -893,7 +960,7 @@ struct CallScreen: View {
 
     private var statusText: String {
         switch session.phase {
-        case .ringing: return "ВХОДЯЩИЙ VO1D CALL"
+        case .ringing: return session.incoming ? "ВХОДЯЩИЙ VO1D CALL" : "ВЫЗОВ СОБЕСЕДНИКА…"
         case .connecting: return "СОЕДИНЕНИЕ…"
         case .reconnecting: return "ВОССТАНАВЛИВАЕМ СВЯЗЬ…"
         case .active: return "ЗАЩИЩЁННЫЙ АУДИОКАНАЛ"
@@ -921,7 +988,8 @@ struct CallScreen: View {
                         filled ? Color.white : Color.white.opacity(0.07),
                         in: Circle()
                     )
-                    .overlay(Circle().stroke(.white.opacity(filled ? 0 : 0.14)))
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: filled)
 
                 Text(title)
                     .font(.system(size: 9, weight: .semibold))

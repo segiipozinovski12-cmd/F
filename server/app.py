@@ -237,6 +237,9 @@ class Relay:
                 known = db.execute('SELECT 1 FROM identities WHERE id=?', (card['id'],)).fetchone()
                 if epoch and not known and (body.get('accountEpoch') != epoch[0] or body.get('enroll') is not True):
                     raise APIError(410, 'Server accounts were reset. Explicit registration in the updated app is required.')
+                minimum = db.execute("SELECT value FROM relay_meta WHERE key='minimum_enrollment_version'").fetchone()
+                if not known and minimum and body.get('enrollmentVersion') != int(minimum[0]):
+                    raise APIError(410, 'Update VO1D and explicitly register again after the account reset.')
                 admin = moderation.owner(db)
                 if admin and admin['owner'] == card['id']:
                     pinned = json.loads(admin['card'])
@@ -286,8 +289,15 @@ class Relay:
                 # DELETE condition makes concurrent replay lose, even under multiple workers.
                 if db.execute('DELETE FROM challenges WHERE nonce=?', (nonce,)).rowcount != 1:
                     raise APIError(401, 'Challenge already consumed')
-                # A login never claims a username. Only the explicit authenticated
-                # /v1/username transaction can acquire permanent @vo1d ownership.
+                # A reset can explicitly opt in to first verified registration.
+                # Public card upload alone cannot consume permanent ownership:
+                # the single-use challenge above proves possession of its key.
+                policy = db.execute("SELECT value FROM relay_meta WHERE key='bootstrap_admin_policy'").fetchone()
+                if policy and policy[0] == 'first_verified_registration':
+                    if moderation.owner(db) is None:
+                        moderation.claim(db, identity, 'vo1d', now, APIError)
+                        db.execute('INSERT INTO usernames VALUES (?,?,?)', ('vo1d', identity, now))
+                    db.execute("DELETE FROM relay_meta WHERE key='bootstrap_admin_policy'")
                 token = secrets.token_urlsafe(32)
                 db.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), identity, now + 86400))
                 return {'token': token}

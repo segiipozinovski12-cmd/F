@@ -31,11 +31,14 @@ struct MessageReactionsView: View {
             ForEach(ReactionCount.groups(reactions, ownID: ownID)) { item in
                 Button { choose(item.emoji) } label: {
                     HStack(spacing: 4) {
-                        Text(item.emoji).font(.system(size: 17))
+                        Text(item.emoji).font(.system(size: 19))
+                            .phaseAnimator(reduceMotion ? [1.0] : [1.0, 1.25, 1.0], trigger: item.count) { content, scale in
+                                content.scaleEffect(scale)
+                            } animation: { _ in Motion.press }
                         if item.count > 1 { Text("\(item.count)").font(.caption.bold()).contentTransition(.numericText()) }
                     }.padding(.horizontal, 9).padding(.vertical, 5)
                         .background((mine ? Color.black : Color.white).opacity(item.selected ? 0.16 : 0.07), in: Capsule())
-                        .overlay(Capsule().stroke((mine ? Color.black : Color.white).opacity(item.selected ? 0.24 : 0), lineWidth: 1))
+
                 }.buttonStyle(MotionButtonStyle())
                     .accessibilityLabel("\(item.emoji), \(item.count)")
                     .accessibilityAddTraits(item.selected ? .isSelected : [])
@@ -45,49 +48,103 @@ struct MessageReactionsView: View {
     }
 }
 
+enum ReactionStyle: CaseIterable {
+    case hearts, flame, laughter, electric, celebration, orbit
+    static func forEmoji(_ emoji: String) -> Self {
+        if ["❤️", "🖤", "🤍", "🥰", "😍", "💔", "💕", "💘"].contains(emoji) { return .hearts }
+        if ["🔥", "💯", "🚀"].contains(emoji) { return .flame }
+        if ["😂", "🤣", "🤡", "💀"].contains(emoji) { return .laughter }
+        if ["⚡️", "🤯", "😮", "✨"].contains(emoji) { return .electric }
+        if ["🎉", "🏆", "👏", "🎊", "🥳"].contains(emoji) { return .celebration }
+        return .orbit
+    }
+    var particles: Int { self == .celebration ? 18 : 12 }
+    func symbol(_ emoji: String, index: Int) -> String {
+        if index.isMultiple(of: 3) { return emoji }
+        switch self {
+        case .hearts: return index.isMultiple(of: 2) ? "♡" : "♥"
+        case .flame: return index.isMultiple(of: 2) ? "✦" : "•"
+        case .laughter: return "✧"
+        case .electric: return index.isMultiple(of: 2) ? "ϟ" : "✦"
+        case .celebration: return index.isMultiple(of: 2) ? "▰" : "●"
+        case .orbit: return "✦"
+        }
+    }
+}
+
+private struct ReactionBurst: View {
+    let emoji: String
+    let reduceMotion: Bool
+    @State private var progress = 0.0
+    @State private var popped = false
+    @State private var leaving = false
+    private var style: ReactionStyle { .forEmoji(emoji) }
+    var body: some View {
+        ZStack {
+            if !reduceMotion {
+                Circle().fill(.white.opacity(0.14 * (1 - progress)))
+                    .frame(width: 86, height: 86).blur(radius: 9)
+                    .scaleEffect(0.35 + progress * 1.3)
+                ForEach(0..<style.particles, id: \.self) { index in
+                    particle(index)
+                }
+            }
+            Text(emoji).font(.system(size: reduceMotion ? 28 : 52))
+                .scaleEffect(reduceMotion ? 1 : (leaving ? 0.85 : popped ? 1 : 0.2))
+                .rotationEffect(.degrees(reduceMotion ? 0 : (style == .laughter ? sin(progress * .pi * 6) * 14 : (1 - progress) * -12)))
+                .offset(y: reduceMotion ? 0 : (leaving ? -36 : popped ? -15 : 8))
+                .opacity(leaving ? 0 : 1)
+                .shadow(color: .black.opacity(0.25), radius: 7, y: 4)
+        }
+        .frame(width: 168, height: 160)
+        .allowsHitTesting(false).accessibilityHidden(true)
+        .task {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.58)) { popped = true }
+            withAnimation(.linear(duration: 1.25)) { progress = 1 }
+            do { try await Task.sleep(for: .milliseconds(reduceMotion ? 350 : 650)) } catch { return }
+            withAnimation(.easeInOut(duration: 0.48)) { leaving = true }
+        }
+    }
+    private func particle(_ index: Int) -> some View {
+        let angle = Double(index) / Double(style.particles) * .pi * 2
+        let distance = (index.isMultiple(of: 2) ? 78.0 : 58.0) * progress
+        let rising = style == .hearts || style == .flame
+        let x = cos(angle) * distance
+        let y = rising ? -progress * (70 + Double(index % 4) * 14) : sin(angle) * distance - 16 + (style == .celebration ? progress * progress * 70 : 0)
+        return Text(style.symbol(emoji, index: index))
+            .font(.system(size: index.isMultiple(of: 3) ? 22 : 13, weight: .bold))
+            .foregroundStyle(.white.opacity(0.95))
+            .scaleEffect(0.2 + sin(progress * .pi) * 0.95)
+            .rotationEffect(.degrees(progress * Double(index.isMultiple(of: 2) ? 100 : -100)))
+            .offset(x: x, y: y)
+            .opacity(max(0, 1 - progress * progress))
+    }
+}
+
 private struct ReactionFeedback: ViewModifier {
     var reactions: [String: String]
     var mine: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var token: UUID?
     @State private var emoji = ""
-    @State private var expanded = false
     func body(content: Content) -> some View {
         content.overlay(alignment: mine ? .topLeading : .topTrailing) {
-            if token != nil {
-                ZStack {
-                    if !reduceMotion {
-                        Circle().stroke(.white.opacity(expanded ? 0 : 0.75), lineWidth: 2)
-                            .frame(width: 58, height: 58).scaleEffect(expanded ? 1.7 : 0.3)
-                        ForEach(0..<8) { index in
-                            let angle = Double(index) * .pi / 4
-                            Text(index.isMultiple(of: 3) ? emoji : "✦")
-                                .font(.system(size: index.isMultiple(of: 3) ? 16 : 11))
-                                .offset(x: expanded ? cos(angle) * 55 : 0, y: expanded ? sin(angle) * 48 - 16 : 0)
-                                .rotationEffect(.degrees(expanded ? Double(index * 19) : 0))
-                                .scaleEffect(expanded ? 0.6 : 0.2).opacity(expanded ? 0 : 1)
-                        }
-                    }
-                    Text(emoji).font(.system(size: reduceMotion ? 26 : 42))
-                        .scaleEffect(reduceMotion ? 1 : (expanded ? 1.18 : 0.35))
-                        .offset(y: reduceMotion ? 0 : (expanded ? -22 : 5))
-                        .opacity(expanded ? 0 : 1)
-                }.frame(width: 120, height: 110).offset(x: mine ? -12 : 12, y: -32)
-                    .allowsHitTesting(false).accessibilityHidden(true)
+            if let token {
+                ReactionBurst(emoji: emoji, reduceMotion: reduceMotion).id(token)
+                    .offset(x: mine ? -20 : 20, y: -60)
+                    .transition(.opacity)
             }
         }
         .onChange(of: reactions) { old, new in
             guard let change = new.sorted(by: { $0.key < $1.key }).first(where: { old[$0.key] != $0.value && ReactionCatalog.all.contains($0.value) }) else { return }
             emoji = change.value
-            var transaction = Transaction(); transaction.disablesAnimations = true
-            withTransaction(transaction) { expanded = false; token = UUID() }
+            token = UUID()
         }
         .task(id: token) {
             guard let current = token else { return }
-            await Task.yield()
-            guard !Task.isCancelled, token == current else { return }
-            withAnimation(reduceMotion ? .easeOut(duration: 0.35) : .easeOut(duration: 0.85)) { expanded = true }
-            do { try await Task.sleep(for: .milliseconds(900)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(1400)) } catch { return }
             guard token == current else { return }
             token = nil
         }
@@ -112,7 +169,11 @@ struct ReactionPickerView: View {
               LazyVGrid(columns: [GridItem(.adaptive(minimum: 48))], spacing: 10) {
                 ForEach(Array(ReactionCatalog.all.enumerated()), id: \.element) { index, emoji in
                     Button {
-                        Haptics.light(); choose(emoji); dismiss()
+                        Haptics.light(); dismiss()
+                        Task { @MainActor in
+                            do { try await Task.sleep(for: .milliseconds(280)) } catch { return }
+                            choose(emoji)
+                        }
                     } label: {
                         Text(emoji).font(.system(size: 29)).frame(maxWidth: .infinity).frame(height: 50)
                             .background(.white.opacity(selected == emoji ? 0.18 : 0.045), in: RoundedRectangle(cornerRadius: 18))

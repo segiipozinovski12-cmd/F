@@ -18,6 +18,7 @@ teams = re.findall(r'DEVELOPMENT_TEAM\s*=\s*"?([A-Z0-9]{10})"?\s*;', previous)
 bundle_ids = re.findall(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([a-zA-Z0-9.-]+)"?\s*;', previous)
 local_team = os.environ.get('VO1D_DEVELOPMENT_TEAM', teams[0] if teams else '')
 local_bundle = os.environ.get('VO1D_BUNDLE_ID', bundle_ids[0] if bundle_ids else 'io.vo1d.messenger')
+debug_push = os.environ.get('VO1D_ENABLE_DEBUG_PUSH') == '1'
 
 # Prepare pinned native dependencies before Xcode resolves the local Swift packages.
 if '--project-only' not in sys.argv:
@@ -108,13 +109,13 @@ def configurations(name, settings):
             allsettings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
             allsettings['ENABLE_TESTABILITY']='YES'
         if name=='app':
-            if mode == 'Debug':
+            if mode == 'Debug' and not debug_push:
                 # Personal Apple Development teams cannot provision Push Notifications.
                 # Keep Debug installable on a real iPhone; Release retains APNs for paid-team/App Store signing.
                 allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.Debug.entitlements'
                 allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.Debug.plist'
             else:
-                allsettings['APS_ENVIRONMENT']='production'
+                allsettings['APS_ENVIRONMENT']='development' if mode == 'Debug' else 'production'
                 allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.entitlements'
                 allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.plist'
         content=' '.join(f'{k} = {q(v)};' for k,v in allsettings.items())

@@ -71,6 +71,7 @@ class GatewayParserTests(unittest.IsolatedAsyncioTestCase):
             signature=base64.b64encode(private.sign(f"VO1D-CALL-KEY-2\n{call}\n{card['id']}\n{target}\n{key}".encode())).decode()
             return dict(type=kind,to=target,callID=call,key=key,keySignature=signature)
         await a.send_json(offer('invite',a_private,a_card,b_card['id'])); await b.receive_json(timeout=2)
+        self.assertEqual((await a.receive_json(timeout=2))['type'], 'ringing')
         await b.send_json(offer('answer',b_private,b_card,a_card['id'])); await a.receive_json(timeout=2)
         await a.close(); self.assertEqual((await b.receive_json(timeout=2))['type'],'paused')
         c=await self.client.ws_connect('/v1/call/socket',headers={'Authorization':'Bearer '+c_token}); await c.receive_json(timeout=2)

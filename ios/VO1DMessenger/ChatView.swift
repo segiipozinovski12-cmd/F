@@ -208,7 +208,7 @@ struct ChatView: View {
                         } label: {
                             Image(systemName: "phone.fill")
                         }
-                        .disabled(store.connection != "Подключён")
+                        .disabled(store.api == nil)
                         .accessibilityLabel("Позвонить")
                     }
 
@@ -222,7 +222,7 @@ struct ChatView: View {
                     }
                     .accessibilityLabel(selectionMode ? "Закончить выбор" : "Выбрать сообщения")
 
-                    Button { info = true } label: { Image(systemName: "ellipsis.circle") }
+                    Button { info = true } label: { Image(systemName: "slider.horizontal.3") }
                         .accessibilityLabel("Настройки чата")
                 }
             }
@@ -364,6 +364,7 @@ struct ChatView: View {
             .animation(reduceMotion ? nil : Motion.layout, value: messages.map(\.id))
         }
         .scrollDismissesKeyboard(.interactively)
+        .scrollClipDisabled()
         .onChange(of: messages.count) { _, _ in
             guard initialMessageID==nil && search.isEmpty else { return }
             withAnimation(reduceMotion ? nil : Motion.layout) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -477,6 +478,7 @@ struct ChatView: View {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button { Task { do { try await audio.start() } catch is CancellationError { } catch { store.error = error.localizedDescription } } } label: {
                             Image(systemName: "mic").font(.title3).frame(width: 42, height: 42).background(Theme.panel, in: Circle())
+                                .contentTransition(.symbolEffect(.replace))
                         }.accessibilityLabel("Записать голосовое сообщение")
                     } else {
                         HStack(spacing: 6) {
@@ -516,11 +518,13 @@ struct ChatView: View {
                                     .background(.white, in: Circle())
                             }
                             .accessibilityLabel("Отправить")
+                            .transition(.scale(scale: 0.7).combined(with: .opacity))
                         }
                     }
                 }.padding(.horizontal, 14).padding(.vertical, 10)
             }
-        }.background(chatPalette.background.opacity(0.96)).overlay(alignment: .top) { Capsule().fill(.white.opacity(0.06)).frame(height: 0.5) }
+        }.background(chatPalette.background.opacity(0.96))
+            .animation(reduceMotion ? nil : Motion.layout, value: text.isEmpty)
     }
     func bubble(_ message: ChatMessage, group: Bool) -> some View {
         let mine = message.sender == store.myID

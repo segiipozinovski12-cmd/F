@@ -15,6 +15,7 @@ final class ChatStore: ObservableObject {
     @Published var sessionUnlocked = false
     @Published var fatalError: String?
     @Published var serverResetRequired = false
+    @Published var pushStatus = ""
     @Published var typing: [String: Date] = [:]
     @Published var activeRoomID: String?
     @Published var notificationRoomID: String?
@@ -74,7 +75,7 @@ final class ChatStore: ObservableObject {
         }
         let credentialsChanged = try ensureCredentials()
         locked = state.appLock || activeProfile?.isPrivateSpace == true
-        sessionUnlocked = !state.onboarded
+        sessionUnlocked = !state.onboarded || (!preferences.requireAccessKey && activeProfile?.isPrivateSpace != true)
 
         var relayChanged = false
         if state.onboarded {
@@ -492,6 +493,7 @@ final class ChatStore: ObservableObject {
         var input = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let card: ContactCard
         let name: String
+        var discoveryLookup = false
 
         if input.uppercased() == Self.builtinBotKey {
             _ = ensureBuiltinBot()
@@ -526,6 +528,8 @@ final class ChatStore: ObservableObject {
             if invite.version == 2 { try importPrivateInvite(invite) }
         } else {
             guard let api else { throw MessengerError.invalid("Нет соединения с VO1D") }
+            guard preferences.allowDiscoveryRequests else { throw MessengerError.invalid("В максимальном режиме используй приватную ссылку или QR") }
+            discoveryLookup = true
             let normalized = input.uppercased()
             let usernameCandidate = input
                 .lowercased()
@@ -556,6 +560,7 @@ final class ChatStore: ObservableObject {
         guard card.id != myID else { throw MessengerError.invalid("Это твой собственный ID") }
         if let existing = state.contacts.first(where: { $0.id == card.id }) {
             guard existing.card == card else { throw MessengerError.invalid("Ключ контакта изменился") }
+            guard !existing.blocked else { throw MessengerError.invalid("Контакт заблокирован") }
             return existing
         }
         let bot = try? await api?.botDirectory(card.id)
@@ -564,13 +569,17 @@ final class ChatStore: ObservableObject {
         let contact = Contact(card: card, name: bot?.name ?? name, isBot: bot != nil)
         state.contacts.append(contact)
         changeExtended { if !$0.trustedIDs.contains(card.id) { $0.trustedIDs.append(card.id) } }
+        if discoveryLookup && bot == nil {
+            let room = try direct(contact)
+            try enqueue(ChatEvent(kind: "contactRequest", room: room, senderName: state.nickname), room: room)
+        }
         try? await trustOnServer(card.id,trusted:true)
         try requireCurrentSession(fence)
         try save()
         return contact
     }
     func startCall(_ roomID: String) {
-        guard connection == "Подключён",
+        guard sessionUnlocked, !locked, api != nil,
               !isLocalUtilityRoom(roomID),
               let room = state.rooms.first(where: { $0.id == roomID }),
               !room.isGroup,
@@ -582,6 +591,9 @@ final class ChatStore: ObservableObject {
             error = "Боты этой версии поддерживают текстовые команды, без звонков"
             return
         }
+        guard !state.contacts.contains(where: { $0.id == peer.id && $0.blocked }) else { error = "Контакт заблокирован"; return }
+        guard !preferences.requireRequests || extended.trustedIDs.contains(peer.id) else { error = "Сначала прими запрос на общение"; return }
+        guard !preferences.verifiedOnlyCalls || state.contacts.contains(where: { $0.id == peer.id && $0.verified }) else { error = "Сначала проверь отпечаток контакта или измени разрешение звонков"; return }
         CallManager.shared.startCall(peer: peer, name: room.title)
     }
 
@@ -1579,6 +1591,12 @@ final class ChatStore: ObservableObject {
                   incoming.id == "dm:" + incoming.members.map(\.id).sorted().joined(separator: ":") else {
                 throw MessengerError.invalid("Неверный личный чат")
             }
+            if event.kind == "contactRequest" {
+                guard event.message == nil, preferences.allowDiscoveryRequests else { return }
+            }
+            if event.kind == "contactAccepted" {
+                guard event.message == nil, extended.trustedIDs.contains(sender.id) else { return }
+            }
         } else {
             guard incoming.members.contains(where: { $0.id == incoming.creator }) else {
                 throw MessengerError.invalid("Создатель должен оставаться участником группы")
@@ -1651,7 +1669,7 @@ final class ChatStore: ObservableObject {
                 throw MessengerError.invalid("Событие не адресовано этому участнику")
             }
 
-            let allowedFirstEvents = ["room", "message", "roomUpdate"]
+            let allowedFirstEvents = ["room", "message", "roomUpdate", "contactRequest", "contactAccepted"]
             guard allowedFirstEvents.contains(event.kind),
                   !incoming.isGroup || incoming.creator == sender.id else {
                 throw MessengerError.invalid("Сначала нужно приглашение создателя группы")
@@ -1660,7 +1678,7 @@ final class ChatStore: ObservableObject {
             let known = extended.trustedIDs.contains(sender.id)
             let approval = extended.acceptedGroupInvites[incoming.id]
             let invited = (approval?.expiresAt ?? 0) > Int(Date().timeIntervalSince1970) && approval?.creator == sender && incoming.creator == sender.id
-            let needsConsent = incoming.isGroup ? (!preferences.allowGroupInvites && !invited) : (preferences.requireRequests && !known)
+            let needsConsent = incoming.isGroup ? (!preferences.allowGroupInvites && !invited) : ((preferences.requireRequests || event.kind == "contactRequest") && !known)
             if needsConsent && !acceptedPendingIDs.contains(incoming.id) {
                 changeExtended {
                     let bytes=$0.pendingEvents.reduce(0) { $0 + ($1.event.message?.attachment?.data.count ?? 0) }
@@ -1700,6 +1718,9 @@ final class ChatStore: ObservableObject {
 
         for member in incoming.members where member.id != myID && !state.contacts.contains(where: { $0.id == member.id }) {
             state.contacts.append(Contact(card: member, name: member.id == sender.id ? String(event.senderName.prefix(40)) : "Ghost \(member.shortID.prefix(6))"))
+        }
+        if event.kind == "contactRequest", extended.trustedIDs.contains(sender.id) {
+            try enqueue(ChatEvent(kind: "contactAccepted", room: incoming, senderName: state.nickname), room: incoming, to: [sender])
         }
         if event.kind == "message", var message = event.message {
             if let effectiveRoom = state.rooms.first(where: { $0.id == incoming.id }),
@@ -1823,9 +1844,9 @@ final class ChatStore: ObservableObject {
             }
         }
     }
-    func expire() {
+    func expire(now: Date = Date()) {
         expireSocial()
-        let now = Date()
+        autoDeleteInactiveChats(now: now)
         state.messages.removeAll { message in
             let days = extended.roomRetention[message.roomID] ?? preferences.localRetentionDays
             return (message.expiresAt.map { $0 <= now } ?? false) ||
@@ -1953,7 +1974,28 @@ final class ChatStore: ObservableObject {
         }
         if let api { try? await PushCoordinator.shared.register(api:api,enabled:state.notificationsEnabled==true) }
         guard (try? requireCurrentSession(fence)) != nil else { return }
+        if let api { try? await BackgroundCalls.prepare(self, api: api) }
+        guard (try? requireCurrentSession(fence)) != nil else { return }
+        await refreshPushStatus()
         persist()
+    }
+
+    func refreshPushStatus() async {
+        let fence = sessionFence
+        guard AppConfig.pushEnabled else {
+            pushStatus = "Эта Debug-сборка без Push Notifications. Для уведомлений при закрытом VO1D нужна сборка с APNs и платная команда Apple Developer."
+            return
+        }
+        guard let api else { pushStatus = "Подключись, чтобы проверить уведомления"; return }
+        do {
+            struct Status: Decodable { var configured: Bool }
+            let status: Status = try await api.request("v1/push/status")
+            try requireCurrentSession(fence)
+            pushStatus = status.configured ? "Apple push настроены. Уведомление «Новое сообщение» не содержит текста или имени. Для доставки Apple-токен связывается с адресами очередей этого устройства; максимальный режим это отключает." : "На сервере не настроен ключ Apple APNs. Пока новые сообщения появляются при открытии VO1D."
+        } catch {
+            guard (try? requireCurrentSession(fence)) != nil else { return }
+            pushStatus = "Не удалось проверить доступность Apple push"
+        }
     }
 
     func deleteMessages(_ ids: Set<String>, roomID: String) throws {

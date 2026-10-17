@@ -336,6 +336,12 @@ class RealtimeGateway:
                     stored=db.execute("SELECT 1 FROM envelopes WHERE id=? AND recipient=?",(body.get("id"),target)).fetchone()
                 if stored:
                     await self.push.send(target)
+            if request.method == 'POST' and re.fullmatch(r'/v2/mailboxes/[A-Za-z0-9_-]{43}/envelopes', request.path):
+                mailbox = request.path.split('/')[3]
+                with self.relay.db() as db:
+                    stored = db.execute('SELECT 1 FROM private_envelopes WHERE id=? AND mailbox=?',(body.get('id'),mailbox)).fetchone()
+                if stored:
+                    await self.push.send(mailbox, private_mailbox=True)
             if request.method == "DELETE" and request.path == "/v1/account":
                 self._cleanup_blobs(include_orphans=True)
         except APIError as exc:
@@ -418,6 +424,7 @@ class RealtimeGateway:
         for call_id, route in list(self.calls.items()):
             if route["b"] == user and not route["accepted"]:
                 await ws.send_json({"type":"invite","from":route["a"],"callID":call_id,"key":route["key"],"keySignature":route["keySignature"],**route.get('extra',{})})
+                await self._forward(route["a"], {"type":"ringing", "from":user, "callID":call_id, "delivery":"online"})
 
         last_session_check = time.monotonic()
         try:
@@ -517,13 +524,16 @@ class RealtimeGateway:
                         await self._send_error(ws, "peer_busy")
                         continue
                     if peer_ws is None:
-                        delivered=await self.push.send(target,"voip",{"id":call_id,"from":user})
-                        if not delivered:
-                            async with self.lock:
-                                self.calls.pop(call_id,None)
-                            await self._send_error(ws,"peer_offline")
+                        # Keep the bounded ringing route while iOS wakes or a
+                        # suspended foreground socket reconnects. Missing APNs
+                        # credentials must not turn a brief gap into instant hangup.
+                        await self.push.send(target,"voip",{"id":call_id,"from":user})
+                        await ws.send_json({"type":"ringing", "from":target, "callID":call_id, "delivery":"waiting"})
                         continue
-                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature,**extra})
+                    delivered = await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature,**extra})
+                    if not delivered:
+                        await self.push.send(target,"voip",{"id":call_id,"from":user})
+                    await ws.send_json({"type":"ringing", "from":target, "callID":call_id, "delivery":"online" if delivered else "waiting"})
                     continue
 
                 async with self.lock:

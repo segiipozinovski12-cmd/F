@@ -23,6 +23,9 @@ def install(db):
         CREATE TABLE IF NOT EXISTS private_mailboxes (
           id TEXT PRIMARY KEY, read_digest TEXT NOT NULL, write_digest TEXT NOT NULL,
           expires INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS private_mailbox_push (
+          mailbox TEXT NOT NULL, token TEXT NOT NULL, environment TEXT NOT NULL,
+          PRIMARY KEY(mailbox,token));
         CREATE TABLE IF NOT EXISTS private_envelopes (
           id TEXT, mailbox TEXT, body TEXT NOT NULL, size INTEGER NOT NULL,
           expires INTEGER NOT NULL, PRIMARY KEY(id,mailbox));
@@ -47,6 +50,7 @@ def clean(db, now):
     db.execute('DELETE FROM private_envelopes WHERE expires<=? OR mailbox IN (SELECT id FROM private_mailboxes WHERE expires<=?)',(now,now))
     db.execute('DELETE FROM private_seen WHERE expires<=? OR mailbox IN (SELECT id FROM private_mailboxes WHERE expires<=?)',(now,now))
     db.execute('DELETE FROM private_mailboxes WHERE expires<=?',(now,))
+    db.execute('DELETE FROM private_mailbox_push WHERE mailbox NOT IN (SELECT id FROM private_mailboxes)')
     db.execute('DELETE FROM retired_mailboxes WHERE expires<=?',(now,))
 
 
@@ -119,6 +123,19 @@ def handle(relay, env, body, ip_hash, error, decode):
         clean(db,now)
         mailbox_expiry=authorize(db,mailbox,env,scope,error)
         action=parts[3] if len(parts)>=4 else ''
+        if method == 'POST' and action == 'push':
+            from privacy import PUSH_TOKEN
+            token, environment, enabled = body.get('token'), body.get('environment'), body.get('enabled')
+            if not isinstance(token,str) or not PUSH_TOKEN.fullmatch(token) or environment not in ('sandbox','production') or type(enabled) is not bool:
+                raise error(400,'Invalid mailbox notification permission')
+            token = token.lower()
+            if enabled:
+                if db.execute('SELECT count(*) FROM private_mailbox_push WHERE mailbox=?',(mailbox,)).fetchone()[0] >= 8 and not db.execute('SELECT 1 FROM private_mailbox_push WHERE mailbox=? AND token=?',(mailbox,token)).fetchone():
+                    raise error(429,'Mailbox notification device limit')
+                db.execute('INSERT INTO private_mailbox_push VALUES (?,?,?) ON CONFLICT(mailbox,token) DO UPDATE SET environment=excluded.environment',(mailbox,token,environment))
+            else:
+                db.execute('DELETE FROM private_mailbox_push WHERE mailbox=? AND token=?',(mailbox,token))
+            return {'ok':True}
         if method == 'DELETE' and action == 'invites':
             token = parts[4]
             row = db.execute('SELECT mailbox FROM private_invite_seen WHERE token=?', (token,)).fetchone()
@@ -182,6 +199,7 @@ def handle(relay, env, body, ip_hash, error, decode):
             db.executemany('DELETE FROM private_envelopes WHERE mailbox=? AND id=?',[(mailbox,v) for v in ids])
             return {'ok':True}
         if method=='DELETE' and action=='':
+            db.execute('DELETE FROM private_mailbox_push WHERE mailbox=?',(mailbox,))
             db.execute('INSERT OR IGNORE INTO retired_mailboxes SELECT id,read_digest,expires FROM private_mailboxes WHERE id=?',(mailbox,))
             db.execute('DELETE FROM private_invites WHERE mailbox=?',(mailbox,))
             db.execute('DELETE FROM private_envelopes WHERE mailbox=?',(mailbox,))

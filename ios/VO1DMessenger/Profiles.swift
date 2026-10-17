@@ -90,7 +90,7 @@ extension ChatStore {
         profileRegistry = registry; identity = nextIdentity; ownCard = try nextIdentity.card; vault = nextVault; state = nextState
         serverResetRequired = false
         deliveryIssues = nextState.deliveryRetryState ?? [:]; botStatuses = [:]; typing = [:]; activeRoomID = nil; notificationRoomID = nil
-        revealedHiddenRooms = false; locked = privateSpace ? false : state.appLock; sessionUnlocked = privateSpace || !state.onboarded; error = nil
+        revealedHiddenRooms = false; locked = privateSpace ? false : state.appLock; sessionUnlocked = privateSpace || !state.onboarded || !preferences.requireAccessKey; error = nil
         connection = state.onboarded ? "Подключение…" : "Новая независимая личность"
         if state.onboarded { await connectProductionRelay() }
     }

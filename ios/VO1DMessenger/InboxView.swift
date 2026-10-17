@@ -232,7 +232,6 @@ struct InboxView: View {
                             .padding(.vertical, 10)
                             .background(filter == item ? Color.white : Color.white.opacity(0.055), in: Capsule())
                             .foregroundStyle(filter == item ? .black : Theme.secondary)
-                            .overlay(Capsule().stroke(.white.opacity(filter == item ? 0 : 0.08)))
                     }
                 }
             }

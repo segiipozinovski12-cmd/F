@@ -118,6 +118,10 @@ extension APIClient {
         let result: Inbox = try await capability("v2/mailboxes/\(mailbox.id)/inbox", token: mailbox.readToken)
         return result.envelopes
     }
+    func registerMailboxPush(_ mailbox: LocalMailbox, token: String, environment: String, enabled: Bool) async throws {
+        struct Body: Encodable { var token: String; var environment: String; var enabled: Bool }
+        let _: OK = try await capability("v2/mailboxes/\(mailbox.id)/push", token: mailbox.readToken, method: "POST", body: Wire.encoder.encode(Body(token: token, environment: environment, enabled: enabled)))
+    }
     func privateAck(_ ids: [String], mailbox: LocalMailbox) async throws {
         let _: OK = try await capability("v2/mailboxes/\(mailbox.id)/ack", token: mailbox.readToken, method: "POST", body: Wire.encoder.encode(["ids": ids]))
     }

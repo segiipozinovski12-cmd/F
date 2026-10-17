@@ -28,7 +28,7 @@ extension ChatStore {
         }.map(\.id)
         struct Body: Encodable { var discoverable: Bool; var inactivityDays: Int; var trustedCalls: Bool }
         let _: APIClient.OK = try await api.request("v1/privacy",method:"POST",
-            body: Wire.encoder.encode(Body(discoverable:preferences.discoverable,
+            body: Wire.encoder.encode(Body(discoverable:preferences.discoverable && preferences.allowDiscoveryRequests,
                 inactivityDays:preferences.inactivityDays,trustedCalls:preferences.requireRequests || preferences.verifiedOnlyCalls)))
         try requireCurrentSession(fence)
         let _: APIClient.OK = try await api.request("v1/trust/sync",method:"POST",body:Wire.encoder.encode(["ids":allowed]))
@@ -97,6 +97,10 @@ extension ChatStore {
                 changeExtended { if !$0.trustedIDs.contains(sender.id) { $0.trustedIDs.append(sender.id) } }
             }
             changeExtended { $0.pendingEvents.removeAll { $0.room.id == roomID } }
+            if let introduction = events.first(where: { $0.event.kind == "contactRequest" }),
+               let room = state.rooms.first(where: { $0.id == roomID }) {
+                try enqueue(ChatEvent(kind: "contactAccepted", room: room, senderName: state.nickname), room: room, to: [introduction.sender])
+            }
             try save()
         } catch {
             state = original
@@ -125,7 +129,12 @@ extension ChatStore {
 
     var requestRooms: [Room] {
         var seen = Set<String>()
-        return extended.pendingEvents.compactMap { seen.insert($0.room.id).inserted ? $0.room : nil }
+        return extended.pendingEvents.compactMap {
+            guard seen.insert($0.room.id).inserted else { return nil }
+            var room = $0.room
+            if !room.isGroup { room.title = String($0.event.senderName.prefix(40)) }
+            return room
+        }
     }
 
     func toggleBookmark(_ id: String) {
@@ -183,8 +192,48 @@ extension ChatStore {
             $0.bookmarks.removeAll { ids.contains($0) }
             $0.pendingEvents.removeAll { $0.room.id == roomID }
             $0.roomNotes[roomID] = nil
+            $0.roomRetention[roomID] = nil
+            $0.roomActivity[roomID] = nil
+            $0.roomFontSize[roomID] = nil
+            $0.notes = $0.notes.filter { !ids.contains($0.key) }
+            $0.ocrText = $0.ocrText.filter { !ids.contains($0.key) }
+            $0.protectedMessages.removeAll { ids.contains($0) }
+            $0.reminders.removeAll { $0.roomID == roomID }
             for i in $0.folders.indices { $0.folders[i].roomIDs.removeAll { $0 == roomID } }
         }
+    }
+
+    func autoDeleteInactiveChats(now: Date) {
+        let seconds = preferences.autoDeleteChatsSeconds
+        guard seconds > 0 else { return }
+        let cutoff = now.addingTimeInterval(-Double(seconds))
+        var local = extended
+        for room in state.rooms {
+            let activity = state.messages.filter { $0.roomID == room.id }.map(\.createdAt).max() ?? room.createdAt
+            local.roomActivity[room.id] = max(local.roomActivity[room.id] ?? room.createdAt, activity)
+        }
+        state.extended = local
+        let expired = state.rooms.filter { room in
+            guard !isLocalUtilityRoom(room.id), room.id != activeRoomID, room.draft.isEmpty,
+                  !state.outbox.contains(where: { pending in
+                      guard let data = pending.envelope.deferredEvent,
+                            let event = try? Wire.decoder.decode(ChatEvent.self, from: data) else {
+                          return room.members.contains(where: { $0.id == pending.envelope.recipient })
+                      }
+                      return event.room.id == room.id
+                  }),
+                  !state.messages.contains(where: { $0.roomID == room.id && $0.state == "scheduled" }),
+                  !room.members.contains(where: { $0.id == CallManager.shared.session?.peerID }) else { return false }
+            let activity = extended.roomActivity[room.id] ?? room.createdAt
+            return max(room.createdAt, activity) <= cutoff
+        }.map(\.id)
+        for id in expired { removeRoom(id) }
+    }
+
+    func setRequireAccessKey(_ enabled: Bool) {
+        guard sessionUnlocked, !locked else { return }
+        guard enabled || activeProfile?.isPrivateSpace != true else { error = "В Private Space подтверждение входа обязательно"; return }
+        changeExtended { $0.privacy.requireAccessKey = enabled }
     }
 
     func cancelMessage(_ id: String) {
@@ -280,7 +329,7 @@ extension ChatStore {
     }
 
     func sealEvent(_ input: ChatEvent, from identity: LocalIdentity, to target: ContactCard) throws -> Envelope {
-        if preferences.requirePrivateDelivery, privateRoute(peerID:target.id,roomID:input.room.id) == nil {
+        if preferences.requirePrivateDelivery, !preferences.permitsDiscoveryIntroduction(input), privateRoute(peerID:target.id,roomID:input.room.id) == nil {
             throw MessengerError.invalid("Нужен приватный QR контакта: строгий режим скрывает отправителя при доставке")
         }
         var event=input
