@@ -204,4 +204,13 @@ extension SocialTests {
         let invalid = try JSONDecoder().decode(PrivacyPreferences.self, from: Data("{\"autoDeleteChatsSeconds\":-1}".utf8))
         XCTAssertEqual(invalid.autoDeleteChatsSeconds, 0)
     }
+
+    func testLegacyMaximumModeKeepsPublicIntroductionsDisabledDuringMigration() throws {
+        let maximum = try JSONDecoder().decode(PrivacyPreferences.self, from: Data("{\"embeddedTor\":true,\"requirePrivateDelivery\":true,\"discoverable\":false}".utf8))
+        XCTAssertFalse(maximum.allowDiscoveryRequests)
+        XCTAssertFalse(maximum.discoverable)
+        let privateDelivery = try JSONDecoder().decode(PrivacyPreferences.self, from: Data("{\"requirePrivateDelivery\":true,\"discoverable\":false}".utf8))
+        XCTAssertTrue(privateDelivery.allowDiscoveryRequests)
+        XCTAssertFalse(privateDelivery.discoverable)
+    }
 }

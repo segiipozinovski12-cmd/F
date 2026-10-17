@@ -64,7 +64,6 @@ struct PrivacyPreferences: Codable {
         requireRequests=try container.decodeIfPresent(Bool.self,forKey:.requireRequests) ?? requireRequests
         allowGroupInvites=try container.decodeIfPresent(Bool.self,forKey:.allowGroupInvites) ?? allowGroupInvites
         discoverable=try container.decodeIfPresent(Bool.self,forKey:.discoverable) ?? discoverable
-        allowDiscoveryRequests=try container.decodeIfPresent(Bool.self,forKey:.allowDiscoveryRequests) ?? true
         requireAccessKey=try container.decodeIfPresent(Bool.self,forKey:.requireAccessKey) ?? true
         autoDeleteChatsSeconds=try container.decodeIfPresent(Int.self,forKey:.autoDeleteChatsSeconds) ?? 0
         if ![0, 3600, 86400, 604800, 2592000].contains(autoDeleteChatsSeconds) { autoDeleteChatsSeconds = 0 }
@@ -103,6 +102,8 @@ struct PrivacyPreferences: Codable {
         linkPreviews=try container.decodeIfPresent(Bool.self,forKey:.linkPreviews) ?? linkPreviews
         wifiOnlyUploads=try container.decodeIfPresent(Bool.self,forKey:.wifiOnlyUploads) ?? wifiOnlyUploads
         anonymizeFilenames=try container.decodeIfPresent(Bool.self,forKey:.anonymizeFilenames) ?? anonymizeFilenames
+        let legacyMaximum = embeddedTor && requirePrivateDelivery && !discoverable
+        allowDiscoveryRequests=try container.decodeIfPresent(Bool.self,forKey:.allowDiscoveryRequests) ?? !legacyMaximum
     }
 
 }

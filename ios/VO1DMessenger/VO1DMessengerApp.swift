@@ -91,14 +91,11 @@ struct RootView: View {
                     VStack(spacing: 22) {
                         BrandMark(size: 90)
                         Text("Новый старт VO1D").font(.largeTitle.bold())
-                        Text("Серверные аккаунты были сброшены. Локальная зашифрованная история сохранена на этом iPhone. При новой регистрации включится поиск по ID; маршрут подключения сохранится. Строгий режим приглашений можно выбрать в настройках.")
+                        Text("Серверные аккаунты были сброшены. Локальная зашифрованная история, маршрут и выбранные разрешения поиска сохранятся. Режим защиты можно изменить в настройках после регистрации.")
                             .multilineTextAlignment(.center).foregroundStyle(.secondary)
                         Button(store.busy ? "Регистрируем…" : "Зарегистрироваться заново") {
                             Task {
-                                do {
-                                    try store.selectPrivacyProfile(.everyday)
-                                    await store.configure(name: store.state.nickname, server: store.state.server)
-                                } catch { store.error = error.localizedDescription }
+                                await store.configure(name: store.state.nickname, server: store.state.server)
                             }
                         }.buttonStyle(PrimaryButton()).disabled(store.busy)
                     }.padding(28)
