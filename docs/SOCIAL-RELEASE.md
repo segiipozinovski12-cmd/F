@@ -98,21 +98,29 @@ permissions, or broadcast a public account identity without local opt-in.
 
 Login/registration never automatically assigns a username. The first authenticated
 explicit claim of `@vo1d` owns it permanently. Concurrent claims have one winner;
-rename/account deletion cannot transfer ownership. Existing permanent ownership is
-preserved by this update, including any owner assigned by the earlier rollout.
-Owner powers remain protected by MFA. The production service was missing the
-persistent MFA-encryption key; it has now been configured in Railway environment
-variables and takes effect at the next deployment. It is not stored in the repo.
+rename/account deletion cannot transfer ownership. The separately authorized full
+account reset below clears permanent ownership together with all other accounts.
+Owner powers remain protected by MFA. The persistent MFA-encryption key is
+configured in Railway environment variables and active in production. It is not
+stored in the repo.
 
-## Prior account reset: do not repeat
+## Completed account resets: do not repeat without a new explicit request
 
 The earlier user-authorized reset completed on 2026-10-16 at 22:24 UTC:
 `accountReset=vo1d-user-request-20261016-8f5ef8e8`.
 Its private rollback backup remains on the persistent Railway volume at
 `/data/reset-backup-vo1d-user-request-20261016-8f5ef8e8`.
-The startup invocation has been removed. This update does not reset any account,
-username, message, local vault or existing administrator. The public account epoch
-and explicit enrollment marker continue to stop old clients silently enrolling
+The user explicitly requested another full reset on 2026-10-17. It completed at
+15:16 UTC with `accountReset=vo1d-user-request-20261017-a4ba0300`. The verified
+database and encrypted-blob backup is retained at
+`/data/reset-backup-vo1d-user-request-20261017-a4ba0300`; the earlier backup is
+preserved. Server accounts, sessions, usernames and permanent administrator
+ownership were cleared. The first authenticated explicit claim of `@vo1d` can
+establish new permanent ownership. Device-local encrypted histories are untouched.
+
+The one-time startup invocation has been removed after production verification.
+Normal deployments/restarts do not reset accounts. The rotated public account
+epoch and explicit enrollment marker prevent old clients silently recreating
 previously reset accounts.
 
 ## Validation
