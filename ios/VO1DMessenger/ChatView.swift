@@ -187,7 +187,9 @@ struct ChatView: View {
                         Button("Фильтр по автору и дате") { filterSheet=true }
                         NavigationLink("Ссылки чата") { ChatLinksView(roomID:roomID) }
                         NavigationLink("Настройки чата") { RoomToolsView(roomID:roomID) }
-                        NavigationLink("Оформление чата", systemImage: "paintpalette") { AppearanceSettingsView(roomID: roomID) }
+                        NavigationLink { AppearanceSettingsView(roomID: roomID) } label: {
+                            Label("Оформление чата", systemImage: "paintpalette")
+                        }
                         if let room, !store.isLocalUtilityRoom(roomID) {
                             Menu("Пожаловаться") {
                                 ForEach(room.members.filter { $0.id != store.myID }) { member in
