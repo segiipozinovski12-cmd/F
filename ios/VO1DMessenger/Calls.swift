@@ -915,7 +915,9 @@ final class CallManager: ObservableObject {
     }
 
     private func sendAudio(_ frame: Data) async {
-        guard let current = session,
+        // Route changes rebuild the capture engine. The call's mute state
+        // remains authoritative even before the new tap receives that state.
+        guard !muted, let current = session,
               current.phase == .active,
               let key = callKey else { return }
 
