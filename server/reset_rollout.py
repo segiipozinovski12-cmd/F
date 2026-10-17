@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import closing
 from maintenance import reset
 
-ROLLOUT = 'vo1d-user-request-20261016-8f5ef8e8'
+ROLLOUT = 'vo1d-user-request-20261017-a4ba0300'
 
 
 def apply_requested_reset():
@@ -37,7 +37,7 @@ def apply_requested_reset():
         raise RuntimeError('Requested reset refused an unexpected blob directory')
     backup = Path('/data') / ('reset-backup-' + ROLLOUT)
     reset(path, backup, blob if blob.is_dir() else None, rollout_id=ROLLOUT)
-    print('Requested account reset: completed with verified persistent backup; first verified session will claim @vo1d.', flush=True)
+    print('Requested account reset: completed with verified persistent backup; first explicit @vo1d claim becomes permanent administrator.', flush=True)
     return True
 
 

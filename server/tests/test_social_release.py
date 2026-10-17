@@ -48,6 +48,8 @@ class SocialReleaseTests(unittest.TestCase):
             self.assertIsNone(row['owner']); self.assertEqual(row['used_by'], 'deleted'); self.assertIsNone(row['receipt'])
 
     def test_offline_reset_preserves_backup_and_only_explicit_username_claim_wins(self):
+        self.assertEqual(self.request('/v1/username', 'POST', {'username': 'vo1d'}, self.b)[0], 200)
+        self.assertFalse(self.request('/health')[1]['adminBootstrapPending'])
         old_path = Path(self.relay.path)
         backup = old_path.parent / 'backup'
         reset(old_path, backup, rollout_id="test-reset")
@@ -55,8 +57,10 @@ class SocialReleaseTests(unittest.TestCase):
         self.assertEqual(self.request('/v1/discovery', token=self.a)[0], 401)
         with self.relay.db() as db:
             self.assertEqual(db.execute('SELECT count(*) FROM identities').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT count(*) FROM permanent_admin').fetchone()[0], 0)
         with __import__('sqlite3').connect(backup/'relay.sqlite3') as db:
             self.assertEqual(db.execute('SELECT count(*) FROM identities').fetchone()[0], 2)
+            self.assertEqual(db.execute('SELECT count(*) FROM permanent_admin').fetchone()[0], 1)
         health = self.request('/health')[1]
         self.assertEqual(health['accountReset'], 'test-reset')
         self.assertTrue(health['adminBootstrapPending'])
