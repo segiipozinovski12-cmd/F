@@ -181,15 +181,15 @@ final class VoiceRecorder: ObservableObject {
 
     func finish(effect: VoiceEffect) throws -> Attachment? {
         guard let file else { return nil }
+        defer { cancel() }
         recorder?.stop()
         timer?.invalidate()
         recording = false
         paused = false
 
         let rendered = try VoiceProcessor.render(input: file, effect: effect)
+        defer { if rendered != file { try? FileManager.default.removeItem(at: rendered) } }
         let data = try Data(contentsOf: rendered)
-        if rendered != file { try? FileManager.default.removeItem(at: rendered) }
-        defer { cancel() }
 
         guard data.count <= 3 * 1024 * 1024 else {
             throw MessengerError.invalid("Голосовое сообщение получилось слишком большим")

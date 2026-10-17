@@ -24,6 +24,7 @@ tor = load('prepare_tor')
 signal = load('prepare_signal')
 bundle = load('validate_ios_bundle')
 isolate = load('isolate_signal')
+cache = load('configure_xcode_cache')
 
 
 def require_symlinks(case):
@@ -49,6 +50,49 @@ def archive_member(name, data, long_name=False):
 
 
 class NativeSetupTests(unittest.TestCase):
+    def test_project_cache_overrides_broken_global_path_and_preserves_other_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / 'Project With Spaces.xcodeproj'
+            settings = project / 'project.xcworkspace/xcuserdata/tester.xcuserdatad/WorkspaceSettings.xcsettings'
+            settings.parent.mkdir(parents=True)
+            settings.write_bytes(plistlib.dumps({
+                'DerivedDataLocationStyle': 'AbsolutePath',
+                'DerivedDataCustomLocation': '/unwritable/global/DerivedData',
+                'LiveSourceIssuesEnabled': False,
+            }))
+            destination = root / 'build/cache with spaces'
+            self.assertEqual(cache.configure(project, destination, 'tester'), settings)
+            values = plistlib.loads(settings.read_bytes())
+            self.assertEqual(values['DerivedDataCustomLocation'], str(destination))
+            self.assertEqual(values['DerivedDataLocationStyle'], 'AbsolutePath')
+            self.assertFalse(values['LiveSourceIssuesEnabled'])
+            self.assertEqual(list(destination.iterdir()), [])
+            original = settings.read_bytes()
+            cache.configure(project, destination, 'tester')
+            self.assertEqual(settings.read_bytes(), original)
+
+    def test_unwritable_cache_fails_before_modifying_workspace_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / 'Project.xcodeproj'; project.mkdir()
+            destination = root / 'not-a-directory'; destination.write_text('keep')
+            with self.assertRaises(OSError):
+                cache.configure(project, destination, 'tester')
+            self.assertFalse((project / 'project.xcworkspace').exists())
+            self.assertEqual(destination.read_text(), 'keep')
+
+    def test_invalid_existing_workspace_settings_are_not_silently_replaced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / 'Project.xcodeproj'
+            settings = project / 'project.xcworkspace/xcuserdata/tester.xcuserdatad/WorkspaceSettings.xcsettings'
+            settings.parent.mkdir(parents=True)
+            settings.write_bytes(b'broken existing settings')
+            with self.assertRaises(plistlib.InvalidFileException):
+                cache.configure(project, root / 'build', 'tester')
+            self.assertEqual(settings.read_bytes(), b'broken existing settings')
+
     def test_callkit_modes_are_present_in_debug_and_release_metadata(self):
         app = SCRIPTS.parent / 'ios' / 'VO1DMessenger'
         for name in ('Info.Debug.plist', 'Info.plist'):

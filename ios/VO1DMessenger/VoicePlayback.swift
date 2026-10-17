@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import SwiftUI
+import Combine
 
 private enum AudioWaveform {
     static func samples(file: URL, points: Int = 34) -> [CGFloat] {
@@ -43,6 +44,7 @@ private enum AudioWaveform {
     }
 }
 
+@MainActor
 final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var playing = false
     @Published var progress: Double = 0
@@ -54,8 +56,13 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     private var player: AVAudioPlayer?
     private var timer: Timer?
     private var file: URL?
+    private var callObserver: AnyCancellable?
+    private let callInProgress: () -> Bool
 
-    init(data: Data) {
+    init(data: Data, callInProgress: (() -> Bool)? = nil) {
+        self.callInProgress = callInProgress ?? {
+            CallManager.shared.session != nil || CallManager.shared.preparingCall
+        }
         let url = (try? MediaFiles.transientURL()) ?? MediaFiles.transientDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
         try? data.write(to: url, options: [.atomic, .completeFileProtection])
         file = url
@@ -69,6 +76,10 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
             player.prepareToPlay()
             duration = player.duration
         }
+        callObserver = Publishers.CombineLatest(CallManager.shared.$session, CallManager.shared.$preparingCall)
+            .sink { [weak self] session, preparing in
+                if session != nil || preparing { self?.pauseForCall() }
+            }
     }
 
     deinit {
@@ -77,6 +88,7 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     }
 
     func toggle() {
+        guard !callInProgress() else { pauseForCall(); return }
         guard let player else { return }
 
         if player.isPlaying {
@@ -90,13 +102,19 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
             try session.setActive(true)
-        } catch {}
+        } catch { return }
 
         player.enableRate = true
         player.rate = speed
-        player.play()
-        playing = true
-        startTimer()
+        playing = player.play()
+        if playing { startTimer() }
+    }
+
+    private func pauseForCall() {
+        player?.pause()
+        playing = false
+        timer?.invalidate()
+        // CallKit owns the shared audio session. Do not deactivate it here.
     }
 
     func cycleSpeed() {
@@ -136,13 +154,19 @@ final class VoicePlayerModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         }
     }
 
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak self] in self?.finishPlayback() }
+    }
+
+    private func finishPlayback() {
         playing = false
         progress = 0
         current = 0
         timer?.invalidate()
-        player.currentTime = 0
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        player?.currentTime = 0
+        if !callInProgress() {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 }
 

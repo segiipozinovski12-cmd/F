@@ -109,6 +109,18 @@ jobs:
         run: |
           python3 scripts/generate_project.py
           git diff --exit-code ios/VO1DMessenger.xcodeproj
+      - name: Verify project-local Xcode cache without a command-line override
+        run: |
+          python3 scripts/configure_xcode_cache.py ios/VO1DMessenger.xcodeproj "$PWD/build/iphone-validation"
+          xcodebuild -showBuildSettings -json -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger > workspace-build-settings.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          settings = json.loads(Path('workspace-build-settings.json').read_text())
+          app = next(item['buildSettings'] for item in settings if item['target'] == 'VO1DMessenger')
+          Path(app['BUILD_DIR']).resolve().relative_to((Path.cwd() / 'build/iphone-validation').resolve())
+          print('Xcode uses the project-local build cache.')
+          PY
       - name: Build Debug for iPhone Simulator
         run: |
           set -o pipefail

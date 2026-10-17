@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import ImageIO
+import AVFoundation
 @testable import VO1DMessenger
 
 private final class DelayedProtocol: URLProtocol, @unchecked Sendable {
@@ -18,6 +19,31 @@ private final class DelayedProtocol: URLProtocol, @unchecked Sendable {
 }
 
 final class PrivacyRegressionTests: XCTestCase {
+    @MainActor func testVoicePlaybackCannotReplaceTheAudioCategoryDuringACall() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1600))
+        buffer.frameLength = 1600
+        if let samples = buffer.floatChannelData?[0] {
+            samples.initialize(repeating: 0, count: 1600)
+        }
+        do {
+            let output = try AVAudioFile(forWriting: file, settings: format.settings)
+            try output.write(from: buffer)
+        }
+        let player = VoicePlayerModel(data: try Data(contentsOf: file), callInProgress: { true })
+        XCTAssertGreaterThan(player.duration, 0)
+        let audio = AVAudioSession.sharedInstance()
+        let originalCategory = audio.category, originalMode = audio.mode, originalOptions = audio.categoryOptions
+        defer { try? audio.setCategory(originalCategory, mode: originalMode, options: originalOptions) }
+        try audio.setCategory(.playAndRecord, mode: .voiceChat)
+        player.toggle()
+        XCTAssertFalse(player.playing)
+        XCTAssertEqual(audio.category, .playAndRecord)
+        XCTAssertEqual(audio.mode, .voiceChat)
+    }
+
     @MainActor func testLateAccountDeletionCannotEraseAnotherSessionVaultOrKeys() async throws {
         APIClient.testingProtocolClasses = [DelayedProtocol.self]
         let store = ChatStore(), original = store.state, oldAPI = store.api, oldGeneration = store.generation
