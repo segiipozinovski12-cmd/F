@@ -457,6 +457,7 @@ final class CallManager: ObservableObject {
         do {
             if audioSessionActive { try applySelectedAudioOutput() }
             speaker = output == .speaker
+            audio.quietSpeechBoost = quietSpeechBoost && speaker
             restartMediaForRouteChange()
         } catch {
             audioOutput = previous
@@ -467,7 +468,7 @@ final class CallManager: ObservableObject {
 
     func toggleQuietSpeechBoost() {
         quietSpeechBoost.toggle()
-        audio.quietSpeechBoost = quietSpeechBoost
+        audio.quietSpeechBoost = quietSpeechBoost && speaker
     }
 
     func setCallScreenExpanded(_ expanded: Bool) {
@@ -897,7 +898,7 @@ final class CallManager: ObservableObject {
                         }
                     }
                     audio.muted = muted
-                    audio.quietSpeechBoost = quietSpeechBoost
+                    audio.quietSpeechBoost = quietSpeechBoost && speaker
                     try? applySelectedAudioOutput()
                     return
                 } catch {
