@@ -106,10 +106,20 @@ struct RootView: View {
             .transition(.opacity.combined(with: .scale(scale: 0.985)))
 
             if let call = calls.session {
-                CallScreen(session: call)
-                    .environmentObject(calls)
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                if calls.isCallScreenExpanded {
+                    CallScreen(session: call)
+                        .environmentObject(calls)
+                        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                        .zIndex(20)
+                } else {
+                    VStack(spacing: 0) {
+                        CallMiniBanner(session: call)
+                            .environmentObject(calls)
+                        Spacer(minLength: 0)
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(20)
+                }
             }
 
             if calls.preparingCall && calls.session == nil && store.sessionUnlocked && !store.locked {
