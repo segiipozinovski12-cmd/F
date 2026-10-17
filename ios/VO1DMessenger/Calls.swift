@@ -2,6 +2,7 @@ import AVFoundation
 import CallKit
 import CryptoKit
 import Foundation
+import MediaPlayer
 import SwiftUI
 
 enum VoiceCallPhase: String {
@@ -38,6 +39,7 @@ private final class CallAudioEngine {
     private var captureConverter: AVAudioConverter?
     private let captureFormat = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16_000,channels:1,interleaved:true)!
     var muted = false
+    var quietSpeechBoost = false
 
     init() {
         engine.attach(player)
@@ -49,7 +51,7 @@ private final class CallAudioEngine {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.allowBluetooth, .defaultToSpeaker]
+            options: [.allowBluetooth]
         )
     }
 
@@ -93,10 +95,6 @@ private final class CallAudioEngine {
         muted = false
     }
 
-    func setSpeaker(_ enabled: Bool) {
-        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
-    }
-
     func play(_ data: Data) {
         guard running, data.count >= 2 else { return }
         let frameCount = data.count / 2
@@ -110,7 +108,8 @@ private final class CallAudioEngine {
             let lo = UInt16(bytes[index * 2])
             let hi = UInt16(bytes[index * 2 + 1]) << 8
             let sample = Int16(bitPattern: lo | hi)
-            channel[index] = Float(sample) / 32767
+            let normalized = Float(sample) / 32768
+            channel[index] = max(-1, min(1, normalized * (quietSpeechBoost ? 1.4 : 1)))
         }
         buffer.frameLength = AVAudioFrameCount(frameCount)
         player.scheduleBuffer(buffer, completionHandler: nil)
@@ -131,6 +130,26 @@ private final class CallAudioEngine {
         return Data(bytes:bytes,count:Int(output.frameLength)*2)
     }
 
+}
+
+enum CallAudioOutput: String, CaseIterable, Identifiable {
+    case receiver, speaker, bluetooth
+
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .receiver: return "Телефон"
+        case .speaker: return "Громкая связь"
+        case .bluetooth: return "Bluetooth"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .receiver: return "iphone.gen3"
+        case .speaker: return "speaker.wave.3.fill"
+        case .bluetooth: return "airpodspro"
+        }
+    }
 }
 
 private final class CallKitBridge: NSObject, CXProviderDelegate {
@@ -171,7 +190,11 @@ final class CallManager: ObservableObject {
 
     @Published private(set) var session: VoiceCallSession?
     @Published private(set) var muted = false
-    @Published private(set) var speaker = true
+    @Published private(set) var speaker = false
+    @Published private(set) var audioOutput: CallAudioOutput = .receiver
+    @Published private(set) var bluetoothAvailable = false
+    @Published private(set) var quietSpeechBoost = false
+    @Published private(set) var isCallScreenExpanded = true
     @Published private(set) var transport = "OFFLINE"
     @Published private(set) var lastFailure: String?
     @Published private(set) var preparingCall = false
@@ -203,6 +226,7 @@ final class CallManager: ObservableObject {
     private var mediaGeneration = UUID()
     private var configurationID = UUID()
     private var connectionID = UUID()
+    private var routeObserver: NSObjectProtocol?
 
     private init() {
         let configuration = CXProviderConfiguration(localizedName: "VO1D")
@@ -217,6 +241,65 @@ final class CallManager: ObservableObject {
 
         bridge.owner = self
         provider.setDelegate(bridge, queue: nil)
+        refreshOutputAvailability()
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                self?.handleAudioRouteChange(notification)
+            }
+        }
+    }
+
+    private func refreshOutputAvailability() {
+        bluetoothAvailable = AVAudioSession.sharedInstance().availableInputs?.contains(where: {
+            $0.portType == .bluetoothHFP
+        }) ?? false
+    }
+
+    private func handleAudioRouteChange(_ notification: Notification) {
+        refreshOutputAvailability()
+        guard session != nil else { return }
+        let reasonRaw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+        guard let reasonRaw, let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else { return }
+        if reason == .oldDeviceUnavailable && audioOutput == .bluetooth && !bluetoothAvailable {
+            audioOutput = .receiver
+            speaker = false
+        }
+        guard reason == .newDeviceAvailable || reason == .oldDeviceUnavailable ||
+              reason == .routeConfigurationChange else { return }
+        restartMediaForRouteChange()
+    }
+
+    private func restartMediaForRouteChange() {
+        guard audio.isRunning else { return }
+        mediaGeneration = UUID()
+        mediaStartTask?.cancel()
+        mediaStartTask = nil
+        audio.stop()
+        activateMediaIfReady()
+    }
+
+    private func applySelectedAudioOutput() throws {
+        let system = AVAudioSession.sharedInstance()
+        switch audioOutput {
+        case .receiver:
+            try system.overrideOutputAudioPort(.none)
+            if let builtInMic = system.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try system.setPreferredInput(builtInMic)
+            }
+        case .speaker:
+            try system.setPreferredInput(nil)
+            try system.overrideOutputAudioPort(.speaker)
+        case .bluetooth:
+            guard let bluetooth = system.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) else {
+                throw MessengerError.invalid("Bluetooth-гарнитура недоступна")
+            }
+            try system.overrideOutputAudioPort(.none)
+            try system.setPreferredInput(bluetooth)
+        }
     }
 
     func configure(
@@ -321,6 +404,8 @@ final class CallManager: ObservableObject {
                 phase: .connecting,
                 startedAt: nil
             )
+            isCallScreenExpanded = true
+            refreshOutputAvailability()
 
             let handle = CXHandle(type: .generic, value: name)
             let action = CXStartCallAction(call: uuid, handle: handle)
@@ -341,6 +426,7 @@ final class CallManager: ObservableObject {
 
     func answerFromApp() {
         guard let session, session.incoming else { return }
+        isCallScreenExpanded = true
         controller.request(CXTransaction(action: CXAnswerCallAction(call: session.id))) { _ in }
     }
 
@@ -357,8 +443,35 @@ final class CallManager: ObservableObject {
     }
 
     func toggleSpeaker() {
-        speaker.toggle()
-        audio.setSpeaker(speaker)
+        selectAudioOutput(speaker ? .receiver : .speaker)
+    }
+
+    func selectAudioOutput(_ output: CallAudioOutput) {
+        guard session != nil else { return }
+        if output == .bluetooth && !bluetoothAvailable {
+            lastFailure = "Bluetooth-гарнитура не подключена"
+            return
+        }
+        let previous = audioOutput
+        audioOutput = output
+        do {
+            if audioSessionActive { try applySelectedAudioOutput() }
+            speaker = output == .speaker
+            restartMediaForRouteChange()
+        } catch {
+            audioOutput = previous
+            speaker = previous == .speaker
+            lastFailure = "Не удалось переключить звук: \(error.localizedDescription)"
+        }
+    }
+
+    func toggleQuietSpeechBoost() {
+        quietSpeechBoost.toggle()
+        audio.quietSpeechBoost = quietSpeechBoost
+    }
+
+    func setCallScreenExpanded(_ expanded: Bool) {
+        isCallScreenExpanded = expanded
     }
 
     fileprivate func performStart(_ action: CXStartCallAction) {
@@ -457,6 +570,9 @@ final class CallManager: ObservableObject {
 
     fileprivate func audioActivated() {
         audioSessionActive = true
+        refreshOutputAvailability()
+        do { try applySelectedAudioOutput() }
+        catch { lastFailure = "Аудиовыход недоступен: \(error.localizedDescription)" }
         activateMediaIfReady()
     }
 
@@ -713,6 +829,7 @@ final class CallManager: ObservableObject {
             if session==nil {
                 let name=nameResolver?(peerID) ?? "VO1D"
                 session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:name,incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
+                isCallScreenExpanded = false
                 let update=CXCallUpdate()
                 update.remoteHandle=CXHandle(type:.generic,value:name); update.localizedCallerName=name
                 update.hasVideo=false; update.supportsHolding=false; update.supportsGrouping=false; update.supportsUngrouping=false; update.supportsDTMF=false
@@ -738,6 +855,7 @@ final class CallManager: ObservableObject {
         let rejected=session != nil || (!peerID.isEmpty && (allowedPeer?(peerID)==false || peerID.count != 64))
         if !rejected {
             session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:"VO1D",incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
+            isCallScreenExpanded = false
         }
         provider.reportNewIncomingCall(with:uuid,update:update) { [weak self] error in
             completion()
@@ -779,7 +897,8 @@ final class CallManager: ObservableObject {
                         }
                     }
                     audio.muted = muted
-                    audio.setSpeaker(speaker)
+                    audio.quietSpeechBoost = quietSpeechBoost
+                    try? applySelectedAudioOutput()
                     return
                 } catch {
                     audio.stop()
@@ -905,7 +1024,10 @@ final class CallManager: ObservableObject {
         callKey = nil
         callSecrets = nil
         muted = false
-        speaker = true
+        speaker = false
+        audioOutput = .receiver
+        quietSpeechBoost = false
+        isCallScreenExpanded = true
         audioSessionActive = false
         if let pending = pendingConfiguration {
             pendingConfiguration = nil
