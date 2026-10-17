@@ -56,127 +56,72 @@ struct ChatView: View {
         return search.isEmpty && initialMessageID==nil ? Array(all.suffix(messageLimit)) : all
     }
     var body: some View {
+        presentedContent
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
+                Task {
+                    await processImportedFile(result)
+                }
+            }
+            .onChange(of: photo) { _, item in
+                guard let item else { return }
+                Task { await processPhoto(item, viewSeconds: nil); photo = nil }
+            }
+            .onChange(of: ephemeralPhoto) { _, item in
+                guard let item else { return }
+                Task {
+                    await processPhoto(item, viewSeconds: photoSeconds)
+                    ephemeralPhoto = nil
+                    photoOptions = false
+                }
+            }
+            .sheet(isPresented: $photoOptions) {
+                EphemeralPhotoPickerSheet(
+                    selection: $ephemeralPhoto,
+                    seconds: $photoSeconds
+                )
+            }
+            .quickLookPreview($preview)
+            .onChange(of: preview) { _, value in if value == nil { MediaFiles.clear() } }
+            .onAppear {
+                viewProfileID = store.profileID
+                viewIdentityID = store.myID
+                text = room?.draft ?? ""
+                store.activeRoomID = roomID
+            }
+            .onDisappear {
+                audio.cancel()
+                if viewProfileID == store.profileID && viewIdentityID == store.myID {
+                    if store.activeRoomID == roomID { store.activeRoomID = nil }
+                    store.updateRoom(roomID) { $0.draft = text }
+                }
+                MediaFiles.clear()
+            }
+            .onChange(of: text) { _, _ in if canUseView { Task { await store.sendTyping(roomID) } } }
+            .confirmationDialog("Удалить выбранные сообщения?", isPresented: $showDeleteSelection, titleVisibility: .visible) {
+                Button("Удалить", role: .destructive) {
+                    perform {
+                        try store.deleteMessages(selectedIDs, roomID: roomID)
+                        selectedIDs.removeAll()
+                        selectionMode = false
+                    }
+                }
+            } message: {
+                Text("Твои сообщения будут удалены у участников при следующей доставке события удаления. Чужие выбранные сообщения удаляются только локально.")
+            }
+    }
+
+    private var conversationContent: some View {
         VStack(spacing: 0) {
             if store.extended.hiddenRooms.contains(roomID) && !store.revealedHiddenRooms {
                 Button("Открыть скрытый чат") { Task { await store.revealHidden() } }
             } else if let room {
                 ScrollViewReader { proxy in
                     VStack(spacing: 0) {
-                        if let pinned = store.pinnedMessages(roomID).last {
-                            Button {
-                                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                                    proxy.scrollTo(pinned.id, anchor: .center)
-                                }
-                            } label: {
-                                HStack(spacing: 11) {
-                                    Image(systemName: "pin.fill")
-                                        .font(.caption.bold())
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("ЗАКРЕПЛЕНО")
-                                            .font(.system(size: 8, weight: .black, design: .monospaced))
-                                            .tracking(1.4)
-                                        Text(pinned.previewText.isEmpty ? (pinned.attachment?.name ?? "Вложение") : pinned.previewText)
-                                            .font(.caption)
-                                            .lineLimit(1)
-                                            .foregroundStyle(Theme.secondary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.down")
-                                        .font(.caption2)
-                                        .foregroundStyle(Theme.secondary)
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(.ultraThinMaterial)
-                                .overlay(alignment: .bottom) {
-                                    Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
-                                }
-                            }
-                            .buttonStyle(MotionButtonStyle())
-                        }
+                        pinnedHeader(proxy: proxy)
 
-                        if room.isGroup, let topics = room.topics, !topics.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    Button {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
-                                            selectedTopic = nil
-                                        }
-                                    } label: {
-                                        Text("ВСЕ")
-                                            .font(.caption2.bold().monospaced())
-                                            .tracking(1.2)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
-                                            .background(selectedTopic == nil ? Color.white : Color.white.opacity(0.06), in: Capsule())
-                                            .foregroundStyle(selectedTopic == nil ? .black : Theme.secondary)
-                                    }
-                                    .buttonStyle(MotionButtonStyle())
+                        topicHeader(room: room)
 
-                                    ForEach(topics, id: \.self) { topic in
-                                        Button {
-                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
-                                                selectedTopic = topic
-                                            }
-                                        } label: {
-                                            Text(topic.uppercased())
-                                                .font(.caption2.bold().monospaced())
-                                                .tracking(1.0)
-                                                .lineLimit(1)
-                                                .padding(.horizontal, 14)
-                                                .padding(.vertical, 8)
-                                                .background(selectedTopic == topic ? Color.white : Color.white.opacity(0.06), in: Capsule())
-                                                .foregroundStyle(selectedTopic == topic ? .black : Theme.secondary)
-                                        }
-                                        .buttonStyle(MotionButtonStyle())
-                                    }
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                            }
-                            .background(.black.opacity(0.92))
-                            .overlay(alignment: .bottom) {
-                                Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
-                            }
-                        }
-
-                        ScrollView {
-                            LazyVStack(spacing: 14) {
-                                Label(
-                                    store.isSavedRoom(roomID)
-                                        ? "Личный архив"
-                                        : (store.isBuiltinBotRoom(roomID)
-                                            ? "Системный помощник"
-                                            : (room.isChannel == true ? "VO1D CHANNEL" : "Приватная переписка")),
-                                    systemImage: store.isSavedRoom(roomID) ? "bookmark.fill" : (store.isBuiltinBotRoom(roomID) ? "sparkles" : "lock")
-                                )
-                                .font(.caption2)
-                                .foregroundStyle(Theme.secondary)
-                                .padding(.vertical, 18)
-
-                                if search.isEmpty && store.messages(roomID).count>messageLimit {
-                                    Button("Загрузить ещё 80 сообщений") { messageLimit += 80 }
-                                }
-                                ForEach(messages) { message in
-                                    bubble(message, group: room.isGroup).id(message.id)
-                                        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
-                                }
-                                Color.clear.frame(height: 1).id("bottom")
-                            }
-                            .padding(.horizontal, 18)
-                            .padding(.bottom, 10)
-                            .animation(reduceMotion ? nil : Motion.layout, value: messages.map(\.id))
-                        }
-                        .scrollDismissesKeyboard(.interactively)
-                        .onChange(of: messages.count) { _, _ in
-                            guard initialMessageID==nil && search.isEmpty else { return }
-                            withAnimation(reduceMotion ? nil : Motion.layout) { proxy.scrollTo("bottom", anchor: .bottom) }
-                            store.markRead(roomID)
-                        }
-                        .onAppear {
-                            proxy.scrollTo(initialMessageID ?? "bottom", anchor: initialMessageID==nil ? .bottom : .center)
-                            store.markRead(roomID)
-                        }
+                        messageList(room: room, proxy: proxy)
                     }
                 }
                 if let until = store.typing[roomID], until > Date() {
@@ -213,7 +158,11 @@ struct ChatView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             } else { ContentUnavailableView("Чат недоступен", systemImage: "bubble.left") }
-        }.background { ChatBackdrop(palette: chatPalette, texture: store.appearance.chatTexture) }
+        }
+    }
+
+    private var styledContent: some View {
+        conversationContent.background { ChatBackdrop(palette: chatPalette, texture: store.appearance.chatTexture) }
             .animation(reduceMotion ? nil : Motion.layout, value: selectionMode)
             .animation(reduceMotion ? nil : Motion.layout, value: reply?.id)
             .animation(reduceMotion ? nil : Motion.layout, value: editing?.id)
@@ -276,6 +225,10 @@ struct ChatView: View {
                 }
             }
             .searchable(text: $search, prompt: "Поиск в переписке")
+    }
+
+    private var presentedContent: some View {
+        styledContent
             .sheet(isPresented:$filterSheet) {
                 NavigationStack {
                     Form {
@@ -317,58 +270,109 @@ struct ChatView: View {
             .sheet(item: $historyMessage) { message in
                 EditHistoryView(message: message)
             }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
-                Task {
-                    await processImportedFile(result)
-                }
-            }
-            .onChange(of: photo) { _, item in
-                guard let item else { return }
-                Task { await processPhoto(item, viewSeconds: nil); photo = nil }
-            }
-            .onChange(of: ephemeralPhoto) { _, item in
-                guard let item else { return }
-                Task {
-                    await processPhoto(item, viewSeconds: photoSeconds)
-                    ephemeralPhoto = nil
-                    photoOptions = false
-                }
-            }
-            .sheet(isPresented: $photoOptions) {
-                EphemeralPhotoPickerSheet(
-                    selection: $ephemeralPhoto,
-                    seconds: $photoSeconds
-                )
-            }
-            .quickLookPreview($preview)
-            .onChange(of: preview) { _, value in if value == nil { MediaFiles.clear() } }
-            .onAppear {
-                viewProfileID = store.profileID
-                viewIdentityID = store.myID
-                text = room?.draft ?? ""
-                store.activeRoomID = roomID
-            }
-            .onDisappear {
-                audio.cancel()
-                if viewProfileID == store.profileID && viewIdentityID == store.myID {
-                    if store.activeRoomID == roomID { store.activeRoomID = nil }
-                    store.updateRoom(roomID) { $0.draft = text }
-                }
-                MediaFiles.clear()
-            }
-            .onChange(of: text) { _, _ in if canUseView { Task { await store.sendTyping(roomID) } } }
-            .confirmationDialog("Удалить выбранные сообщения?", isPresented: $showDeleteSelection, titleVisibility: .visible) {
-                Button("Удалить", role: .destructive) {
-                    perform {
-                        try store.deleteMessages(selectedIDs, roomID: roomID)
-                        selectedIDs.removeAll()
-                        selectionMode = false
-                    }
-                }
-            } message: {
-                Text("Твои сообщения будут удалены у участников при следующей доставке события удаления. Чужие выбранные сообщения удаляются только локально.")
-            }
     }
+
+    @ViewBuilder
+    private func pinnedHeader(proxy: ScrollViewProxy) -> some View {
+        if let pinned = store.pinnedMessages(roomID).last {
+            Button {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                    proxy.scrollTo(pinned.id, anchor: .center)
+                }
+            } label: {
+                HStack(spacing: 11) {
+                    Image(systemName: "pin.fill")
+                        .font(.caption.bold())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("ЗАКРЕПЛЕНО")
+                            .font(.system(size: 8, weight: .black, design: .monospaced))
+                            .tracking(1.4)
+                        Text(pinned.previewText.isEmpty ? (pinned.attachment?.name ?? "Вложение") : pinned.previewText)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
+                }
+            }
+            .buttonStyle(MotionButtonStyle())
+        }
+    }
+
+    @ViewBuilder
+    private func topicHeader(room: Room) -> some View {
+        if room.isGroup, let topics = room.topics, !topics.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    topicChip(title: "ВСЕ", topic: nil)
+                    ForEach(topics, id: \.self) { topic in topicChip(title: topic.uppercased(), topic: topic) }
+                }.padding(.horizontal, 14).padding(.vertical, 8)
+            }.background(chatPalette.background.opacity(0.96))
+                .overlay(alignment: .bottom) { Capsule().fill(.white.opacity(0.06)).frame(height: 0.5) }
+        }
+    }
+
+    private func topicChip(title: String, topic: String?) -> some View {
+        let selected = selectedTopic == topic
+        return Button {
+            withAnimation(reduceMotion ? nil : Motion.layout) { selectedTopic = topic }
+        } label: {
+            Text(title).font(.caption2.bold().monospaced()).tracking(1.1).lineLimit(1)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(selected ? Color.white : Color.white.opacity(0.06), in: Capsule())
+                .foregroundStyle(selected ? Color.black : Theme.secondary)
+        }.buttonStyle(MotionButtonStyle())
+    }
+
+    private func messageList(room: Room, proxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            LazyVStack(spacing: 14) {
+                Label(
+                    store.isSavedRoom(roomID)
+                        ? "Личный архив"
+                        : (store.isBuiltinBotRoom(roomID)
+                            ? "Системный помощник"
+                            : (room.isChannel == true ? "VO1D CHANNEL" : "Приватная переписка")),
+                    systemImage: store.isSavedRoom(roomID) ? "bookmark.fill" : (store.isBuiltinBotRoom(roomID) ? "sparkles" : "lock")
+                )
+                .font(.caption2)
+                .foregroundStyle(Theme.secondary)
+                .padding(.vertical, 18)
+
+                if search.isEmpty && store.messages(roomID).count>messageLimit {
+                    Button("Загрузить ещё 80 сообщений") { messageLimit += 80 }
+                }
+                ForEach(messages) { message in
+                    bubble(message, group: room.isGroup).id(message.id)
+                        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
+                }
+                Color.clear.frame(height: 1).id("bottom")
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 10)
+            .animation(reduceMotion ? nil : Motion.layout, value: messages.map(\.id))
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .onChange(of: messages.count) { _, _ in
+            guard initialMessageID==nil && search.isEmpty else { return }
+            withAnimation(reduceMotion ? nil : Motion.layout) { proxy.scrollTo("bottom", anchor: .bottom) }
+            store.markRead(roomID)
+        }
+        .onAppear {
+            proxy.scrollTo(initialMessageID ?? "bottom", anchor: initialMessageID==nil ? .bottom : .center)
+            store.markRead(roomID)
+        }
+    }
+
 
     var selectionBar: some View {
         HStack(spacing: 14) {
