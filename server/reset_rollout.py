@@ -10,7 +10,7 @@ import shutil
 from contextlib import closing
 from maintenance import reset
 
-ROLLOUT = 'vo1d-user-request-20261017-c9eb809a'
+ROLLOUT = 'vo1d-user-request-20261017-efe7f598'
 
 
 def purge_account_backups(root):
