@@ -33,6 +33,7 @@ private final class CallAudioEngine {
     )!
 
     private var running = false
+    var isRunning: Bool { running && engine.isRunning }
     private var tapInstalled = false
     private var captureConverter: AVAudioConverter?
     private let captureFormat = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16_000,channels:1,interleaved:true)!
@@ -53,7 +54,8 @@ private final class CallAudioEngine {
     }
 
     func start(onFrame: @escaping (Data) -> Void) throws {
-        guard !running else { return }
+        guard !isRunning else { return }
+        if running || tapInstalled { stop() }
 
         let input = engine.inputNode
         // The tap consumes the node's output format. The hardware-side input
@@ -196,6 +198,7 @@ final class CallManager: ObservableObject {
     private var heartbeatTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var mediaStartTask: Task<Void, Never>?
+    private var mediaGeneration = UUID()
     private var configurationID = UUID()
     private var connectionID = UUID()
 
@@ -454,6 +457,7 @@ final class CallManager: ObservableObject {
 
     fileprivate func audioDeactivated() {
         audioSessionActive = false
+        mediaGeneration = UUID()
         mediaStartTask?.cancel(); mediaStartTask = nil
         audio.stop()
     }
@@ -716,19 +720,20 @@ final class CallManager: ObservableObject {
         guard audioSessionActive,
               let current = session,
               current.phase == .active,
-              callKey != nil, mediaStartTask == nil else { return }
+              callKey != nil, mediaStartTask == nil, !audio.isRunning else { return }
         let expected = current.callID
+        let captureGeneration = UUID(); mediaGeneration = captureGeneration
         mediaStartTask = Task { [weak self] in
             guard let self else { return }
-            defer { if session?.callID == expected { mediaStartTask = nil } }
+            defer { if mediaGeneration == captureGeneration { mediaStartTask = nil } }
             // CallKit activation can precede a valid hardware route. Give the
             // audio bus a short bounded warm-up instead of hanging up instantly.
             for attempt in 0..<3 {
-                guard !Task.isCancelled, session?.callID == expected, session?.phase == .active, audioSessionActive else { return }
+                guard !Task.isCancelled, mediaGeneration == captureGeneration, session?.callID == expected, session?.phase == .active, audioSessionActive else { return }
                 do {
                     try audio.start { [weak self] frame in
                         Task { @MainActor in
-                            guard let self, self.session?.callID == expected else { return }
+                            guard let self, self.mediaGeneration == captureGeneration, self.session?.callID == expected, self.audioSessionActive else { return }
                             await self.sendAudio(frame)
                         }
                     }
@@ -851,6 +856,7 @@ final class CallManager: ObservableObject {
     }
 
     private func cleanup() {
+        mediaGeneration = UUID()
         mediaStartTask?.cancel(); mediaStartTask = nil
         audio.stop()
         session = nil
