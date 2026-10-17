@@ -61,7 +61,7 @@ class RelayTests(unittest.TestCase):
     def envelope(self, sender=None, recipient=None, private=None):
         sender = sender or self.alice_card['id']; recipient = recipient or self.bob_card['id']; private = private or self.alice
         import uuid
-        e = {'id':str(uuid.uuid4()),'sender':sender,'recipient':recipient,'ephemeralKey':encode(bytes(32)),'salt':encode(bytes(32)),'expiresAt':int(time.time())+3600,'ciphertext':encode(b'x'*100)}
+        e = {'id':str(uuid.uuid4()),'sender':sender,'recipient':recipient,'ephemeralKey':encode(bytes([9]) + bytes(31)),'salt':encode(bytes(32)),'expiresAt':int(time.time())+3600,'ciphertext':encode(b'x'*100)}
         e['signature']=encode(private.sign(header_bytes(e)+b'\n'+base64.b64decode(e['ciphertext'])))
         return e
 
@@ -76,6 +76,13 @@ class RelayTests(unittest.TestCase):
         self.request('/v1/ack', 'POST', {'ids':[e['id']]}, self.a)
         self.assertEqual(len(self.request('/v1/inbox', token=self.b)[1]['envelopes']), 1)
         self.request('/v1/ack', 'POST', {'ids':[e['id']]}, self.b)
+        self.assertEqual(self.request('/v1/inbox', token=self.b)[1]['envelopes'], [])
+
+    def test_signed_non_contributory_key_is_rejected_before_storage(self):
+        envelope = self.envelope()
+        envelope['ephemeralKey'] = encode(bytes(32))
+        envelope['signature'] = encode(self.alice.sign(header_bytes(envelope) + b'\n' + base64.b64decode(envelope['ciphertext'])))
+        self.assertEqual(self.send(envelope)[0], 400)
         self.assertEqual(self.request('/v1/inbox', token=self.b)[1]['envelopes'], [])
 
     def test_retry_does_not_duplicate_after_ack(self):

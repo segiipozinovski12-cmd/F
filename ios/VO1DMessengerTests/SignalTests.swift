@@ -3,6 +3,19 @@ import LibSignalClient
 @testable import VO1DMessenger
 
 final class SignalTests: XCTestCase {
+    func testImportedPrekeyCountersAndFutureTimestampsCannotOverflow() throws {
+        let identity = try LocalIdentity.create(); var state = try SignalSnapshot.create()
+        state.nextKey = UInt32.max
+        XCTAssertThrowsError(try SignalProtocol.publication(state: state, identity: identity, count: 1))
+        state.nextKey = 0
+        XCTAssertThrowsError(try SignalProtocol.publication(state: state, identity: identity, count: 1))
+        state.nextKey = 1
+        let pair = try IdentityKeyPair(bytes: state.identity), key = PrivateKey.generate()
+        let signature = try pair.privateKey.generateSignature(message: Data(key.publicKey.serialize()))
+        let future = try SignedPreKeyRecord(id: 100, timestamp: UInt64.max, privateKey: key, signature: Data(signature))
+        state.signedKeys["100"] = Data(future.serialize())
+        XCTAssertNoThrow(try SignalProtocol.publication(state: state, identity: identity, count: 1))
+    }
     private func setupPair() throws -> (LocalIdentity, LocalIdentity, SignalSnapshot, SignalSnapshot, SignalBundle) {
         let alice = try LocalIdentity.create(), bob = try LocalIdentity.create()
         let publication = try SignalProtocol.publication(state: SignalSnapshot.create(), identity: bob, count: 2)

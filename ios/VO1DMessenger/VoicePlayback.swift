@@ -167,7 +167,7 @@ struct VoiceMessagePlayer: View {
                     .frame(width: 36, height: 36)
                     .background(tint.opacity(0.12), in: Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MotionButtonStyle())
 
             VStack(alignment: .leading, spacing: 6) {
                 GeometryReader { proxy in
@@ -205,7 +205,7 @@ struct VoiceMessagePlayer: View {
                             .padding(.vertical, 3)
                             .background(tint.opacity(0.10), in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(MotionButtonStyle())
 
                     if let raw = attachment.voiceEffect,
                        let effect = VoiceEffect(rawValue: raw),

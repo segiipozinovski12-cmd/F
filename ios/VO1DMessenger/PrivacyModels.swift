@@ -6,6 +6,9 @@ struct PrivacyPreferences: Codable {
     var requireRequests = true
     var allowGroupInvites = false
     var discoverable = true
+    var allowDiscoveryRequests = true
+    var requireAccessKey = true
+    var autoDeleteChatsSeconds = 0
     var typingSignals = false
     var deliveryReceipts = true
     var notificationPreview = false
@@ -42,7 +45,11 @@ struct PrivacyPreferences: Codable {
     var wifiOnlyUploads = false
     var anonymizeFilenames = true
     init() {}
+    func permitsDiscoveryIntroduction(_ event: ChatEvent) -> Bool {
+        allowDiscoveryRequests && event.kind == "contactRequest" && !event.room.isGroup && event.room.members.count == 2 && event.message == nil
+    }
     enum CodingKeys: String, CodingKey {
+        case allowDiscoveryRequests, requireAccessKey, autoDeleteChatsSeconds
         case batchDelaySeconds
         case requirePrivateDelivery
         case embeddedTor, torBridges, proxyUsesTor, streamIsolation
@@ -57,6 +64,9 @@ struct PrivacyPreferences: Codable {
         requireRequests=try container.decodeIfPresent(Bool.self,forKey:.requireRequests) ?? requireRequests
         allowGroupInvites=try container.decodeIfPresent(Bool.self,forKey:.allowGroupInvites) ?? allowGroupInvites
         discoverable=try container.decodeIfPresent(Bool.self,forKey:.discoverable) ?? discoverable
+        requireAccessKey=try container.decodeIfPresent(Bool.self,forKey:.requireAccessKey) ?? true
+        autoDeleteChatsSeconds=try container.decodeIfPresent(Int.self,forKey:.autoDeleteChatsSeconds) ?? 0
+        if ![0, 3600, 86400, 604800, 2592000].contains(autoDeleteChatsSeconds) { autoDeleteChatsSeconds = 0 }
         typingSignals=try container.decodeIfPresent(Bool.self,forKey:.typingSignals) ?? typingSignals
         deliveryReceipts=try container.decodeIfPresent(Bool.self,forKey:.deliveryReceipts) ?? deliveryReceipts
         notificationPreview=try container.decodeIfPresent(Bool.self,forKey:.notificationPreview) ?? notificationPreview
@@ -92,6 +102,8 @@ struct PrivacyPreferences: Codable {
         linkPreviews=try container.decodeIfPresent(Bool.self,forKey:.linkPreviews) ?? linkPreviews
         wifiOnlyUploads=try container.decodeIfPresent(Bool.self,forKey:.wifiOnlyUploads) ?? wifiOnlyUploads
         anonymizeFilenames=try container.decodeIfPresent(Bool.self,forKey:.anonymizeFilenames) ?? anonymizeFilenames
+        let legacyMaximum = embeddedTor && requirePrivateDelivery && !discoverable
+        allowDiscoveryRequests=try container.decodeIfPresent(Bool.self,forKey:.allowDiscoveryRequests) ?? !legacyMaximum
     }
 
 }
@@ -110,6 +122,8 @@ struct LocalReminder: Codable, Identifiable, Hashable {
 }
 
 struct ExtendedState: Codable {
+    var pendingDeviceCommands: [DeviceCommand] = []
+    var completedDeviceCommands: [String: DeviceCommandResult] = [:]
     var revokedDevices: [String:Int] = [:]
     var deviceLinks: [DeviceLink] = []
     var issuedGroupInvites: [String: GroupInvitation] = [:]
@@ -119,10 +133,13 @@ struct ExtendedState: Codable {
     var archives: [HistoryArchive] = []
     var signal: SignalSnapshot? = nil
     var ownMailboxes: [LocalMailbox] = []
+    var privateInboxOffset: Int? = nil
     var peerMailboxes: [String: MailboxAddress] = [:]
     var invitationBundles: [String: SignalBundle] = [:]
     var privateInvite: Invite? = nil
     var privateInviteLink: String? = nil
+    var privateLinks: [PrivateLinkRecord] = []
+    var consumedGhosts: [String: Date] = [:]
     var lastOpenedAt: Date? = nil
     var privatePollVotes: [String: [String: String]] = [:]
     var privatePollSelections: [String: String] = [:]
@@ -139,6 +156,7 @@ struct ExtendedState: Codable {
     var reminders: [LocalReminder] = []
     var snippets: [String] = []
     var roomRetention: [String: Int] = [:]
+    var roomActivity: [String: Date] = [:]
     var roomFontSize: [String: Double] = [:]
     var receiptExceptions: [String] = []
     var protectedMessages: [String] = []
@@ -146,17 +164,21 @@ struct ExtendedState: Codable {
     var roomNotes: [String: String] = [:]
     init() {}
     enum CodingKeys: String, CodingKey {
+        case pendingDeviceCommands, completedDeviceCommands
         case revokedDevices, deviceLinks
         case issuedGroupInvites, pendingGroupInvites, acceptedGroupInvites
         case signal
         case archives, privateBlobDeletes
-        case ownMailboxes, peerMailboxes, invitationBundles, privateInvite
-        case privateInviteLink
+        case roomActivity
+        case ownMailboxes, privateInboxOffset, peerMailboxes, invitationBundles, privateInvite
+        case privateInviteLink, privateLinks, consumedGhosts
         case lastOpenedAt, privatePollVotes, privatePollSelections, privacy, folders, bookmarks, notes, aliases, favorites, hiddenRooms, trustedIDs, pendingEvents, declinedRooms, reminders, snippets, roomRetention, roomFontSize, receiptExceptions, protectedMessages, ocrText, roomNotes
     }
     init(from decoder: Decoder) throws {
         self.init()
         let container=try decoder.container(keyedBy:CodingKeys.self)
+        pendingDeviceCommands=try container.decodeIfPresent([DeviceCommand].self,forKey:.pendingDeviceCommands) ?? []
+        completedDeviceCommands=try container.decodeIfPresent([String: DeviceCommandResult].self,forKey:.completedDeviceCommands) ?? [:]
         lastOpenedAt=try container.decodeIfPresent(Date.self,forKey:.lastOpenedAt)
         revokedDevices=try container.decodeIfPresent([String:Int].self,forKey:.revokedDevices) ?? [:]
         deviceLinks=try container.decodeIfPresent([DeviceLink].self,forKey:.deviceLinks) ?? []
@@ -167,10 +189,13 @@ struct ExtendedState: Codable {
         privateBlobDeletes=try container.decodeIfPresent([String: OwnedPrivateBlob].self,forKey:.privateBlobDeletes) ?? [:]
         archives=try container.decodeIfPresent([HistoryArchive].self,forKey:.archives) ?? []
         ownMailboxes=try container.decodeIfPresent([LocalMailbox].self,forKey:.ownMailboxes) ?? []
+        privateInboxOffset=try container.decodeIfPresent(Int.self,forKey:.privateInboxOffset)
         peerMailboxes=try container.decodeIfPresent([String: MailboxAddress].self,forKey:.peerMailboxes) ?? [:]
         invitationBundles=try container.decodeIfPresent([String: SignalBundle].self,forKey:.invitationBundles) ?? [:]
         privateInvite=try container.decodeIfPresent(Invite.self,forKey:.privateInvite)
         privateInviteLink=try container.decodeIfPresent(String.self,forKey:.privateInviteLink)
+        privateLinks=try container.decodeIfPresent([PrivateLinkRecord].self,forKey:.privateLinks) ?? []
+        consumedGhosts=try container.decodeIfPresent([String: Date].self,forKey:.consumedGhosts) ?? [:]
         privatePollVotes=try container.decodeIfPresent([String: [String: String]].self,forKey:.privatePollVotes) ?? privatePollVotes
         privatePollSelections=try container.decodeIfPresent([String: String].self,forKey:.privatePollSelections) ?? privatePollSelections
         privacy=try container.decodeIfPresent(PrivacyPreferences.self,forKey:.privacy) ?? privacy
@@ -186,6 +211,7 @@ struct ExtendedState: Codable {
         reminders=try container.decodeIfPresent([LocalReminder].self,forKey:.reminders) ?? reminders
         snippets=try container.decodeIfPresent([String].self,forKey:.snippets) ?? snippets
         roomRetention=try container.decodeIfPresent([String: Int].self,forKey:.roomRetention) ?? roomRetention
+        roomActivity=try container.decodeIfPresent([String: Date].self,forKey:.roomActivity) ?? [:]
         roomFontSize=try container.decodeIfPresent([String: Double].self,forKey:.roomFontSize) ?? roomFontSize
         receiptExceptions=try container.decodeIfPresent([String].self,forKey:.receiptExceptions) ?? receiptExceptions
         protectedMessages=try container.decodeIfPresent([String].self,forKey:.protectedMessages) ?? protectedMessages
@@ -215,7 +241,7 @@ struct RelayStorage: Codable {
     var fileBytes: Int
 }
 
-struct DeliveryIssue: Identifiable {
+struct DeliveryIssue: Codable, Identifiable {
     var id: String
     var detail: String
     var attempts: Int

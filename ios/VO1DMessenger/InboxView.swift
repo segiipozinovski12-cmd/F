@@ -5,6 +5,9 @@ struct InboxView: View {
     @State private var search = ""
     @State private var filter = "Все"
     @State private var composing = false
+    @State private var archiveRevealed = false
+    @State private var creatingStory = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var rooms: [Room] {
         store.state.rooms.filter { room in
@@ -50,26 +53,36 @@ struct InboxView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         header
+                        if store.social.stories.contains(where: { $0.expiresAt > Date() }) { StoriesStrip() }
                         statusStrip
                         searchBar
                         filters
+                        if archiveRevealed && filter != "Архив" && store.state.rooms.contains(where: { $0.archived }) {
+                            Button { withAnimation { filter = "Архив" } } label: {
+                                Label("Архив · \(store.state.rooms.filter { $0.archived }.count)", systemImage: "archivebox")
+                                    .frame(maxWidth: .infinity, alignment: .leading).panel()
+                            }.buttonStyle(MotionButtonStyle()).transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                        if filter == "Архив" { Button("Вернуться к чатам") { withAnimation { filter = "Все"; archiveRevealed = false } } }
                         if !store.requestRooms.isEmpty {
                             NavigationLink { MessageRequestsView() } label: {
                                 Label("Запросы на переписку · \(store.requestRooms.count)",systemImage:"person.badge.clock").panel()
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(MotionButtonStyle())
                         }
 
                         if rooms.isEmpty {
                             emptyState
                         } else {
                             LazyVStack(spacing: 10) {
-                                ForEach(rooms) { room in
+                                ForEach(Array(rooms.enumerated()), id: \.element.id) { index, room in
                                     NavigationLink {
                                         ChatView(roomID: room.id)
                                     } label: {
                                         roomRow(room)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MotionButtonStyle())
+                                    .softAppear(index: index)
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                         Button {
                                             store.updateRoom(room.id) { $0.archived.toggle() }
@@ -144,44 +157,39 @@ struct InboxView: View {
                     }
                     .padding(22)
                 }
-                .refreshable { await store.sync() }
+                .refreshable {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)) { archiveRevealed.toggle() }
+                    await store.sync()
+                }
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: rooms.map(\.id))
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $composing) { ComposeView() }
+            .sheet(isPresented: $creatingStory) { NavigationStack { StoryComposerView() } }
         }
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
                 Wordmark(compact: true)
-                Text("Сообщения")
-                    .font(.system(size: 36, weight: .black, design: .rounded))
-                    .tracking(-1.4)
-            }
-            Spacer()
-            if store.state.rooms.contains(where: { store.isSavedRoom($0.id) }) {
-                NavigationLink {
-                    ChatView(roomID: ChatStore.savedRoomID)
-                } label: {
-                    Image(systemName: "bookmark.fill")
-                        .font(.subheadline.bold())
-                        .frame(width: 44, height: 44)
-                        .background(.white.opacity(0.075), in: Circle())
-                        .foregroundStyle(.white)
+                Spacer(minLength: 6)
+                Button { creatingStory = true; Haptics.light() } label: {
+                    Image(systemName: "plus.rectangle.on.rectangle").font(.subheadline.bold())
+                        .frame(width: 44, height: 44).background(.white.opacity(0.075), in: Circle())
+                }.buttonStyle(MotionButtonStyle()).accessibilityLabel("Добавить историю на 24 часа")
+                if store.state.rooms.contains(where: { store.isSavedRoom($0.id) }) {
+                    NavigationLink { ChatView(roomID: ChatStore.savedRoomID) } label: {
+                        Image(systemName: "bookmark.fill").font(.subheadline.bold())
+                            .frame(width: 44, height: 44).background(.white.opacity(0.075), in: Circle())
+                    }.buttonStyle(MotionButtonStyle()).accessibilityLabel("Сохранённые сообщения")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Сохранённые сообщения")
+                Button { composing = true; Haptics.light() } label: {
+                    Image(systemName: "plus").font(.title3.bold()).frame(width: 44, height: 44)
+                        .background(.white, in: Circle()).foregroundStyle(.black)
+                }.buttonStyle(MotionButtonStyle()).accessibilityLabel("Новый разговор")
             }
-
-            Button { composing = true } label: {
-                Image(systemName: "plus")
-                    .font(.title3.bold())
-                    .frame(width: 50, height: 50)
-                    .background(.white, in: Circle())
-                    .foregroundStyle(.black)
-            }
-            .accessibilityLabel("Новый разговор")
+            Text("Сообщения").font(.system(size: 36, weight: .black, design: .rounded)).tracking(-1.4)
         }
     }
 
@@ -213,7 +221,7 @@ struct InboxView: View {
     private var filters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы", "Архив"] + store.extended.folders.map(\.id), id: \.self) { item in
+                ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы"] + store.extended.folders.map(\.id), id: \.self) { item in
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { filter = item }
                     } label: {
@@ -224,7 +232,6 @@ struct InboxView: View {
                             .padding(.vertical, 10)
                             .background(filter == item ? Color.white : Color.white.opacity(0.055), in: Capsule())
                             .foregroundStyle(filter == item ? .black : Theme.secondary)
-                            .overlay(Capsule().stroke(.white.opacity(filter == item ? 0 : 0.08)))
                     }
                 }
             }
@@ -309,8 +316,8 @@ struct InboxView: View {
                     Text(!room.draft.isEmpty
                          ? "Черновик: \(room.draft)"
                          : (last?.state == "scheduled"
-                            ? "Запланировано: \(last?.text ?? "")"
-                            : (last?.attachment?.name ?? last?.text ?? "Начни разговор")))
+                            ? "Запланировано: \(last?.previewText ?? "")"
+                            : (last?.attachment?.name ?? last?.previewText ?? "Начни разговор")))
                         .font(.subheadline)
                         .foregroundStyle(Theme.secondary)
                         .lineLimit(1)
@@ -459,7 +466,7 @@ struct ComposeView: View {
                                         }
                                         .panel()
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MotionButtonStyle())
                                 }
                             }
                         }
@@ -481,6 +488,7 @@ struct ComposeView: View {
                                     title = ""
                                     Haptics.success()
                                     room = created
+                                    Task { await store.sync() }
                                 } catch {
                                     Haptics.warning()
                                     store.error = error.localizedDescription
@@ -504,7 +512,7 @@ struct ComposeView: View {
                             .disabled(
                                 creating ||
                                 title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                                (!isChannel && selected.isEmpty)
+                                selected.count > 15
                             )
 
                             Text(

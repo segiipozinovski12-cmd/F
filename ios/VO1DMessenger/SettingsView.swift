@@ -31,26 +31,47 @@ struct SettingsView: View {
                         }
                         .padding(.bottom, 4)
 
-                        profileCard
+                        profileCard.softAppear(index: 0)
+                        NavigationLink { AppearanceSettingsView() } label: {
+                            Label("ОФОРМЛЕНИЕ И ТЕМЫ", systemImage: "paintpalette")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink { ProfilesView() } label: {
                             Label("НЕЗАВИСИМЫЕ ЛИЧНОСТИ",systemImage:"person.crop.rectangle.stack")
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
-                        }.buttonStyle(.plain)
-                        keysCard
+                        }.buttonStyle(MotionButtonStyle())
+                        keysCard.softAppear(index: 1)
+                        NavigationLink { NearbyView() } label: {
+                            Label("СВЯЗЬ РЯДОМ БЕЗ ИНТЕРНЕТА", systemImage: "antenna.radiowaves.left.and.right")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(MotionButtonStyle())
+                        NavigationLink { BotFatherView() } label: {
+                            Label("@vo1d_bot_father · МОИ БОТЫ", systemImage: "terminal")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(MotionButtonStyle())
+                        NavigationLink { ReportCenterView() } label: {
+                            Label("ЖАЛОБЫ И МОДЕРАЦИЯ", systemImage: "flag")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(MotionButtonStyle())
+                        NavigationLink { NextSecurityCenterView() } label: {
+                            Label("SECURITY CHECK И TRUST CIRCLE", systemImage: "checkmark.shield")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink {
                             ToolsCenterView()
                         } label: {
                             Label("ПРИВАТНОСТЬ И ИНСТРУМЕНТЫ",systemImage:"lock.shield")
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
-                        }.buttonStyle(.plain)
-                        privacyCard
-                        voiceCard
-                        callsCard
-                        relayCard
-                        emergencyCard
-                        vpnCard
-                        legalCard
-                        deleteCard
+                        }.buttonStyle(MotionButtonStyle())
+                        privacyCard.softAppear(index: 2)
+                        retentionCard.softAppear(index: 3)
+                        voiceCard.softAppear(index: 4)
+                        callsCard.softAppear(index: 5)
+                        relayCard.softAppear(index: 6)
+                        emergencyCard.softAppear(index: 7)
+                        vpnCard.softAppear(index: 8)
+                        legalCard.softAppear(index: 9)
+                        deleteCard.softAppear(index: 10)
 
                         HStack {
                             Spacer()
@@ -63,18 +84,21 @@ struct SettingsView: View {
                         .padding(.vertical, 24)
                     }
                     .padding(22)
+                    .softAppear()
                 }
             }
             .navigationBarHidden(true)
+            .labelStyle(FeatureLabelStyle())
             .onAppear {
                 name = store.state.nickname
                 username = store.state.username ?? ""
                 bio = store.state.bio ?? ""
                 if !username.isEmpty {
                     usernameAvailable = true
-                    usernameStatus = "Текущий @\(username)"
+                    usernameStatus = username == "vo1d" ? "Закреплён навсегда" : "Текущий @\(username)"
                 }
             }
+            .task { await store.refreshPushStatus() }
             .onDisappear {
                 usernameCheckTask?.cancel()
             }
@@ -120,7 +144,7 @@ struct SettingsView: View {
                         .frame(width: 40, height: 40)
                         .background(.white.opacity(0.08), in: Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MotionButtonStyle())
                 .accessibilityLabel("Изменить аватар")
             }
 
@@ -155,6 +179,12 @@ struct SettingsView: View {
                     usernameCheckTask?.cancel()
                     usernameAvailable = nil
 
+                    if store.state.username == "vo1d" {
+                        usernameAvailable = true
+                        usernameStatus = "Закреплён навсегда"
+                        return
+                    }
+
                     if clean.isEmpty {
                         usernameStatus = "4–20 символов: a-z, 0-9, _"
                         return
@@ -188,6 +218,11 @@ struct SettingsView: View {
                 .font(.caption2)
                 .foregroundStyle(usernameAvailable == false ? .white.opacity(0.58) : Theme.secondary)
             }
+            .disabled(store.state.username == "vo1d")
+            if store.state.username == "vo1d" {
+                Label("Первый зарегистрированный владелец · username изменить нельзя", systemImage: "lock.fill")
+                    .font(.caption2).foregroundStyle(Theme.secondary)
+            }
 
             TextField("О себе", text: $bio, axis: .vertical)
                 .lineLimit(2...4)
@@ -215,6 +250,7 @@ struct SettingsView: View {
             Button {
                 let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !cleanedName.isEmpty else { return }
+                let fence = store.sessionFence
 
                 Task {
                     if !username.isEmpty {
@@ -225,9 +261,10 @@ struct SettingsView: View {
                         guard await store.claimUsername(username) else { return }
                     }
 
+                    guard (try? store.requireCurrentSession(fence)) != nil else { return }
                     store.state.nickname = String(cleanedName.prefix(40))
                     store.state.bio = String(bio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-                    store.persist()
+                    do { try store.save() } catch { store.error = error.localizedDescription }
                     usernameAvailable = true
                     usernameStatus = store.state.username.map { "Текущий @\($0)" } ?? ""
                 }
@@ -272,6 +309,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             sectionTitle("ПРИВАТНОСТЬ", icon: "lock.shield.fill")
 
+            Toggle("Запрашивать ключ при запуске", isOn: Binding(
+                get: { store.preferences.requireAccessKey },
+                set: { store.setRequireAccessKey($0) }
+            ))
+            Text("Если выключить, история откроется сразу после запуска. Face ID можно оставить включённым отдельно.")
+                .font(.caption2).foregroundStyle(Theme.secondary)
+
             Toggle("Face ID / код устройства", isOn: Binding(
                 get: { store.state.appLock },
                 set: { value in Task { await store.setLock(value) } }
@@ -290,7 +334,7 @@ struct SettingsView: View {
             ))
             .tint(.white)
 
-            Text("Локальные уведомления работают в приложении. Фоновые push требуют настроенного APNs на relay и подписанного профиля Apple.")
+            Text(store.pushStatus.isEmpty ? "Проверяем готовность уведомлений…" : store.pushStatus)
                 .font(.caption2)
                 .foregroundStyle(Theme.secondary)
                 .lineSpacing(3)
@@ -300,6 +344,21 @@ struct SettingsView: View {
                 .buttonStyle(GhostButton())
         }
         .panel()
+    }
+
+    private var retentionCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionTitle("АВТОУДАЛЕНИЕ ЧАТОВ", icon: "timer")
+            Picker("После отсутствия новых сообщений", selection: store.preferenceBinding(\.autoDeleteChatsSeconds)) {
+                Text("Выключено").tag(0)
+                Text("1 час").tag(3600)
+                Text("24 часа").tag(86400)
+                Text("7 дней").tag(604800)
+                Text("30 дней").tag(2592000)
+            }.tint(.white)
+            Text("Удаляет неактивный чат и его историю на этом устройстве при следующем открытии или синхронизации. Открытый чат, черновики и неотправленные сообщения сохраняются. Копии у собеседника остаются.")
+                .font(.caption2).foregroundStyle(Theme.secondary)
+        }.panel()
     }
 
     private var voiceCard: some View {
@@ -327,7 +386,7 @@ struct SettingsView: View {
                             .foregroundStyle(.white.opacity(0.48))
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MotionButtonStyle())
 
                 if effect != .shadow {
                     Divider().overlay(.white.opacity(0.07))
@@ -489,6 +548,8 @@ struct SettingsView: View {
     private var legalCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionTitle("ДОКУМЕНТЫ", icon: "doc.text.fill")
+            Text("Жалобы передают только выбранные с согласия доказательства. Боты могут читать адресованные им сообщения. Relay хранит идентификаторы, маршрутизацию и данные согласия на звонки.")
+                .font(.caption).foregroundStyle(Theme.secondary)
             NavigationLink("ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ") { PrivacyPolicyView() }
                 .buttonStyle(GhostButton())
             NavigationLink("ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ") { TermsView() }
@@ -511,38 +572,25 @@ struct SettingsView: View {
 
     @MainActor
     private func loadAvatar(_ item: PhotosPickerItem) async {
+        let fence = store.sessionFence
         do {
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else {
-                return
+            guard let data = try await item.loadTransferable(type: Data.self) else { return }
+            try store.requireCurrentSession(fence)
+            guard let jpeg = SocialImage.jpeg(data, maxSide: 384, limit: 160_000) else {
+                throw MessengerError.invalid("Не удалось подготовить аватар до 160 КБ")
             }
-
-            let maxSide: CGFloat = 512
-            let scale = min(1, maxSide / max(image.size.width, image.size.height))
-            let target = CGSize(
-                width: max(1, image.size.width * scale),
-                height: max(1, image.size.height * scale)
-            )
-            let renderer = UIGraphicsImageRenderer(size: target)
-            let rendered = renderer.image { _ in
-                image.draw(in: CGRect(origin: .zero, size: target))
-            }
-
-            guard let jpeg = rendered.jpegData(compressionQuality: 0.78),
-                  jpeg.count <= 1_500_000 else {
-                throw MessengerError.invalid("Аватар получился слишком большим")
-            }
-
             store.state.profileAvatar = jpeg
-            store.persist()
-        } catch {
-            store.error = error.localizedDescription
-        }
+            try store.save()
+        } catch is CancellationError { return }
+        catch { store.error = error.localizedDescription }
     }
 
     private func sectionTitle(_ title: String, icon: String) -> some View {
         HStack {
-            Image(systemName: icon)
+            Image(systemName: icon).symbolVariant(.fill)
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 32, height: 32)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 11))
             Text(title).font(.caption.monospaced()).tracking(2.2)
             Spacer()
         }
@@ -680,10 +728,12 @@ struct PrivacyPolicyView: View {
             title: "Политика\nконфиденциальности",
             sections: [
                 ("1. Что создаётся", "VO1D не требует номер телефона или адрес электронной почты. На устройстве создаются криптографическая личность, выбранный ник, публичный VO1D ID и локальный ключ доступа."),
-                ("2. Сообщения", "Содержимое сообщений шифруется на устройстве. Relay хранит только зашифрованные конверты, необходимые для доставки, в пределах настроенного срока хранения."),
+                ("2. Сообщения", "Содержимое переписки шифруется на устройстве. Relay хранит шифротекст и ограниченные данные доставки, регистрации, поиска, звонков и согласия. Модерация не получает общий ключ к перепискам."),
                 ("3. Технические данные", "Для работы сервиса сервер неизбежно обрабатывает сетевой IP и ограниченные метаданные соединения. Они не являются содержимым переписки."),
                 ("4. Локальное хранение", "Криптографические ключи хранятся в Keychain, а история — в зашифрованном vault с защитой файлов iOS."),
-                ("5. Удаление", "Удаление аккаунта очищает данные приложения и запрашивает удаление серверной записи, когда relay доступен. VO1D не может уничтожить копии, которые другой пользователь сохранил отдельно."),
+                ("5. Удаление", "Удаление аккаунта очищает локальные данные и запрашивает удаление серверной записи при доступном relay. Решения и ограниченный аудит могут сохраняться для безопасности и апелляций. Для @vo1d сохраняются публичное закрепление владельца и проверенная MFA. Копии у других пользователей не уничтожаются."),
+                ("Жалобы", "Ты сам выбираешь доказательства и даёшь согласие. Выбранный текст, комментарий и файлы шифруются для @vo1d; модератор сможет их прочитать и сохранить. Relay видит ID, причину, время и размер жалобы. Доказательства на relay хранятся до 7 дней, сведения о деле — до 90 дней. Аудит ограничен 50 000 событиями."),
+                ("Боты", "Бот является отдельным участником: его владелец и исполнитель могут читать сообщения, адресованные боту. Это не даёт им доступ к другим чатам. Relay видит регистрацию бота и связь с владельцем."),
                 ("6. Изменения", "Перед публикацией приложения владелец сервиса должен дополнить эту политику актуальными контактными данными, юрисдикцией и сроками хранения для своей инфраструктуры.")
             ]
         )

@@ -20,6 +20,7 @@ from push import PushService
 import call_authority
 import private_blobs
 import network_privacy
+import moderation
 from app import APIError, ID, MAX_BODY, UUID, Relay
 
 CALL_MAX_AUDIO = 96 * 1024
@@ -49,6 +50,7 @@ class RealtimeGateway:
             "REMOTE_ADDR": request.remote or "",
             "HTTP_AUTHORIZATION": request.headers.get("Authorization", ""),
             "HTTP_X_FORWARDED_FOR": request.headers.get("X-Forwarded-For", ""),
+            "HTTP_X_MODERATION_TOKEN": request.headers.get("X-Moderation-Token", ""),
         }
 
     def _user(self, request):
@@ -334,6 +336,12 @@ class RealtimeGateway:
                     stored=db.execute("SELECT 1 FROM envelopes WHERE id=? AND recipient=?",(body.get("id"),target)).fetchone()
                 if stored:
                     await self.push.send(target)
+            if request.method == 'POST' and re.fullmatch(r'/v2/mailboxes/[A-Za-z0-9_-]{43}/envelopes', request.path):
+                mailbox = request.path.split('/')[3]
+                with self.relay.db() as db:
+                    stored = db.execute('SELECT 1 FROM private_envelopes WHERE id=? AND mailbox=?',(body.get('id'),mailbox)).fetchone()
+                if stored:
+                    await self.push.send(mailbox, private_mailbox=True)
             if request.method == "DELETE" and request.path == "/v1/account":
                 self._cleanup_blobs(include_orphans=True)
         except APIError as exc:
@@ -389,6 +397,7 @@ class RealtimeGateway:
             else:
                 user = self._user(request)
             with self.relay.db() as db:
+                moderation.enforce(db, user, APIError)
                 own_card=db.execute('SELECT card FROM identities WHERE id=?',(user,)).fetchone()
             if own_card is None: raise APIError(401,'Identity unavailable')
             extra={'card':base64.b64encode(own_card[0].encode()).decode()}
@@ -415,9 +424,20 @@ class RealtimeGateway:
         for call_id, route in list(self.calls.items()):
             if route["b"] == user and not route["accepted"]:
                 await ws.send_json({"type":"invite","from":route["a"],"callID":call_id,"key":route["key"],"keySignature":route["keySignature"],**route.get('extra',{})})
+                await self._forward(route["a"], {"type":"ringing", "from":user, "callID":call_id, "delivery":"online"})
 
+        last_session_check = time.monotonic()
         try:
             async for message in ws:
+                try:
+                    with self.relay.db() as db:
+                        moderation.enforce(db, user, APIError)
+                        if delegated is None and time.monotonic() - last_session_check >= 5:
+                            self.relay.user(self._env(request), db)
+                            last_session_check = time.monotonic()
+                except APIError:
+                    await ws.close(code=4003, message=b'account restricted')
+                    break
                 if delegated is not None:
                     try:
                         with self.relay.db() as db: call_authority.authorize(db,auth,APIError)
@@ -480,6 +500,10 @@ class RealtimeGateway:
                         trusted=db.execute("SELECT 1 FROM trusted WHERE owner=? AND peer=?",(target,user)).fetchone()
                         if settings and settings[0] and not trusted:
                             blocked=True
+                        try:
+                            moderation.enforce(db, target, APIError)
+                        except APIError:
+                            blocked = True
                     if not known:
                         await self._send_error(ws, "unknown_peer")
                         continue
@@ -500,13 +524,16 @@ class RealtimeGateway:
                         await self._send_error(ws, "peer_busy")
                         continue
                     if peer_ws is None:
-                        delivered=await self.push.send(target,"voip",{"id":call_id,"from":user})
-                        if not delivered:
-                            async with self.lock:
-                                self.calls.pop(call_id,None)
-                            await self._send_error(ws,"peer_offline")
+                        # Keep the bounded ringing route while iOS wakes or a
+                        # suspended foreground socket reconnects. Missing APNs
+                        # credentials must not turn a brief gap into instant hangup.
+                        await self.push.send(target,"voip",{"id":call_id,"from":user})
+                        await ws.send_json({"type":"ringing", "from":target, "callID":call_id, "delivery":"waiting"})
                         continue
-                    await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature,**extra})
+                    delivered = await self._forward(target, {"type": "invite", "from": user, "callID": call_id,"key":key,"keySignature":signature,**extra})
+                    if not delivered:
+                        await self.push.send(target,"voip",{"id":call_id,"from":user})
+                    await ws.send_json({"type":"ringing", "from":target, "callID":call_id, "delivery":"online" if delivered else "waiting"})
                     continue
 
                 async with self.lock:
@@ -623,7 +650,9 @@ def create_app():
                     gateway.relay.clean(db)
                 gateway._cleanup_blobs(include_orphans=True)
                 for call_id,route in list(gateway.calls.items()):
-                    if (not route["accepted"] and time.monotonic()-route.get("created",0)>60) or (route.get("resumeDeadline",float("inf")) < time.monotonic()):
+                    with gateway.relay.db() as db:
+                        restricted = db.execute("SELECT 1 FROM sanctions WHERE subject IN (?,?) AND action IN ('restrict','ban') AND expires>?", (route['a'],route['b'],int(time.time()))).fetchone() is not None
+                    if restricted or (not route["accepted"] and time.monotonic()-route.get("created",0)>60) or (route.get("resumeDeadline",float("inf")) < time.monotonic()):
                         gateway.calls.pop(call_id,None)
                         for user in (route["a"],route["b"]):
                             await gateway._forward(user,{"type":"end","from":gateway._peer_for(route,user),"callID":call_id,"reason":"timeout"})

@@ -1,0 +1,26 @@
+[Unit]
+Description=VO1D encrypted bot executor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vo1dbot
+Group=vo1dbot
+WorkingDirectory=/opt/vo1d/bot-worker
+Environment=VO1D_BOT_PASSWORD_FILE=/var/lib/vo1dbot/password
+# For Tor, configure SOCKS5h here with the operator's actual local proxy.
+# Environment=VO1D_BOT_SOCKS_PROXY=socks5h://127.0.0.1:9050
+ExecStart=/usr/bin/node src/cli.mjs --vault /var/lib/vo1dbot/bot.vo1dbot
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/vo1dbot
+UMask=0077
+LimitNOFILE=256
+
+[Install]
+WantedBy=multi-user.target

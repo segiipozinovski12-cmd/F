@@ -1,6 +1,14 @@
 # Сборка и запуск на iPhone
 
-В корне репозитория на Mac:
+Для свежей копии на Mac:
+
+```bash
+git clone --recurse-submodules --branch codex/vo1d-next https://github.com/segiipozinovski12-cmd/F.git VO1D-Messenger
+cd VO1D-Messenger
+bash scripts/open_iphone.sh
+```
+
+В уже обновлённой копии ветки `codex/vo1d-next`, из корня репозитория:
 
 ```bash
 bash scripts/open_iphone.sh

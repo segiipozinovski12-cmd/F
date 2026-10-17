@@ -18,6 +18,7 @@ teams = re.findall(r'DEVELOPMENT_TEAM\s*=\s*"?([A-Z0-9]{10})"?\s*;', previous)
 bundle_ids = re.findall(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([a-zA-Z0-9.-]+)"?\s*;', previous)
 local_team = os.environ.get('VO1D_DEVELOPMENT_TEAM', teams[0] if teams else '')
 local_bundle = os.environ.get('VO1D_BUNDLE_ID', bundle_ids[0] if bundle_ids else 'io.vo1d.messenger')
+debug_push = os.environ.get('VO1D_ENABLE_DEBUG_PUSH') == '1'
 
 # Prepare pinned native dependencies before Xcode resolves the local Swift packages.
 if '--project-only' not in sys.argv:
@@ -68,6 +69,12 @@ for file in sorted((IOS / 'VO1DMessenger' / 'Resources').glob('*.txt')):
 appsrc = obj('app-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(appbuild)}; runOnlyForDeploymentPostprocessing = 0;')
 testsrc = obj('test-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(testbuild)}; runOnlyForDeploymentPostprocessing = 0;')
 resources = obj('app-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(resource_builds)}; runOnlyForDeploymentPostprocessing = 0;')
+test_resource_builds = []
+for file in sorted((IOS / 'VO1DMessengerTests' / 'Resources').glob('*.json')):
+    path = file.relative_to(IOS).as_posix()
+    ref = ref_file(path, 'text.json')
+    test_resource_builds.append(obj(path + ':resource', 'PBXBuildFile', f'fileRef = {ref};'))
+testresources = obj('test-resources','PBXResourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(test_resource_builds)}; runOnlyForDeploymentPostprocessing = 0;')
 signalpackage=obj('signal-package','XCLocalSwiftPackageReference','relativePath = "../Vendor/libsignal/swift";')
 torpackage=obj('tor-package','XCLocalSwiftPackageReference','relativePath = "../Vendor/TorRuntime";')
 torproduct=obj('tor-product','XCSwiftPackageProductDependency',f'package = {torpackage}; productName = EmbeddedTor;')
@@ -102,13 +109,13 @@ def configurations(name, settings):
             allsettings['SWIFT_ACTIVE_COMPILATION_CONDITIONS']='DEBUG'
             allsettings['ENABLE_TESTABILITY']='YES'
         if name=='app':
-            if mode == 'Debug':
+            if mode == 'Debug' and not debug_push:
                 # Personal Apple Development teams cannot provision Push Notifications.
                 # Keep Debug installable on a real iPhone; Release retains APNs for paid-team/App Store signing.
                 allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.Debug.entitlements'
                 allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.Debug.plist'
             else:
-                allsettings['APS_ENVIRONMENT']='production'
+                allsettings['APS_ENVIRONMENT']='development' if mode == 'Debug' else 'production'
                 allsettings['CODE_SIGN_ENTITLEMENTS']='VO1DMessenger/VO1DMessenger.entitlements'
                 allsettings['INFOPLIST_FILE']='VO1DMessenger/Info.plist'
         content=' '.join(f'{k} = {q(v)};' for k,v in allsettings.items())
@@ -122,7 +129,7 @@ app=uid('app-target'); project=uid('project')
 proxy=obj('test-proxy','PBXContainerItemProxy',f'containerPortal = {project}; proxyType = 1; remoteGlobalIDString = {app}; remoteInfo = VO1DMessenger;')
 dep=obj('test-dep','PBXTargetDependency',f'target = {app}; targetProxy = {proxy};')
 obj('app-target','PBXNativeTarget',f'buildConfigurationList = {appconfigs}; buildPhases = {array([ffi_prepare,appsrc,frameworks,resources,ffi_embed])}; buildRules = (); dependencies = (); packageProductDependencies = {array([signalproduct,torproduct])}; name = VO1DMessenger; productName = VO1DMessenger; productReference = {app_product}; productType = "com.apple.product-type.application";')
-test=obj('test-target','PBXNativeTarget',f'buildConfigurationList = {testconfigs}; buildPhases = {array([testsrc,testframeworks])}; buildRules = (); dependencies = {array([dep])}; packageProductDependencies = {array([testsignalproduct])}; name = VO1DMessengerTests; productName = VO1DMessengerTests; productReference = {test_product}; productType = "com.apple.product-type.bundle.unit-test";')
+test=obj('test-target','PBXNativeTarget',f'buildConfigurationList = {testconfigs}; buildPhases = {array([testsrc,testframeworks,testresources])}; buildRules = (); dependencies = {array([dep])}; packageProductDependencies = {array([testsignalproduct])}; name = VO1DMessengerTests; productName = VO1DMessengerTests; productReference = {test_product}; productType = "com.apple.product-type.bundle.unit-test";')
 obj('project','PBXProject',f'attributes = {{ LastUpgradeCheck = 1600; TargetAttributes = {{ {app} = {{ CreatedOnToolsVersion = 16.0; }}; {test} = {{ CreatedOnToolsVersion = 16.0; TestTargetID = {app}; }}; }}; }}; buildConfigurationList = {projectconfigs}; compatibilityVersion = "Xcode 14.0"; developmentRegion = ru; hasScannedForEncodings = 0; knownRegions = (ru,en,Base); mainGroup = {main}; productRefGroup = {products}; packageReferences = {array([signalpackage,torpackage])}; projectDirPath = ""; projectRoot = ""; targets = {array([app,test])};')
 (PROJECT/'project.pbxproj').write_text('// !$*UTF8*$!\n{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+'\n'.join(objects)+f'\n}}; rootObject = {project}; }}\n')
 schemes=PROJECT/'xcshareddata'/'xcschemes'; schemes.mkdir(parents=True,exist_ok=True)

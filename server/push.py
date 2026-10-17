@@ -20,6 +20,7 @@ class PushService:
         self.team_id = os.environ.get('VO1D_APNS_TEAM_ID','')
         self.topic = os.environ.get('VO1D_APNS_TOPIC','io.vo1d.messenger')
         self.key_path = os.environ.get('VO1D_APNS_KEY_PATH','')
+        self.key_pem = os.environ.get('VO1D_APNS_PRIVATE_KEY','')
         self._cached = None
         self._debounce = {}
         self._client = None
@@ -27,13 +28,14 @@ class PushService:
 
     @property
     def configured(self):
-        return bool(self.key_id and self.team_id and self.key_path and Path(self.key_path).is_file())
+        return bool(self.key_id and self.team_id and (self.key_pem or (self.key_path and Path(self.key_path).is_file())))
 
     def jwt(self):
         now = int(time.time())
         if self._cached and now-self._cached[0]<3000:
             return self._cached[1]
-        private = serialization.load_pem_private_key(Path(self.key_path).read_bytes(),password=None)
+        key = self.key_pem.encode() if self.key_pem else Path(self.key_path).read_bytes()
+        private = serialization.load_pem_private_key(key,password=None)
         if not isinstance(private,ec.EllipticCurvePrivateKey) or not isinstance(private.curve,ec.SECP256R1):
             raise ValueError('APNs requires a P-256 private key')
         header=b64url(json.dumps({'alg':'ES256','kid':self.key_id},separators=(',',':')).encode())
@@ -44,18 +46,22 @@ class PushService:
         self._cached=(now,token)
         return token
 
-    async def send(self, identity, kind='alert', call=None):
+    async def send(self, identity, kind='alert', call=None, private_mailbox=False):
         if not self.configured:
             return False
         if kind=='alert':
+            debounce_key = ('mailbox:' if private_mailbox else 'account:') + identity
             now=time.monotonic()
-            if now-self._debounce.get(identity,0)<10:
+            if now-self._debounce.get(debounce_key,0)<10:
                 return False
-            self._debounce[identity]=now
+            self._debounce[debounce_key]=now
             if len(self._debounce)>10000:
                 self._debounce={k:v for k,v in self._debounce.items() if now-v<60}
         with self.relay.db() as db:
-            rows=db.execute('SELECT token,environment FROM push_tokens WHERE identity=? AND kind=?',(identity,kind)).fetchall()
+            if private_mailbox:
+                rows=db.execute('SELECT token,environment FROM private_mailbox_push WHERE mailbox=?',(identity,)).fetchall()
+            else:
+                rows=db.execute('SELECT token,environment FROM push_tokens WHERE identity=? AND kind=?',(identity,kind)).fetchall()
         if not rows:
             return False
         async with self._lock:
@@ -87,7 +93,10 @@ class PushService:
                     reason=response.json().get('reason','')
                     if reason in ('BadDeviceToken','Unregistered','DeviceTokenNotForTopic'):
                         with self.relay.db() as db:
-                            db.execute('DELETE FROM push_tokens WHERE identity=? AND token=? AND kind=?',(identity,row['token'],kind))
+                            if private_mailbox:
+                                db.execute('DELETE FROM private_mailbox_push WHERE mailbox=? AND token=?',(identity,row['token']))
+                            else:
+                                db.execute('DELETE FROM push_tokens WHERE identity=? AND token=? AND kind=?',(identity,row['token'],kind))
             except Exception:
                 # Never log payloads, device tokens, keys or provider responses.
                 pass

@@ -23,6 +23,9 @@ def install(db):
         CREATE TABLE IF NOT EXISTS private_mailboxes (
           id TEXT PRIMARY KEY, read_digest TEXT NOT NULL, write_digest TEXT NOT NULL,
           expires INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS private_mailbox_push (
+          mailbox TEXT NOT NULL, token TEXT NOT NULL, environment TEXT NOT NULL,
+          PRIMARY KEY(mailbox,token));
         CREATE TABLE IF NOT EXISTS private_envelopes (
           id TEXT, mailbox TEXT, body TEXT NOT NULL, size INTEGER NOT NULL,
           expires INTEGER NOT NULL, PRIMARY KEY(id,mailbox));
@@ -32,14 +35,22 @@ def install(db):
         CREATE INDEX IF NOT EXISTS private_inbox ON private_envelopes(mailbox,expires);
         CREATE TABLE IF NOT EXISTS private_invites (
           token TEXT PRIMARY KEY, mailbox TEXT NOT NULL, ciphertext TEXT NOT NULL, expires INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS private_invite_seen (
+          token TEXT PRIMARY KEY, mailbox TEXT NOT NULL, digest TEXT NOT NULL,
+          expires INTEGER NOT NULL, status TEXT NOT NULL);
     ''')
+    for row in db.execute('SELECT token,mailbox,ciphertext,expires FROM private_invites').fetchall():
+        checksum = digest(json.dumps([row['mailbox'], row['ciphertext'], row['expires']], separators=(',', ':')))
+        db.execute('INSERT OR IGNORE INTO private_invite_seen VALUES (?,?,?,?,?)', (row['token'], row['mailbox'], checksum, row['expires'], 'active'))
 
 
 def clean(db, now):
+    db.execute('DELETE FROM private_invite_seen WHERE expires<=?', (now,))
     db.execute('DELETE FROM private_invites WHERE expires<=? OR mailbox IN (SELECT id FROM private_mailboxes WHERE expires<=?)',(now,now))
     db.execute('DELETE FROM private_envelopes WHERE expires<=? OR mailbox IN (SELECT id FROM private_mailboxes WHERE expires<=?)',(now,now))
     db.execute('DELETE FROM private_seen WHERE expires<=? OR mailbox IN (SELECT id FROM private_mailboxes WHERE expires<=?)',(now,now))
     db.execute('DELETE FROM private_mailboxes WHERE expires<=?',(now,))
+    db.execute('DELETE FROM private_mailbox_push WHERE mailbox NOT IN (SELECT id FROM private_mailboxes)')
     db.execute('DELETE FROM retired_mailboxes WHERE expires<=?',(now,))
 
 
@@ -70,6 +81,8 @@ def handle(relay, env, body, ip_hash, error, decode):
         relay.rate('private-invite:'+ip_hash,120)
         with relay.db() as db:
             row=db.execute('DELETE FROM private_invites WHERE token=? AND expires>? RETURNING ciphertext',(token,now)).fetchone()
+            if row is not None:
+                db.execute("UPDATE private_invite_seen SET status='consumed' WHERE token=?", (token,))
         if row is None: raise error(404,'Private invitation expired, revoked or already used')
         return {'ciphertext':row[0]}
     if path == '/v2/mailboxes' and method == 'POST':
@@ -98,8 +111,10 @@ def handle(relay, env, body, ip_hash, error, decode):
             db.execute('INSERT OR IGNORE INTO private_mailboxes VALUES (?,?,?,?)',values)
         return {'ok':True}
     parts=path.strip('/').split('/')
-    if len(parts) not in (3,4) or parts[:2]!=['v2','mailboxes'] or not TOKEN.fullmatch(parts[2]):
+    if len(parts) not in (3,4,5) or parts[:2]!=['v2','mailboxes'] or not TOKEN.fullmatch(parts[2]):
         raise error(404,'Mailbox route not found')
+    if len(parts) == 5 and (parts[3] != 'invites' or method != 'DELETE' or not TOKEN.fullmatch(parts[4])):
+        raise error(404, 'Mailbox route not found')
     mailbox=parts[2]
     scope='write' if method=='POST' and len(parts)==4 and parts[3]=='envelopes' else 'read'
     # Rate bucket names are hashes; neither tokens nor mailbox IDs are logged.
@@ -107,7 +122,28 @@ def handle(relay, env, body, ip_hash, error, decode):
     with relay.db() as db:
         clean(db,now)
         mailbox_expiry=authorize(db,mailbox,env,scope,error)
-        action=parts[3] if len(parts)==4 else ''
+        action=parts[3] if len(parts)>=4 else ''
+        if method == 'POST' and action == 'push':
+            from privacy import PUSH_TOKEN
+            token, environment, enabled = body.get('token'), body.get('environment'), body.get('enabled')
+            if not isinstance(token,str) or not PUSH_TOKEN.fullmatch(token) or environment not in ('sandbox','production') or type(enabled) is not bool:
+                raise error(400,'Invalid mailbox notification permission')
+            token = token.lower()
+            if enabled:
+                if db.execute('SELECT count(*) FROM private_mailbox_push WHERE mailbox=?',(mailbox,)).fetchone()[0] >= 8 and not db.execute('SELECT 1 FROM private_mailbox_push WHERE mailbox=? AND token=?',(mailbox,token)).fetchone():
+                    raise error(429,'Mailbox notification device limit')
+                db.execute('INSERT INTO private_mailbox_push VALUES (?,?,?) ON CONFLICT(mailbox,token) DO UPDATE SET environment=excluded.environment',(mailbox,token,environment))
+            else:
+                db.execute('DELETE FROM private_mailbox_push WHERE mailbox=? AND token=?',(mailbox,token))
+            return {'ok':True}
+        if method == 'DELETE' and action == 'invites':
+            token = parts[4]
+            row = db.execute('SELECT mailbox FROM private_invite_seen WHERE token=?', (token,)).fetchone()
+            if row and row['mailbox'] != mailbox:
+                raise error(403, 'Invitation belongs to another mailbox')
+            db.execute('DELETE FROM private_invites WHERE token=? AND mailbox=?', (token, mailbox))
+            db.execute("UPDATE private_invite_seen SET status='revoked' WHERE token=? AND mailbox=?", (token, mailbox))
+            return {'ok': True}
         if method=='POST' and action=='invites':
             if set(body)!={'token','ciphertext','expiresAt'} or not isinstance(body['token'],str) or not TOKEN.fullmatch(body['token']):
                 raise error(400,'Invalid private invitation')
@@ -118,6 +154,15 @@ def handle(relay, env, body, ip_hash, error, decode):
             old=db.execute('SELECT mailbox,ciphertext,expires FROM private_invites WHERE token=?',(body['token'],)).fetchone()
             values=(mailbox,body['ciphertext'],body['expiresAt'])
             if old is not None and tuple(old)!=values: raise error(409,'Invitation collision')
+            checksum = digest(json.dumps(values, separators=(',', ':')))
+            seen = db.execute('SELECT mailbox,digest FROM private_invite_seen WHERE token=?', (body['token'],)).fetchone()
+            if seen:
+                if seen['mailbox'] != mailbox or seen['digest'] != checksum:
+                    raise error(409, 'Invitation token already used')
+                return {'ok': True}
+            if db.execute('SELECT count(*) FROM private_invite_seen WHERE mailbox=?', (mailbox,)).fetchone()[0] >= 64:
+                raise error(429, 'Invitation limit reached for this mailbox')
+            db.execute('INSERT INTO private_invite_seen VALUES (?,?,?,?,?)', (body['token'], mailbox, checksum, body['expiresAt'], 'active'))
             db.execute('INSERT OR IGNORE INTO private_invites VALUES (?,?,?,?)',(body['token'],*values))
             return {'ok':True}
         if method=='GET' and action=='inbox':
@@ -128,7 +173,8 @@ def handle(relay, env, body, ip_hash, error, decode):
                 raise error(400,'Invalid opaque envelope')
             if type(body.get('expiresAt')) is not int or not now<body['expiresAt']<=min(now+7*86400,mailbox_expiry):
                 raise error(400,'Invalid envelope expiry')
-            decode(body['ephemeralKey'],32); decode(body['salt'],32)
+            from app import agreement_key
+            agreement_key(body['ephemeralKey']); decode(body['salt'],32)
             encrypted=decode(body['ciphertext'])
             if len(encrypted) not in (2048+28,8192+28,32768+28,131072+28,524288+28,2097152+28,5242880+28):
                 raise error(400,'Ciphertext must use a supported padding bucket')
@@ -153,6 +199,7 @@ def handle(relay, env, body, ip_hash, error, decode):
             db.executemany('DELETE FROM private_envelopes WHERE mailbox=? AND id=?',[(mailbox,v) for v in ids])
             return {'ok':True}
         if method=='DELETE' and action=='':
+            db.execute('DELETE FROM private_mailbox_push WHERE mailbox=?',(mailbox,))
             db.execute('INSERT OR IGNORE INTO retired_mailboxes SELECT id,read_digest,expires FROM private_mailboxes WHERE id=?',(mailbox,))
             db.execute('DELETE FROM private_invites WHERE mailbox=?',(mailbox,))
             db.execute('DELETE FROM private_envelopes WHERE mailbox=?',(mailbox,))

@@ -90,7 +90,7 @@ struct SharedMediaView: View {
                                 }
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MotionButtonStyle())
                         }
                     }
                 }
@@ -153,7 +153,7 @@ struct SharedMediaView: View {
                             }
                             .panel()
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MotionButtonStyle())
                     }
                 }
             }

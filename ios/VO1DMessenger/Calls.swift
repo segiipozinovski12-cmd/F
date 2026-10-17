@@ -2,6 +2,7 @@ import AVFoundation
 import CallKit
 import CryptoKit
 import Foundation
+import MediaPlayer
 import SwiftUI
 
 enum VoiceCallPhase: String {
@@ -33,10 +34,12 @@ private final class CallAudioEngine {
     )!
 
     private var running = false
+    var isRunning: Bool { running && engine.isRunning }
     private var tapInstalled = false
     private var captureConverter: AVAudioConverter?
     private let captureFormat = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16_000,channels:1,interleaved:true)!
     var muted = false
+    var quietSpeechBoost = false
 
     init() {
         engine.attach(player)
@@ -48,15 +51,18 @@ private final class CallAudioEngine {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.allowBluetooth, .defaultToSpeaker]
+            options: [.allowBluetooth]
         )
     }
 
     func start(onFrame: @escaping (Data) -> Void) throws {
-        guard !running else { return }
+        guard !isRunning else { return }
+        if running || tapInstalled { stop() }
 
         let input = engine.inputNode
-        let format = input.inputFormat(forBus: 0)
+        // The tap consumes the node's output format. The hardware-side input
+        // format may differ after Bluetooth or voice-chat route negotiation.
+        let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
             throw MessengerError.invalid("Микрофон недоступен")
         }
@@ -89,10 +95,6 @@ private final class CallAudioEngine {
         muted = false
     }
 
-    func setSpeaker(_ enabled: Bool) {
-        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
-    }
-
     func play(_ data: Data) {
         guard running, data.count >= 2 else { return }
         let frameCount = data.count / 2
@@ -106,7 +108,8 @@ private final class CallAudioEngine {
             let lo = UInt16(bytes[index * 2])
             let hi = UInt16(bytes[index * 2 + 1]) << 8
             let sample = Int16(bitPattern: lo | hi)
-            channel[index] = Float(sample) / 32767
+            let normalized = Float(sample) / 32768
+            channel[index] = max(-1, min(1, normalized * (quietSpeechBoost ? 1.4 : 1)))
         }
         buffer.frameLength = AVAudioFrameCount(frameCount)
         player.scheduleBuffer(buffer, completionHandler: nil)
@@ -127,6 +130,26 @@ private final class CallAudioEngine {
         return Data(bytes:bytes,count:Int(output.frameLength)*2)
     }
 
+}
+
+enum CallAudioOutput: String, CaseIterable, Identifiable {
+    case receiver, speaker, bluetooth
+
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .receiver: return "Телефон"
+        case .speaker: return "Громкая связь"
+        case .bluetooth: return "Bluetooth"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .receiver: return "iphone.gen3"
+        case .speaker: return "speaker.wave.3.fill"
+        case .bluetooth: return "airpodspro"
+        }
+    }
 }
 
 private final class CallKitBridge: NSObject, CXProviderDelegate {
@@ -167,8 +190,14 @@ final class CallManager: ObservableObject {
 
     @Published private(set) var session: VoiceCallSession?
     @Published private(set) var muted = false
-    @Published private(set) var speaker = true
+    @Published private(set) var speaker = false
+    @Published private(set) var audioOutput: CallAudioOutput = .receiver
+    @Published private(set) var bluetoothAvailable = false
+    @Published private(set) var quietSpeechBoost = false
+    @Published private(set) var isCallScreenExpanded = true
     @Published private(set) var transport = "OFFLINE"
+    @Published private(set) var lastFailure: String?
+    @Published private(set) var preparingCall = false
 
     private let provider: CXProvider
     private let bridge: CallKitBridge
@@ -177,6 +206,8 @@ final class CallManager: ObservableObject {
     var allowedPeer: ((String) -> Bool)?
 
     private var socket: URLSessionWebSocketTask?
+    private var replacementSocket: URLSessionWebSocketTask?
+    private var socketAuthorization: Data?
     private var api: APIClient?
     private var identity: LocalIdentity?
     private var pendingConfiguration: (APIClient, LocalIdentity, ContactCard?)?
@@ -188,6 +219,14 @@ final class CallManager: ObservableObject {
     private var socketReady = false
     private var nameResolver: ((String) -> String)?
     private var recordSink: ((CallRecord) -> Void)?
+    private var connectTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
+    private var startTask: Task<Void, Never>?
+    private var mediaStartTask: Task<Void, Never>?
+    private var mediaGeneration = UUID()
+    private var configurationID = UUID()
+    private var connectionID = UUID()
+    private var routeObserver: NSObjectProtocol?
 
     private init() {
         let configuration = CXProviderConfiguration(localizedName: "VO1D")
@@ -202,6 +241,65 @@ final class CallManager: ObservableObject {
 
         bridge.owner = self
         provider.setDelegate(bridge, queue: nil)
+        refreshOutputAvailability()
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                self?.handleAudioRouteChange(notification)
+            }
+        }
+    }
+
+    private func refreshOutputAvailability() {
+        bluetoothAvailable = AVAudioSession.sharedInstance().availableInputs?.contains(where: {
+            $0.portType == .bluetoothHFP
+        }) ?? false
+    }
+
+    private func handleAudioRouteChange(_ notification: Notification) {
+        refreshOutputAvailability()
+        guard session != nil else { return }
+        let reasonRaw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+        guard let reasonRaw, let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else { return }
+        if reason == .oldDeviceUnavailable && audioOutput == .bluetooth && !bluetoothAvailable {
+            audioOutput = .receiver
+            speaker = false
+        }
+        guard reason == .newDeviceAvailable || reason == .oldDeviceUnavailable ||
+              reason == .routeConfigurationChange else { return }
+        restartMediaForRouteChange()
+    }
+
+    private func restartMediaForRouteChange() {
+        guard audio.isRunning else { return }
+        mediaGeneration = UUID()
+        mediaStartTask?.cancel()
+        mediaStartTask = nil
+        audio.stop()
+        activateMediaIfReady()
+    }
+
+    private func applySelectedAudioOutput() throws {
+        let system = AVAudioSession.sharedInstance()
+        switch audioOutput {
+        case .receiver:
+            try system.overrideOutputAudioPort(.none)
+            if let builtInMic = system.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try system.setPreferredInput(builtInMic)
+            }
+        case .speaker:
+            try system.setPreferredInput(nil)
+            try system.overrideOutputAudioPort(.speaker)
+        case .bluetooth:
+            guard let bluetooth = system.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) else {
+                throw MessengerError.invalid("Bluetooth-гарнитура недоступна")
+            }
+            try system.overrideOutputAudioPort(.none)
+            try system.setPreferredInput(bluetooth)
+        }
     }
 
     func configure(
@@ -213,7 +311,8 @@ final class CallManager: ObservableObject {
     ) {
         self.nameResolver = nameResolver
         self.recordSink = recordSink
-        if session != nil, socket != nil {
+        if self.api === api, socket != nil { return }
+        if session != nil, (socket != nil || callSecrets != nil) {
             // An accepted background call retains the delegated identity used
             // for its handshake until it ends, even after foreground unlock.
             pendingConfiguration = (api, identity, ownerCard)
@@ -221,11 +320,17 @@ final class CallManager: ObservableObject {
         }
         self.api = api
         self.identity = identity
+        startTask?.cancel(); startTask = nil; preparingCall = false
+        configurationID = UUID()
         self.canonicalCard = ownerCard ?? (try? identity.card)
         connectSocket()
     }
 
     func disconnect() {
+        configurationID = UUID()
+        connectTask?.cancel(); connectTask = nil
+        heartbeatTask?.cancel(); heartbeatTask = nil
+        startTask?.cancel(); startTask = nil; preparingCall = false
         pendingConfiguration = nil
         if let current = session {
             provider.reportCall(with: current.id, endedAt: Date(), reason: .failed)
@@ -234,7 +339,9 @@ final class CallManager: ObservableObject {
             cleanup()
         }
         socket?.cancel(with: .goingAway, reason: nil)
+        replacementSocket?.cancel(with: .goingAway, reason: nil); replacementSocket = nil
         socket = nil
+        socketAuthorization = nil
         socketReady = false
         transport = "OFFLINE"
         api = nil
@@ -245,6 +352,32 @@ final class CallManager: ObservableObject {
     }
 
     func startCall(peer: ContactCard, name: String) {
+        guard session == nil, startTask == nil else { return }
+        guard NetworkState.shared.connected else { lastFailure = "Для интернет-звонка подключись к Wi-Fi или мобильной сети"; return }
+        guard allowedPeer?(peer.id) != false else { lastFailure = "Сначала подтверди общение с этим контактом и разреши звонки"; return }
+        lastFailure = nil
+        preparingCall = true
+        let expected = configurationID
+        startTask = Task {
+            defer { if expected == configurationID { preparingCall = false; startTask = nil } }
+            let granted = await withCheckedContinuation { continuation in
+                AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+            }
+            guard !Task.isCancelled, expected == configurationID else { return }
+            guard granted else { lastFailure = "Разреши микрофон в настройках iOS → VO1D"; return }
+            do {
+                try await prepareCallTransport()
+                guard !Task.isCancelled, expected == configurationID else { return }
+                beginOutgoing(peer: peer, name: name)
+            } catch is CancellationError { }
+            catch {
+                guard expected == configurationID else { return }
+                lastFailure = "Не удалось подключить звонок: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func beginOutgoing(peer: ContactCard, name: String) {
         guard session == nil, allowedPeer?(peer.id) != false else { return }
         guard socketReady else {
             transport = "RECONNECTING"
@@ -271,21 +404,29 @@ final class CallManager: ObservableObject {
                 phase: .connecting,
                 startedAt: nil
             )
+            isCallScreenExpanded = true
+            refreshOutputAvailability()
 
             let handle = CXHandle(type: .generic, value: name)
             let action = CXStartCallAction(call: uuid, handle: handle)
             action.isVideo = false
             controller.request(CXTransaction(action: action)) { [weak self] error in
                 guard error != nil else { return }
-                Task { @MainActor in self?.failCurrent(reason: .failed) }
+                Task { @MainActor in
+                    guard self?.session?.id == uuid else { return }
+                    self?.lastFailure = error?.localizedDescription
+                    self?.failCurrent(reason: .failed)
+                }
             }
         } catch {
+            lastFailure = "Не удалось начать звонок: \(error.localizedDescription)"
             cleanup()
         }
     }
 
     func answerFromApp() {
         guard let session, session.incoming else { return }
+        isCallScreenExpanded = true
         controller.request(CXTransaction(action: CXAnswerCallAction(call: session.id))) { _ in }
     }
 
@@ -302,8 +443,36 @@ final class CallManager: ObservableObject {
     }
 
     func toggleSpeaker() {
-        speaker.toggle()
-        audio.setSpeaker(speaker)
+        selectAudioOutput(speaker ? .receiver : .speaker)
+    }
+
+    func selectAudioOutput(_ output: CallAudioOutput) {
+        guard session != nil else { return }
+        if output == .bluetooth && !bluetoothAvailable {
+            lastFailure = "Bluetooth-гарнитура не подключена"
+            return
+        }
+        let previous = audioOutput
+        audioOutput = output
+        do {
+            if audioSessionActive { try applySelectedAudioOutput() }
+            speaker = output == .speaker
+            audio.quietSpeechBoost = quietSpeechBoost && speaker
+            restartMediaForRouteChange()
+        } catch {
+            audioOutput = previous
+            speaker = previous == .speaker
+            lastFailure = "Не удалось переключить звук: \(error.localizedDescription)"
+        }
+    }
+
+    func toggleQuietSpeechBoost() {
+        quietSpeechBoost.toggle()
+        audio.quietSpeechBoost = quietSpeechBoost && speaker
+    }
+
+    func setCallScreenExpanded(_ expanded: Bool) {
+        isCallScreenExpanded = expanded
     }
 
     fileprivate func performStart(_ action: CXStartCallAction) {
@@ -322,35 +491,54 @@ final class CallManager: ObservableObject {
                 packet["type"]="invite"; packet["to"]=current.peerID; packet["callID"]=current.callID
                 try await send(packet)
             } catch {
+                guard session?.id == current.id else { return }
+                lastFailure = error.localizedDescription
                 failCurrent(reason: .failed)
             }
         }
     }
 
     fileprivate func performAnswer(_ action: CXAnswerCallAction) {
-        guard var current = session, current.id == action.callUUID else {
+        guard var current = session, current.id == action.callUUID, current.incoming, current.phase == .ringing else {
             action.fail()
             return
         }
 
-        current.phase = .active
-        current.startedAt = Date()
+        current.phase = .connecting
         session = current
         action.fulfill()
 
         Task {
             do {
+                let granted = await withCheckedContinuation { continuation in
+                    AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+                }
+                guard session?.id == current.id else { return }
+                guard granted else {
+                    lastFailure = "Разреши микрофон в настройках iOS → VO1D"
+                    failCurrent(reason: .failed); return
+                }
+                try await prepareCallTransport()
                 for _ in 0..<100 {
+                    guard session?.id == current.id else { return }
                     if socketReady && callKey != nil { break }
                     try await Task.sleep(for:.milliseconds(100))
                 }
-                guard socketReady,callKey != nil else { failCurrent(reason:.failed); return }
+                guard let ready = session, ready.id == current.id else { return }
+                guard socketReady,callKey != nil, !ready.peerID.isEmpty else {
+                    lastFailure = "Не удалось получить ключи и адрес собеседника"
+                    failCurrent(reason:.failed); return
+                }
                 guard let identity,let callSecrets else { throw MessengerError.invalid("Нет ключей звонка") }
-                var packet=try callSecrets.offer(identity:identity,callID:current.callID,to:current.peerID,ownerID:canonicalCard?.id)
-                packet["type"]="answer"; packet["to"]=current.peerID; packet["callID"]=current.callID
+                var packet=try callSecrets.offer(identity:identity,callID:ready.callID,to:ready.peerID,ownerID:canonicalCard?.id)
+                packet["type"]="answer"; packet["to"]=ready.peerID; packet["callID"]=ready.callID
                 try await send(packet)
+                guard session?.id == ready.id else { return }
+                var accepted = ready; accepted.phase = .active; accepted.startedAt = Date(); session = accepted
                 activateMediaIfReady()
             } catch {
+                guard session?.id == current.id else { return }
+                lastFailure = error.localizedDescription
                 failCurrent(reason: .failed)
             }
         }
@@ -363,14 +551,8 @@ final class CallManager: ObservableObject {
         }
         action.fulfill()
 
-        Task {
-            try? await send([
-                "type": "end",
-                "to": current.peerID,
-                "callID": current.callID,
-            ])
-            finishCurrent(status: localEndStatus(current))
-        }
+        sendEndSignal(current)
+        finishCurrent(status: localEndStatus(current))
     }
 
     fileprivate func performMute(_ action: CXSetMutedCallAction) {
@@ -389,51 +571,122 @@ final class CallManager: ObservableObject {
 
     fileprivate func audioActivated() {
         audioSessionActive = true
+        refreshOutputAvailability()
+        do { try applySelectedAudioOutput() }
+        catch { lastFailure = "Аудиовыход недоступен: \(error.localizedDescription)" }
         activateMediaIfReady()
     }
 
     fileprivate func audioDeactivated() {
         audioSessionActive = false
+        mediaGeneration = UUID()
+        mediaStartTask?.cancel(); mediaStartTask = nil
         audio.stop()
     }
 
-    private func connectSocket() {
-        guard let api else { return }
+    private func authorizationDigest(_ request: URLRequest) -> Data {
+        Data(SHA256.hash(data: Data((request.value(forHTTPHeaderField: "Authorization") ?? "").utf8)))
+    }
 
-        socket?.cancel(with: .goingAway, reason: nil)
+    private func prepareCallTransport() async throws {
+        guard let api else { throw MessengerError.invalid("Сессия звонков ещё не готова") }
+        let expected = configurationID
+        try await api.refreshCallAuthorization()
+        guard !Task.isCancelled, expected == configurationID, self.api === api else { throw CancellationError() }
+        let desired = authorizationDigest(try api.callSocketRequest())
+        if socketAuthorization != desired || socket == nil {
+            connectSocket(preservingPendingCall: session?.incoming == true && session?.startedAt == nil)
+        }
+        for _ in 0..<200 {
+            guard !Task.isCancelled, expected == configurationID, self.api === api else { throw CancellationError() }
+            if socketReady {
+                if socketAuthorization == authorizationDigest(try api.callSocketRequest()) { return }
+                connectSocket(preservingPendingCall: session?.incoming == true && session?.startedAt == nil)
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        throw MessengerError.invalid("Канал звонков не ответил. Проверь сеть и выбранный маршрут.")
+    }
+
+    private func connectSocket(preservingPendingCall: Bool = false) {
+        guard let api else { return }
+        connectTask?.cancel(); heartbeatTask?.cancel()
+        let expected = UUID(); connectionID = expected
+        if preservingPendingCall {
+            // Let the relay replace the still-live socket atomically. Closing
+            // it before the new handshake would discard an unanswered invite.
+            if let socket { replacementSocket = socket }
+        } else {
+            socket?.cancel(with: .goingAway, reason: nil)
+            replacementSocket?.cancel(with: .goingAway, reason: nil); replacementSocket = nil
+        }
         socket = nil
+        socketAuthorization = nil
         socketReady = false
         transport = "CONNECTING"
 
-        do {
-            let request = try api.callSocketRequest()
-            let task = api.session.webSocketTask(with: request)
-            socket = task
-            task.resume()
-            receiveLoop(task)
-        } catch {
-            transport = "OFFLINE"
+        connectTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await api.refreshCallAuthorization()
+                guard !Task.isCancelled, connectionID == expected, self.api === api else { return }
+                let request = try api.callSocketRequest()
+                socketAuthorization = authorizationDigest(request)
+                let task = api.session.webSocketTask(with: request)
+                socket = task
+                task.resume()
+                receiveLoop(task)
+                heartbeatTask = Task { [weak self, weak task] in
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                        guard let self, let task, self.socket === task else { return }
+                        do {
+                            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                                task.sendPing { error in
+                                    if let error { continuation.resume(throwing: error) }
+                                    else { continuation.resume() }
+                                }
+                            }
+                        } catch { task.cancel(with: .goingAway, reason: nil); return }
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled, connectionID == expected, self.api === api else { return }
+                transport = "OFFLINE"
+                if preparingCall { lastFailure = "Не удалось авторизовать звонки: \(error.localizedDescription)" }
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                guard connectionID == expected, self.api === api else { return }
+                connectSocket()
+            }
         }
     }
 
     private func receiveLoop(_ task: URLSessionWebSocketTask) {
+        let expected = connectionID
         Task { [weak self] in
             guard let self else { return }
             do {
                 let message = try await task.receive()
-                guard self.socket === task else { return }
+                guard self.socket === task, self.connectionID == expected else { return }
                 try await self.handle(message)
                 self.receiveLoop(task)
             } catch {
-                guard self.socket === task else { return }
+                guard self.socket === task, self.connectionID == expected else { return }
                 self.socket = nil
+                self.socketAuthorization = nil
+                self.replacementSocket?.cancel(with: .goingAway, reason: nil); self.replacementSocket = nil
                 self.socketReady = false
+                self.heartbeatTask?.cancel()
                 self.transport = "OFFLINE"
                 if let current = self.session, current.startedAt != nil, self.callKey != nil { self.pauseCurrent() }
                 else if self.session != nil { self.failCurrent(reason: .failed) }
 
+                if (task.response as? HTTPURLResponse)?.statusCode == 401 || task.closeCode.rawValue == 4003 {
+                    try? await self.api?.refreshCallAuthorization(force: true)
+                }
+
                 try? await Task.sleep(for: .seconds(3))
-                if self.api != nil && self.socket == nil {
+                if self.connectionID == expected && self.api != nil && self.socket == nil {
                     self.connectSocket()
                 }
             }
@@ -457,6 +710,7 @@ final class CallManager: ObservableObject {
               let type = packet["type"] as? String else { return }
 
         if type == "ready" {
+            replacementSocket?.cancel(with: .goingAway, reason: nil); replacementSocket = nil
             socketReady = true
             transport = "WSS"
             if session?.phase == .reconnecting { await sendResume(type:"resume") }
@@ -468,6 +722,9 @@ final class CallManager: ObservableObject {
 
         if type == "error" {
             let code = packet["code"] as? String ?? "call_error"
+            lastFailure = ["peer_offline": "Собеседник не в сети. Без APNs оба приложения должны быть открыты.",
+                           "peer_unavailable": "Собеседник должен принять запрос на переписку и разрешить звонки.",
+                           "peer_busy": "Собеседник уже разговаривает."][code] ?? "Ошибка звонка: \(code)"
             if ["peer_offline", "peer_busy", "peer_unavailable", "unknown_peer", "unknown_call", "call_mismatch", "invalid_resume"].contains(code) {
                 failCurrent(reason: code == "peer_offline" ? .unanswered : .failed)
             }
@@ -487,6 +744,9 @@ final class CallManager: ObservableObject {
               current.peerID == peerID else { return }
 
         switch type {
+        case "ringing":
+            guard !current.incoming, current.startedAt == nil else { return }
+            var updated = current; updated.phase = .ringing; session = updated
         case "answer":
             guard !current.incoming,let callSecrets,let identity,let peerCard,
                   let key=packet["key"] as? String,let signature=packet["keySignature"] as? String else { return }
@@ -516,7 +776,7 @@ final class CallManager: ObservableObject {
                   let key = callKey else { return }
 
             guard let callSecrets,let sequence=packet["sequence"] as? String,
-                  let clear=try callSecrets.open(encrypted,sequence:sequence,key:key,callID:callID) else { return }
+                  let clear=try? callSecrets.open(encrypted,sequence:sequence,key:key,callID:callID) else { return }
             audio.play(clear)
 
         case "end":
@@ -557,6 +817,7 @@ final class CallManager: ObservableObject {
             let peer: ContactCard
             if let packed = packet["card"] as? String { peer = try Wire.decoder.decode(ContactCard.self, from: Crypto.decode(packed)); try Crypto.validate(peer) }
             else { peer=try await api.card(peerID) }
+            guard self.api === api else { return }
             guard peer.id == peerID else { throw MessengerError.invalid("ID звонящего не совпал с ключом") }
             guard session==nil || session?.callID==callID else { return }
             let secrets=callSecrets ?? CallSecrets()
@@ -569,15 +830,20 @@ final class CallManager: ObservableObject {
             if session==nil {
                 let name=nameResolver?(peerID) ?? "VO1D"
                 session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:name,incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
+                isCallScreenExpanded = false
                 let update=CXCallUpdate()
                 update.remoteHandle=CXHandle(type:.generic,value:name); update.localizedCallerName=name
                 update.hasVideo=false; update.supportsHolding=false; update.supportsGrouping=false; update.supportsUngrouping=false; update.supportsDTMF=false
                 provider.reportNewIncomingCall(with:uuid,update:update) { [weak self] error in
-                    if error != nil { Task { @MainActor in self?.finishCurrent(status:"failed") } }
+                    if let error { Task { @MainActor in
+                        guard self?.session?.id == uuid else { return }
+                        self?.lastFailure = "iOS не приняла входящий звонок: \(error.localizedDescription)"
+                        self?.finishCurrent(status:"failed")
+                    } }
                 }
             }
             activateMediaIfReady()
-        } catch { failCurrent(reason:.failed) }
+        } catch { lastFailure = error.localizedDescription; failCurrent(reason:.failed) }
     }
 
     func reportPushedCall(peerID: String, callID: String, completion: @escaping () -> Void) {
@@ -590,6 +856,7 @@ final class CallManager: ObservableObject {
         let rejected=session != nil || (!peerID.isEmpty && (allowedPeer?(peerID)==false || peerID.count != 64))
         if !rejected {
             session=VoiceCallSession(id:uuid,callID:callID,peerID:peerID,peerName:"VO1D",incoming:true,createdAt:Date(),phase:.ringing,startedAt:nil)
+            isCallScreenExpanded = false
         }
         provider.reportNewIncomingCall(with:uuid,update:update) { [weak self] error in
             completion()
@@ -613,18 +880,37 @@ final class CallManager: ObservableObject {
         guard audioSessionActive,
               let current = session,
               current.phase == .active,
-              callKey != nil else { return }
-
-        do {
-            try audio.start { [weak self] frame in
-                Task { @MainActor in
-                    await self?.sendAudio(frame)
+              callKey != nil, mediaStartTask == nil, !audio.isRunning else { return }
+        let expected = current.callID
+        let captureGeneration = UUID(); mediaGeneration = captureGeneration
+        mediaStartTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if mediaGeneration == captureGeneration { mediaStartTask = nil } }
+            // CallKit activation can precede a valid hardware route. Give the
+            // audio bus a short bounded warm-up instead of hanging up instantly.
+            for attempt in 0..<3 {
+                guard !Task.isCancelled, mediaGeneration == captureGeneration, session?.callID == expected, session?.phase == .active, audioSessionActive else { return }
+                do {
+                    try audio.start { [weak self] frame in
+                        Task { @MainActor in
+                            guard let self, self.mediaGeneration == captureGeneration, self.session?.callID == expected, self.audioSessionActive else { return }
+                            await self.sendAudio(frame)
+                        }
+                    }
+                    audio.muted = muted
+                    audio.quietSpeechBoost = quietSpeechBoost && speaker
+                    try? applySelectedAudioOutput()
+                    return
+                } catch {
+                    audio.stop()
+                    if attempt == 2 {
+                        lastFailure = "Не удалось включить звук звонка: \(error.localizedDescription)"
+                        failCurrent(reason: .failed)
+                        return
+                    }
+                    do { try await Task.sleep(for: .milliseconds(250 * (attempt + 1))) } catch { return }
                 }
             }
-            audio.muted = muted
-            audio.setSpeaker(speaker)
-        } catch {
-            failCurrent(reason: .failed)
         }
     }
 
@@ -666,6 +952,7 @@ final class CallManager: ObservableObject {
             return
         }
         provider.reportCall(with: current.id, endedAt: Date(), reason: reason)
+        sendEndSignal(current)
 
         let status: String
         switch reason {
@@ -675,6 +962,18 @@ final class CallManager: ObservableObject {
             status = current.phase == .active ? "interrupted" : "failed"
         }
         finishCurrent(status: status)
+    }
+
+    private func sendEndSignal(_ current: VoiceCallSession) {
+        guard let socket, socketReady, !current.peerID.isEmpty else { return }
+        let packet = ["type":"end", "to":current.peerID, "callID":current.callID]
+        Task {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: packet)
+                guard let text = String(data: data, encoding: .utf8) else { return }
+                try await socket.send(.string(text))
+            } catch { socket.cancel(with: .goingAway, reason: nil) }
+        }
     }
 
     private func localEndStatus(_ current: VoiceCallSession) -> String {
@@ -718,13 +1017,18 @@ final class CallManager: ObservableObject {
     }
 
     private func cleanup() {
+        mediaGeneration = UUID()
+        mediaStartTask?.cancel(); mediaStartTask = nil
         audio.stop()
         session = nil
         peerCard = nil
         callKey = nil
         callSecrets = nil
         muted = false
-        speaker = true
+        speaker = false
+        audioOutput = .receiver
+        quietSpeechBoost = false
+        isCallScreenExpanded = true
         audioSessionActive = false
         if let pending = pendingConfiguration {
             pendingConfiguration = nil
@@ -734,106 +1038,245 @@ final class CallManager: ObservableObject {
     }
 }
 
+private struct CallVolumeSlider: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volume = MPVolumeView()
+        volume.showsRouteButton = false
+        volume.showsVolumeSlider = true
+        volume.tintColor = .white
+        return volume
+    }
+
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
+struct CallMiniBanner: View {
+    let session: VoiceCallSession
+    @EnvironmentObject private var calls: CallManager
+
+    var body: some View {
+        HStack(spacing: 13) {
+            Button {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.85)) {
+                    calls.setCallScreenExpanded(true)
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Avatar(name: session.peerName, size: 48)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(session.incoming && session.phase == .ringing ? "Входящий звонок" : "VO1D · Звонок")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.58))
+                        Text(session.peerName)
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if session.incoming && session.phase == .ringing {
+                bannerAction("phone.down.fill", fill: .white.opacity(0.13), foreground: .white, label: "Отклонить") {
+                    calls.endFromApp()
+                }
+                bannerAction("phone.fill", fill: .white, foreground: .black, label: "Принять") {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.85)) {
+                        calls.answerFromApp()
+                    }
+                }
+            } else {
+                bannerAction("arrow.up.left.and.arrow.down.right", fill: .white.opacity(0.13), foreground: .white, label: "Развернуть") {
+                    withAnimation { calls.setCallScreenExpanded(true) }
+                }
+                bannerAction("phone.down.fill", fill: .white, foreground: .black, label: "Завершить") {
+                    calls.endFromApp()
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background {
+            RoundedRectangle(cornerRadius: 25, style: .continuous)
+                .fill(Color(red: 0.065, green: 0.065, blue: 0.075))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 25, style: .continuous)
+                        .strokeBorder(.white.opacity(0.15), lineWidth: 1)
+                }
+        }
+        .shadow(color: .black.opacity(0.32), radius: 20, y: 10)
+        .padding(.horizontal, 14)
+        .padding(.top, 9)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func bannerAction(
+        _ symbol: String,
+        fill: Color,
+        foreground: Color,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(foreground)
+                .frame(width: 49, height: 49)
+                .background(fill, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
 struct CallScreen: View {
     let session: VoiceCallSession
     @EnvironmentObject private var calls: CallManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
+    @State private var showSoundOptions = false
 
     var body: some View {
-        ZStack {
-            VoidBackground()
+        GeometryReader { geometry in
+            ZStack {
+                VoidBackground()
+                ScrollView {
+                    VStack(spacing: 22) {
+                        HStack(spacing: 12) {
+                            Wordmark(compact: true)
+                            Spacer()
+                            Button {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                                    calls.setCallScreenExpanded(false)
+                                }
+                            } label: {
+                                Label("Свернуть", systemImage: "chevron.down")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 11)
+                                    .background(.white.opacity(0.08), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
 
-            VStack(spacing: 30) {
-                HStack {
-                    Wordmark(compact: true)
-                    Spacer()
-                    Text(calls.transport)
-                        .font(.caption2.monospaced())
-                        .tracking(1.5)
-                        .foregroundStyle(Theme.secondary)
-                }
+                        Spacer(minLength: 10)
 
-                Spacer()
+                        ZStack {
+                            ForEach(0..<3, id: \.self) { index in
+                                Circle()
+                                    .stroke(.white.opacity(0.10 - Double(index) * 0.018), lineWidth: 1)
+                                    .frame(
+                                        width: 162 + CGFloat(index) * 41,
+                                        height: 162 + CGFloat(index) * 41
+                                    )
+                                    .scaleEffect(pulse ? 1.06 + CGFloat(index) * 0.015 : 0.96)
+                                    .opacity(pulse ? 0.2 : 0.78)
+                            }
+                            Avatar(name: session.peerName, size: 114)
+                                .shadow(color: .white.opacity(0.10), radius: 28)
+                        }
+                        .frame(height: 248)
+                        .accessibilityHidden(true)
 
-                ZStack {
-                    ForEach(0..<3, id: \.self) { index in
-                        Circle()
-                            .stroke(.white.opacity(0.09 - Double(index) * 0.018), lineWidth: 1)
-                            .frame(width: 150 + CGFloat(index) * 46, height: 150 + CGFloat(index) * 46)
-                            .scaleEffect(pulse ? 1.08 + CGFloat(index) * 0.02 : 0.94)
-                            .opacity(pulse ? 0.18 : 0.75)
+                        VStack(spacing: 10) {
+                            Text(session.peerName)
+                                .font(.system(size: 34, weight: .bold, design: .rounded))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.8)
+                                .multilineTextAlignment(.center)
+                            Text(statusText)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .tracking(1.1)
+                                .foregroundStyle(.white.opacity(0.64))
+                                .multilineTextAlignment(.center)
+
+                            if let started = session.startedAt {
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    Text(duration(from: started, to: context.date))
+                                        .font(.system(size: 25, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(.white.opacity(0.92))
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
+
+                        Spacer(minLength: 10)
+
+                        if session.incoming && session.phase == .ringing {
+                            HStack(spacing: 18) {
+                                callButton(
+                                    icon: "phone.down.fill",
+                                    title: "Отклонить",
+                                    filled: false
+                                ) { calls.endFromApp() }
+                                callButton(
+                                    icon: "phone.fill",
+                                    title: "Принять",
+                                    filled: true
+                                ) { calls.answerFromApp() }
+                            }
+                        } else {
+                            HStack(spacing: 12) {
+                                callButton(
+                                    icon: calls.muted ? "mic.slash.fill" : "mic.fill",
+                                    title: calls.muted ? "Включить микрофон" : "Микрофон",
+                                    filled: calls.muted
+                                ) { calls.toggleMute() }
+
+                                callButton(
+                                    icon: calls.audioOutput == .speaker ? "speaker.wave.3.fill" : "speaker.wave.2",
+                                    title: calls.audioOutput.title,
+                                    filled: calls.audioOutput == .speaker
+                                ) { showSoundOptions = true }
+
+                                callButton(
+                                    icon: "phone.down.fill",
+                                    title: "Завершить",
+                                    filled: false
+                                ) { calls.endFromApp() }
+                            }
+
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.22)) {
+                                    showSoundOptions.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: "slider.horizontal.3")
+                                    Text("Звук и устройства")
+                                    Image(systemName: showSoundOptions ? "chevron.up" : "chevron.down")
+                                }
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.88))
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.white.opacity(0.07), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+
+                            if showSoundOptions {
+                                soundOptions
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
+                        }
+
+                        Text("Звонок использует интернет, а не телефонные минуты. Для связи требуется Wi-Fi или мобильный интернет.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.48))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 12)
                     }
-
-                    Avatar(name: session.peerName, size: 112)
-                        .shadow(color: .white.opacity(0.12), radius: 28)
+                    .frame(maxWidth: 510)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 22)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: geometry.size.height)
                 }
-                .frame(height: 270)
-
-                VStack(spacing: 8) {
-                    Text(session.peerName)
-                        .font(.system(size: 34, weight: .black, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.66)
-
-                    Text(statusText)
-                        .font(.caption.monospaced())
-                        .tracking(1.7)
-                        .foregroundStyle(Theme.secondary)
-
-                    if let started = session.startedAt {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(duration(from: started, to: context.date))
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.82))
-                        }
-                    }
-                }
-
-                Spacer()
-
-                if session.incoming && session.phase == .ringing {
-                    HStack(spacing: 42) {
-                        callButton(icon: "phone.down.fill", title: "Отклонить", filled: false) {
-                            calls.endFromApp()
-                        }
-                        callButton(icon: "phone.fill", title: "Ответить", filled: true) {
-                            calls.answerFromApp()
-                        }
-                    }
-                } else {
-                    HStack(spacing: 24) {
-                        callButton(
-                            icon: calls.muted ? "mic.slash.fill" : "mic.fill",
-                            title: calls.muted ? "Микрофон выкл." : "Микрофон",
-                            filled: calls.muted
-                        ) {
-                            calls.toggleMute()
-                        }
-
-                        callButton(
-                            icon: calls.speaker ? "speaker.wave.3.fill" : "speaker.fill",
-                            title: "Динамик",
-                            filled: calls.speaker
-                        ) {
-                            calls.toggleSpeaker()
-                        }
-
-                        callButton(icon: "phone.down.fill", title: "Завершить", filled: false) {
-                            calls.endFromApp()
-                        }
-                    }
-                }
-
-                Text("Аудио шифруется между устройствами. Relay видит участников, время и объём realtime-трафика, но не получает голос в открытом виде.")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .padding(.horizontal, 18)
+                .scrollIndicators(.hidden)
             }
-            .padding(24)
-            .padding(.bottom, 18)
         }
         .onAppear {
             guard !reduceMotion else { return }
@@ -843,9 +1286,72 @@ struct CallScreen: View {
         }
     }
 
+    private var soundOptions: some View {
+        VStack(alignment: .leading, spacing: 17) {
+            Text("КУДА ВЫВОДИТЬ ЗВУК")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.3)
+                .foregroundStyle(.white.opacity(0.5))
+            HStack(spacing: 9) {
+                routeButton(.receiver)
+                routeButton(.speaker)
+                if calls.bluetoothAvailable { routeButton(.bluetooth) }
+            }
+
+            HStack(spacing: 14) {
+                Image(systemName: "speaker.wave.1")
+                CallVolumeSlider().frame(height: 34)
+                Image(systemName: "speaker.wave.3")
+            }
+            .font(.system(size: 15))
+            .foregroundStyle(.white.opacity(0.76))
+            .accessibilityLabel("Системная громкость")
+
+            Toggle(isOn: Binding(
+                get: { calls.quietSpeechBoost },
+                set: { _ in calls.toggleQuietSpeechBoost() }
+            )) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Усиление тихой речи")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Может увеличить громкость и искажения")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.48))
+                }
+            }
+            .tint(.white)
+            .disabled(calls.audioOutput != .speaker)
+            .opacity(calls.audioOutput == .speaker ? 1 : 0.5)
+        }
+        .padding(17)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 21, style: .continuous))
+    }
+
+    private func routeButton(_ output: CallAudioOutput) -> some View {
+        let selected = calls.audioOutput == output
+        return Button {
+            calls.selectAudioOutput(output)
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: output.icon)
+                    .font(.system(size: 20, weight: .semibold))
+                Text(output.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 64)
+            .foregroundStyle(selected ? .black : .white)
+            .background(selected ? Color.white : Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
     private var statusText: String {
         switch session.phase {
-        case .ringing: return "ВХОДЯЩИЙ VO1D CALL"
+        case .ringing: return session.incoming ? "ВХОДЯЩИЙ VO1D CALL" : "ВЫЗОВ СОБЕСЕДНИКА…"
         case .connecting: return "СОЕДИНЕНИЕ…"
         case .reconnecting: return "ВОССТАНАВЛИВАЕМ СВЯЗЬ…"
         case .active: return "ЗАЩИЩЁННЫЙ АУДИОКАНАЛ"
@@ -864,25 +1370,30 @@ struct CallScreen: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 9) {
+            VStack(spacing: 11) {
                 Image(systemName: icon)
-                    .font(.system(size: 20, weight: .bold))
-                    .frame(width: 58, height: 58)
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(width: 72, height: 72)
                     .foregroundStyle(filled ? .black : .white)
                     .background(
-                        filled ? Color.white : Color.white.opacity(0.07),
+                        filled ? Color.white : Color.white.opacity(0.10),
                         in: Circle()
                     )
-                    .overlay(Circle().stroke(.white.opacity(filled ? 0 : 0.14)))
-
+                    .overlay {
+                        Circle().strokeBorder(.white.opacity(filled ? 0 : 0.14), lineWidth: 1)
+                    }
+                    .contentTransition(.symbolEffect(.replace))
                 Text(title)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.86))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
             }
-            .frame(width: 82)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 108)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MotionButtonStyle())
     }
 }

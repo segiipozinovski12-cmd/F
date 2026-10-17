@@ -28,10 +28,17 @@ def install(db):
 
 def erase(db, identity):
     import prekeys
+    import moderation
+    import bots
+    import commerce
+    commerce.erase(db, identity)
+    bots.erase(db, identity)
+    moderation.erase(db, identity)
     prekeys.erase(db, identity)
     db.execute('DELETE FROM call_authorities WHERE owner=?',(identity,))
     db.execute('DELETE FROM envelopes WHERE sender=? OR recipient=?', (identity, identity))
     db.execute('DELETE FROM seen WHERE recipient=?', (identity,))
+    db.execute("DELETE FROM private_mailbox_push WHERE token IN (SELECT token FROM push_tokens WHERE identity=? AND kind='alert')", (identity,))
     for table, column in [('identities','id'),('privacy','identity'),('codes','identity'),
                           ('usernames','identity'),('sessions','identity'),('challenges','identity'),
                           ('invites','owner'),('push_tokens','identity'),('blobs','owner')]:
@@ -55,6 +62,9 @@ def visible(db, identity):
 def handle(relay, db, user, env, body, error):
     method, path = env['REQUEST_METHOD'], env['PATH_INFO']
     now = int(time.time())
+    if method == 'GET' and path == '/v1/push/status':
+        from push import PushService
+        return {'configured': PushService(relay).configured}
     if method == 'GET' and path == '/v1/privacy':
         row = db.execute('SELECT discoverable,inactivity,trusted_calls FROM privacy WHERE identity=?', (user,)).fetchone()
         return {'discoverable': bool(row[0]) if row else True,
@@ -127,6 +137,12 @@ def handle(relay, db, user, env, body, error):
             return {'code':code}
         raise error(500,'Unable to rotate code')
     if method == 'DELETE' and path == '/v1/username':
+        import moderation
+        admin = moderation.owner(db)
+        if admin and admin['owner'] == user:
+            raise error(409, 'The permanent administrator username cannot be released')
+        if db.execute('SELECT 1 FROM bots WHERE identity=?', (user,)).fetchone():
+            raise error(409, 'Bot usernames are managed by their owner')
         db.execute('DELETE FROM usernames WHERE identity=?',(user,))
         return {'ok':True}
     if method == 'GET' and path == '/v1/sessions':
@@ -138,6 +154,7 @@ def handle(relay, db, user, env, body, error):
         db.execute('DELETE FROM sessions WHERE identity=? AND digest<>?',(user,current))
         return {'ok':True}
     if method == 'DELETE' and path == '/v1/push':
+        db.execute("DELETE FROM private_mailbox_push WHERE token IN (SELECT token FROM push_tokens WHERE identity=? AND kind='alert')", (user,))
         db.execute('DELETE FROM push_tokens WHERE identity=?',(user,))
         return {'ok':True}
     if method == 'POST' and path == '/v1/push':
@@ -145,6 +162,9 @@ def handle(relay, db, user, env, body, error):
         if not isinstance(token,str) or not PUSH_TOKEN.fullmatch(token) or kind not in ('alert','voip') or environment not in ('sandbox','production'):
             raise error(400,'Invalid push registration')
         token=token.lower()
+        previous = db.execute('SELECT identity FROM push_tokens WHERE token=? AND kind=?',(token,kind)).fetchone()
+        if kind == 'alert' and (body.get('enabled',True) is not True or (previous and previous[0] != user)):
+            db.execute('DELETE FROM private_mailbox_push WHERE token=?',(token,))
         # A token belongs to one identity at a time; avoid stale profile notifications.
         db.execute('DELETE FROM push_tokens WHERE token=? AND kind=?',(token,kind))
         if body.get('enabled',True) is not True:

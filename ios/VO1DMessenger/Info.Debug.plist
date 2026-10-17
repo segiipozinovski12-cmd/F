@@ -62,6 +62,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>voip</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
@@ -80,5 +81,11 @@
 	<string>Dark</string>
 	<key>VO1DPushEnabled</key>
 	<false/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>VO1D связывает устройства рядом для зашифрованной переписки без интернета, только когда ты включаешь эту функцию.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_vo1d-nearby._tcp</string>
+	</array>
 </dict>
 </plist>

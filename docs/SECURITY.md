@@ -1,6 +1,8 @@
 # Security model, messages v2 / calls v2
 
-This is a functional, unaudited implementation. New messages use pinned libsignal PQXDH/Double Ratchet; old history remains readable. It provides pseudonymous end-to-end encrypted messaging, not untraceability or zero metadata. See [PROTOCOL-V2.md](PROTOCOL-V2.md), [the 60-item ledger](ANONYMITY-V2.md) and [audit handoff](AUDIT-PACK.md).
+VO1D NEXT adds opt-in moderation and bot endpoints. See [MODERATION.md](MODERATION.md) for consent, permanent administrator keys/MFA, retention, metadata, limits and the report seal's lack of forward secrecy; [BOTS.md](BOTS.md) for endpoint trust and credential scopes. Neither grants general access to human E2EE chat keys. Private Spaces use separate identity/vault namespaces and device authentication; they do not prove network unlinkability.
+
+This is a functional, unaudited implementation. New messages use pinned libsignal PQXDH/Double Ratchet; old history remains readable. It provides pseudonymous end-to-end encrypted messaging, not untraceability or zero metadata. See [PROTOCOL-V2.md](PROTOCOL-V2.md), [the 60-item ledger](ANONYMITY-V2.md) and [audit handoff](AUDIT-PACK.md). [Linked collaboration](DEVICE-SYNC.md) delegates selected operations through the primary without copying its root keys. [Bot worker handoff](../bot-worker/README.md) intentionally transfers only bot keys/ratchet records to a trusted endpoint and requires latest-state stop/copy discipline. [Operator restore](OPERATIONS.md) revokes historical sessions/codes and disables bots, but cannot recreate client ratchets or reconcile all later capability revocations automatically.
 
 ## Identity and authentication
 
@@ -31,6 +33,10 @@ VO1D-ENVELOPE-1\n{id}\n{sender}\n{recipient}\n{ephemeralKeyBase64}\n{saltBase64}
 Ed25519 signs `header || LF || combinedCiphertext`. Both relay and receiver validate signatures. Recipient agreement-key compromise can reveal recorded ciphertext: this protocol has no message forward secrecy, prekeys or post-compromise security. Random payload padding is not traffic-analysis resistance.
 
 Room drafts, local aliases, notes, unread counters, archives and other local UI settings are stripped from transmitted room payloads. Message and group events are encrypted per recipient, with author, membership and administrative checks on receipt. Group changes do not re-encrypt historical messages. Unknown-contact events and group invitations are quarantined locally until accepted; attachments and receipts are withheld during this stage.
+
+Remote file preparation applies upload limits, Wi-Fi policy and filename anonymization centrally. The active profile/generation is captured before asynchronous encryption, checked again before upload and after receipt, and switched/locked operations reject committing their capability into the new profile. Imported upload-size values are clamped before arithmetic. This prevents the discovered late-capture race; actual network interruption/disk/power-loss behavior still requires device QA.
+
+Prekey publication rejects exhausted/zero counters before arithmetic; it does not reset old key IDs. SDK timestamp pruning uses checked subtraction, so a malformed future timestamp cannot overflow UInt64. Worker imports bound collection/store sizes and validate counters/publication shape before starting. These are parser/integration guards and do not replace a native sanitizer audit.
 
 A private roster is supported only in a channel with the creator as the sole administrator and publisher. Subscribers receive owner + own card. Existing historical roster disclosures cannot be undone. Ordinary groups still expose membership. V2 groups use pairwise libsignal fanout (maximum 16 participants), authenticated membership epochs and cancellation of old-membership queued messages. They are not MLS groups. Scoped group/contact profiles offer separate identities only when explicitly chosen. Private poll participants receive counts, while the poll creator receives and stores individual votes; this is not anonymity from the creator. Research decisions are recorded separately.
 

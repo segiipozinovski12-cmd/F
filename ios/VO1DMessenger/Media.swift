@@ -134,14 +134,28 @@ final class VoiceRecorder: ObservableObject {
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
     private var file: URL?
+    private var operation = UUID()
+    private var ownsAudioSession = false
+    private let permission: (() async -> Bool)?
+    init(permission: (() async -> Bool)? = nil) { self.permission = permission }
     func start() async throws {
-        let allowed = await withCheckedContinuation { continuation in AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) } }
+        cancel()
+        let current = operation
+        let allowed: Bool
+        if let permission { allowed = await permission() }
+        else { allowed = await withCheckedContinuation { continuation in AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) } } }
+        guard operation == current, !Task.isCancelled else { throw CancellationError() }
         guard allowed else { throw MessengerError.invalid("Разреши доступ к микрофону в настройках iOS") }
+        guard CallManager.shared.session == nil else { throw MessengerError.invalid("Запись голосового доступна после завершения звонка") }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
         try session.setActive(true)
+        ownsAudioSession = true
+        do {
         let url = try MediaFiles.transientURL()
+        file = url
         let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 24000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000])
+        self.recorder = recorder
         guard recorder.record(forDuration: 180) else { throw MessengerError.invalid("Не удалось начать запись") }
         try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
         self.recorder = recorder; file = url; seconds = 0; paused = false; recording = true
@@ -152,6 +166,7 @@ final class VoiceRecorder: ObservableObject {
                 if self.seconds >= 180 { self.timer?.invalidate() }
             }
         }
+        } catch { cancel(); throw error }
     }
     func togglePause() {
         guard let recorder, recording else { return }
@@ -188,9 +203,14 @@ final class VoiceRecorder: ObservableObject {
         )
     }
     func cancel() {
+        operation = UUID()
         recorder?.stop(); timer?.invalidate(); recorder = nil; recording = false; paused = false
         if let file { try? FileManager.default.removeItem(at: file) }
-        file = nil; try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        file = nil
+        if ownsAudioSession, CallManager.shared.session == nil {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        ownsAudioSession = false
     }
 }
 
