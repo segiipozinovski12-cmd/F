@@ -1037,106 +1037,245 @@ final class CallManager: ObservableObject {
     }
 }
 
+private struct CallVolumeSlider: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volume = MPVolumeView()
+        volume.showsRouteButton = false
+        volume.showsVolumeSlider = true
+        volume.tintColor = .white
+        return volume
+    }
+
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {}
+}
+
+struct CallMiniBanner: View {
+    let session: VoiceCallSession
+    @EnvironmentObject private var calls: CallManager
+
+    var body: some View {
+        HStack(spacing: 13) {
+            Button {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.85)) {
+                    calls.setCallScreenExpanded(true)
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Avatar(name: session.peerName, size: 48)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(session.incoming && session.phase == .ringing ? "Входящий звонок" : "VO1D · Звонок")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.58))
+                        Text(session.peerName)
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if session.incoming && session.phase == .ringing {
+                bannerAction("phone.down.fill", fill: .white.opacity(0.13), foreground: .white, label: "Отклонить") {
+                    calls.endFromApp()
+                }
+                bannerAction("phone.fill", fill: .white, foreground: .black, label: "Принять") {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.85)) {
+                        calls.answerFromApp()
+                    }
+                }
+            } else {
+                bannerAction("arrow.up.left.and.arrow.down.right", fill: .white.opacity(0.13), foreground: .white, label: "Развернуть") {
+                    withAnimation { calls.setCallScreenExpanded(true) }
+                }
+                bannerAction("phone.down.fill", fill: .white, foreground: .black, label: "Завершить") {
+                    calls.endFromApp()
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background {
+            RoundedRectangle(cornerRadius: 25, style: .continuous)
+                .fill(Color(red: 0.065, green: 0.065, blue: 0.075))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 25, style: .continuous)
+                        .strokeBorder(.white.opacity(0.15), lineWidth: 1)
+                }
+        }
+        .shadow(color: .black.opacity(0.32), radius: 20, y: 10)
+        .padding(.horizontal, 14)
+        .padding(.top, 9)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func bannerAction(
+        _ symbol: String,
+        fill: Color,
+        foreground: Color,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(foreground)
+                .frame(width: 49, height: 49)
+                .background(fill, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
 struct CallScreen: View {
     let session: VoiceCallSession
     @EnvironmentObject private var calls: CallManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
+    @State private var showSoundOptions = false
 
     var body: some View {
-        ZStack {
-            VoidBackground()
+        GeometryReader { geometry in
+            ZStack {
+                VoidBackground()
+                ScrollView {
+                    VStack(spacing: 22) {
+                        HStack(spacing: 12) {
+                            Wordmark(compact: true)
+                            Spacer()
+                            Button {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                                    calls.setCallScreenExpanded(false)
+                                }
+                            } label: {
+                                Label("Свернуть", systemImage: "chevron.down")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 11)
+                                    .background(.white.opacity(0.08), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
 
-            VStack(spacing: 30) {
-                HStack {
-                    Wordmark(compact: true)
-                    Spacer()
-                    Text(calls.transport)
-                        .font(.caption2.monospaced())
-                        .tracking(1.5)
-                        .foregroundStyle(Theme.secondary)
-                }
+                        Spacer(minLength: 10)
 
-                Spacer()
+                        ZStack {
+                            ForEach(0..<3, id: \.self) { index in
+                                Circle()
+                                    .stroke(.white.opacity(0.10 - Double(index) * 0.018), lineWidth: 1)
+                                    .frame(
+                                        width: 162 + CGFloat(index) * 41,
+                                        height: 162 + CGFloat(index) * 41
+                                    )
+                                    .scaleEffect(pulse ? 1.06 + CGFloat(index) * 0.015 : 0.96)
+                                    .opacity(pulse ? 0.2 : 0.78)
+                            }
+                            Avatar(name: session.peerName, size: 114)
+                                .shadow(color: .white.opacity(0.10), radius: 28)
+                        }
+                        .frame(height: 248)
+                        .accessibilityHidden(true)
 
-                ZStack {
-                    ForEach(0..<3, id: \.self) { index in
-                        Circle()
-                            .stroke(.white.opacity(0.09 - Double(index) * 0.018), lineWidth: 1)
-                            .frame(width: 150 + CGFloat(index) * 46, height: 150 + CGFloat(index) * 46)
-                            .scaleEffect(pulse ? 1.08 + CGFloat(index) * 0.02 : 0.94)
-                            .opacity(pulse ? 0.18 : 0.75)
+                        VStack(spacing: 10) {
+                            Text(session.peerName)
+                                .font(.system(size: 34, weight: .bold, design: .rounded))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.8)
+                                .multilineTextAlignment(.center)
+                            Text(statusText)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .tracking(1.1)
+                                .foregroundStyle(.white.opacity(0.64))
+                                .multilineTextAlignment(.center)
+
+                            if let started = session.startedAt {
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    Text(duration(from: started, to: context.date))
+                                        .font(.system(size: 25, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(.white.opacity(0.92))
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
+
+                        Spacer(minLength: 10)
+
+                        if session.incoming && session.phase == .ringing {
+                            HStack(spacing: 18) {
+                                callButton(
+                                    icon: "phone.down.fill",
+                                    title: "Отклонить",
+                                    filled: false
+                                ) { calls.endFromApp() }
+                                callButton(
+                                    icon: "phone.fill",
+                                    title: "Принять",
+                                    filled: true
+                                ) { calls.answerFromApp() }
+                            }
+                        } else {
+                            HStack(spacing: 12) {
+                                callButton(
+                                    icon: calls.muted ? "mic.slash.fill" : "mic.fill",
+                                    title: calls.muted ? "Включить микрофон" : "Микрофон",
+                                    filled: calls.muted
+                                ) { calls.toggleMute() }
+
+                                callButton(
+                                    icon: calls.audioOutput == .speaker ? "speaker.wave.3.fill" : "speaker.wave.2",
+                                    title: calls.audioOutput.title,
+                                    filled: calls.audioOutput == .speaker
+                                ) { showSoundOptions = true }
+
+                                callButton(
+                                    icon: "phone.down.fill",
+                                    title: "Завершить",
+                                    filled: false
+                                ) { calls.endFromApp() }
+                            }
+
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.22)) {
+                                    showSoundOptions.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: "slider.horizontal.3")
+                                    Text("Звук и устройства")
+                                    Image(systemName: showSoundOptions ? "chevron.up" : "chevron.down")
+                                }
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.88))
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.white.opacity(0.07), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+
+                            if showSoundOptions {
+                                soundOptions
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
+                        }
+
+                        Text("Звонок использует интернет, а не телефонные минуты. Для связи требуется Wi-Fi или мобильный интернет.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.48))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 12)
                     }
-
-                    Avatar(name: session.peerName, size: 112)
-                        .shadow(color: .white.opacity(0.12), radius: 28)
+                    .frame(maxWidth: 510)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 22)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: geometry.size.height)
                 }
-                .frame(height: 270)
-
-                VStack(spacing: 8) {
-                    Text(session.peerName)
-                        .font(.system(size: 34, weight: .black, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.66)
-
-                    Text(statusText)
-                        .font(.caption.monospaced())
-                        .tracking(1.7)
-                        .foregroundStyle(Theme.secondary)
-
-                    if let started = session.startedAt {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(duration(from: started, to: context.date))
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.82))
-                        }
-                    }
-                }
-
-                Spacer()
-
-                if session.incoming && session.phase == .ringing {
-                    HStack(spacing: 42) {
-                        callButton(icon: "phone.down.fill", title: "Отклонить", filled: false) {
-                            calls.endFromApp()
-                        }
-                        callButton(icon: "phone.fill", title: "Ответить", filled: true) {
-                            calls.answerFromApp()
-                        }
-                    }
-                } else {
-                    HStack(spacing: 24) {
-                        callButton(
-                            icon: calls.muted ? "mic.slash.fill" : "mic.fill",
-                            title: calls.muted ? "Микрофон выкл." : "Микрофон",
-                            filled: calls.muted
-                        ) {
-                            calls.toggleMute()
-                        }
-
-                        callButton(
-                            icon: calls.speaker ? "speaker.wave.3.fill" : "speaker.fill",
-                            title: "Динамик",
-                            filled: calls.speaker
-                        ) {
-                            calls.toggleSpeaker()
-                        }
-
-                        callButton(icon: "phone.down.fill", title: "Завершить", filled: false) {
-                            calls.endFromApp()
-                        }
-                    }
-                }
-
-                Text("Интернет-звонок в любую страну без оплаты телефонных минут. Используется Wi-Fi или мобильный интернет. Аудио зашифровано между устройствами; узел доставки видит время и участников.")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .padding(.horizontal, 18)
+                .scrollIndicators(.hidden)
             }
-            .padding(24)
-            .padding(.bottom, 18)
         }
         .onAppear {
             guard !reduceMotion else { return }
@@ -1144,6 +1283,69 @@ struct CallScreen: View {
                 pulse = true
             }
         }
+    }
+
+    private var soundOptions: some View {
+        VStack(alignment: .leading, spacing: 17) {
+            Text("КУДА ВЫВОДИТЬ ЗВУК")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.3)
+                .foregroundStyle(.white.opacity(0.5))
+            HStack(spacing: 9) {
+                routeButton(.receiver)
+                routeButton(.speaker)
+                if calls.bluetoothAvailable { routeButton(.bluetooth) }
+            }
+
+            HStack(spacing: 14) {
+                Image(systemName: "speaker.wave.1")
+                CallVolumeSlider().frame(height: 34)
+                Image(systemName: "speaker.wave.3")
+            }
+            .font(.system(size: 15))
+            .foregroundStyle(.white.opacity(0.76))
+            .accessibilityLabel("Системная громкость")
+
+            Toggle(isOn: Binding(
+                get: { calls.quietSpeechBoost },
+                set: { _ in calls.toggleQuietSpeechBoost() }
+            )) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Усиление тихой речи")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Может увеличить громкость и искажения")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.48))
+                }
+            }
+            .tint(.white)
+            .disabled(calls.audioOutput != .speaker)
+            .opacity(calls.audioOutput == .speaker ? 1 : 0.5)
+        }
+        .padding(17)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 21, style: .continuous))
+    }
+
+    private func routeButton(_ output: CallAudioOutput) -> some View {
+        let selected = calls.audioOutput == output
+        return Button {
+            calls.selectAudioOutput(output)
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: output.icon)
+                    .font(.system(size: 20, weight: .semibold))
+                Text(output.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 64)
+            .foregroundStyle(selected ? .black : .white)
+            .background(selected ? Color.white : Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var statusText: String {
@@ -1167,25 +1369,29 @@ struct CallScreen: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 9) {
+            VStack(spacing: 11) {
                 Image(systemName: icon)
-                    .font(.system(size: 20, weight: .bold))
-                    .frame(width: 58, height: 58)
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(width: 72, height: 72)
                     .foregroundStyle(filled ? .black : .white)
                     .background(
-                        filled ? Color.white : Color.white.opacity(0.07),
+                        filled ? Color.white : Color.white.opacity(0.10),
                         in: Circle()
                     )
+                    .overlay {
+                        Circle().strokeBorder(.white.opacity(filled ? 0 : 0.14), lineWidth: 1)
+                    }
                     .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.bounce, value: filled)
-
                 Text(title)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.86))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
             }
-            .frame(width: 82)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 108)
+            .contentShape(Rectangle())
         }
         .buttonStyle(MotionButtonStyle())
     }
