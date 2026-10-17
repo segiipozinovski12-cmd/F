@@ -183,6 +183,8 @@ final class CallManager: ObservableObject {
     var allowedPeer: ((String) -> Bool)?
 
     private var socket: URLSessionWebSocketTask?
+    private var replacementSocket: URLSessionWebSocketTask?
+    private var socketAuthorization: Data?
     private var api: APIClient?
     private var identity: LocalIdentity?
     private var pendingConfiguration: (APIClient, LocalIdentity, ContactCard?)?
@@ -227,7 +229,7 @@ final class CallManager: ObservableObject {
         self.nameResolver = nameResolver
         self.recordSink = recordSink
         if self.api === api, socket != nil { return }
-        if session != nil, socket != nil {
+        if session != nil, (socket != nil || callSecrets != nil) {
             // An accepted background call retains the delegated identity used
             // for its handshake until it ends, even after foreground unlock.
             pendingConfiguration = (api, identity, ownerCard)
@@ -254,7 +256,9 @@ final class CallManager: ObservableObject {
             cleanup()
         }
         socket?.cancel(with: .goingAway, reason: nil)
+        replacementSocket?.cancel(with: .goingAway, reason: nil); replacementSocket = nil
         socket = nil
+        socketAuthorization = nil
         socketReady = false
         transport = "OFFLINE"
         api = nil
@@ -278,16 +282,15 @@ final class CallManager: ObservableObject {
             }
             guard !Task.isCancelled, expected == configurationID else { return }
             guard granted else { lastFailure = "Разреши микрофон в настройках iOS → VO1D"; return }
-            if !socketReady {
-                if socket == nil { connectSocket() }
-                for _ in 0..<200 {
-                    if socketReady { break }
-                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-                    guard expected == configurationID, api != nil else { return }
-                }
+            do {
+                try await prepareCallTransport()
+                guard !Task.isCancelled, expected == configurationID else { return }
+                beginOutgoing(peer: peer, name: name)
+            } catch is CancellationError { }
+            catch {
+                guard expected == configurationID else { return }
+                lastFailure = "Не удалось подключить звонок: \(error.localizedDescription)"
             }
-            guard socketReady else { lastFailure = "Не удалось подключить канал звонка. Проверь сеть и маршрут Tor."; return }
-            beginOutgoing(peer: peer, name: name)
         }
     }
 
@@ -382,7 +385,7 @@ final class CallManager: ObservableObject {
     }
 
     fileprivate func performAnswer(_ action: CXAnswerCallAction) {
-        guard var current = session, current.id == action.callUUID else {
+        guard var current = session, current.id == action.callUUID, current.incoming, current.phase == .ringing else {
             action.fail()
             return
         }
@@ -401,7 +404,9 @@ final class CallManager: ObservableObject {
                     lastFailure = "Разреши микрофон в настройках iOS → VO1D"
                     failCurrent(reason: .failed); return
                 }
+                try await prepareCallTransport()
                 for _ in 0..<100 {
+                    guard session?.id == current.id else { return }
                     if socketReady && callKey != nil { break }
                     try await Task.sleep(for:.milliseconds(100))
                 }
@@ -462,12 +467,44 @@ final class CallManager: ObservableObject {
         audio.stop()
     }
 
-    private func connectSocket() {
+    private func authorizationDigest(_ request: URLRequest) -> Data {
+        Data(SHA256.hash(data: Data((request.value(forHTTPHeaderField: "Authorization") ?? "").utf8)))
+    }
+
+    private func prepareCallTransport() async throws {
+        guard let api else { throw MessengerError.invalid("Сессия звонков ещё не готова") }
+        let expected = configurationID
+        try await api.refreshCallAuthorization()
+        guard !Task.isCancelled, expected == configurationID, self.api === api else { throw CancellationError() }
+        let desired = authorizationDigest(try api.callSocketRequest())
+        if socketAuthorization != desired || socket == nil {
+            connectSocket(preservingPendingCall: session?.incoming == true && session?.startedAt == nil)
+        }
+        for _ in 0..<200 {
+            guard !Task.isCancelled, expected == configurationID, self.api === api else { throw CancellationError() }
+            if socketReady {
+                if socketAuthorization == authorizationDigest(try api.callSocketRequest()) { return }
+                connectSocket(preservingPendingCall: session?.incoming == true && session?.startedAt == nil)
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        throw MessengerError.invalid("Канал звонков не ответил. Проверь сеть и выбранный маршрут.")
+    }
+
+    private func connectSocket(preservingPendingCall: Bool = false) {
         guard let api else { return }
         connectTask?.cancel(); heartbeatTask?.cancel()
         let expected = UUID(); connectionID = expected
-        socket?.cancel(with: .goingAway, reason: nil)
+        if preservingPendingCall {
+            // Let the relay replace the still-live socket atomically. Closing
+            // it before the new handshake would discard an unanswered invite.
+            if let socket { replacementSocket = socket }
+        } else {
+            socket?.cancel(with: .goingAway, reason: nil)
+            replacementSocket?.cancel(with: .goingAway, reason: nil); replacementSocket = nil
+        }
         socket = nil
+        socketAuthorization = nil
         socketReady = false
         transport = "CONNECTING"
 
@@ -477,6 +514,7 @@ final class CallManager: ObservableObject {
                 try await api.refreshCallAuthorization()
                 guard !Task.isCancelled, connectionID == expected, self.api === api else { return }
                 let request = try api.callSocketRequest()
+                socketAuthorization = authorizationDigest(request)
                 let task = api.session.webSocketTask(with: request)
                 socket = task
                 task.resume()
@@ -518,6 +556,8 @@ final class CallManager: ObservableObject {
             } catch {
                 guard self.socket === task, self.connectionID == expected else { return }
                 self.socket = nil
+                self.socketAuthorization = nil
+                self.replacementSocket?.cancel(with: .goingAway, reason: nil); self.replacementSocket = nil
                 self.socketReady = false
                 self.heartbeatTask?.cancel()
                 self.transport = "OFFLINE"
@@ -553,6 +593,7 @@ final class CallManager: ObservableObject {
               let type = packet["type"] as? String else { return }
 
         if type == "ready" {
+            replacementSocket?.cancel(with: .goingAway, reason: nil); replacementSocket = nil
             socketReady = true
             transport = "WSS"
             if session?.phase == .reconnecting { await sendResume(type:"resume") }

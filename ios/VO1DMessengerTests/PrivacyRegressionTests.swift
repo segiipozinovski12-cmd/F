@@ -183,15 +183,17 @@ extension PrivacyRegressionTests {
                     registrations.append(try JSONSerialization.jsonObject(with: data) as! [String: Any])
                     try request.reply(["ok":true])
                 case "/v1/challenge": try request.reply(["nonce":"single-use-test-challenge"])
-                case "/v1/session": try request.reply(["token":"test-session"])
+                case "/v1/session": try request.reply(["token":"test-session-\(registrations.count)"])
                 default: XCTFail("Unexpected authentication route")
                 }
             } catch { XCTFail(error.localizedDescription) }
         }
         try await client.authenticate()
+        let firstSocketAuthority = try client.callSocketRequest().value(forHTTPHeaderField: "Authorization")
         try await client.refreshCallAuthorization()
         XCTAssertEqual(registrations.count, 1)
         try await client.refreshCallAuthorization(force: true)
+        XCTAssertNotEqual(try client.callSocketRequest().value(forHTTPHeaderField: "Authorization"), firstSocketAuthority)
         XCTAssertEqual(registrations.count, 2)
         XCTAssertEqual(registrations[0]["enroll"] as? Bool, true)
         XCTAssertEqual(registrations[1]["enroll"] as? Bool, false)
