@@ -155,7 +155,9 @@ final class ChatStore: ObservableObject {
             )
             setupCallPolicy()
             try? await applyPrivacy()
+            guard expected == generation else { return }
             try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
+            guard expected == generation else { return }
             connection = "Подключён"
         } catch {
             guard expected == generation else { return }
@@ -246,7 +248,9 @@ final class ChatStore: ObservableObject {
         )
         setupCallPolicy()
         try? await applyPrivacy()
+        guard expected == generation else { throw CancellationError() }
         try? await PushCoordinator.shared.register(api:client,enabled:state.notificationsEnabled==true)
+        guard expected == generation else { throw CancellationError() }
         connection = "Подключён"
     }
 

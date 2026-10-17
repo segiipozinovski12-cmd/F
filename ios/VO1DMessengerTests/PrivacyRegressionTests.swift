@@ -19,6 +19,39 @@ private final class DelayedProtocol: URLProtocol, @unchecked Sendable {
 }
 
 final class PrivacyRegressionTests: XCTestCase {
+    @MainActor func testLateMailboxRevocationCannotRemoveAnotherProfilesPrivateRoutes() async throws {
+        APIClient.testingProtocolClasses = [DelayedProtocol.self]
+        let store = ChatStore(), original = store.state, oldAPI = store.api, oldGeneration = store.generation
+        let client = try APIClient(server: "https://regression.invalid", identity: XCTUnwrap(store.identity))
+        defer {
+            DelayedProtocol.receive = nil; APIClient.testingProtocolClasses = nil; client.invalidate()
+            store.state = original; store.generation = oldGeneration; store.api = oldAPI; try? store.save()
+        }
+        let peer = try LocalIdentity.create().card.id
+        func mailbox() throws -> LocalMailbox {
+            LocalMailbox(address: MailboxAddress(id: try Crypto.random(32).base64URL,
+                writeToken: try Crypto.random(32).base64URL, expiresAt: Int(Date().timeIntervalSince1970) + 86400),
+                readToken: try Crypto.random(32).base64URL, peerID: peer, registered: true, proof: "0")
+        }
+        let oldMailbox = try mailbox(), newMailbox = try mailbox()
+        store.state = VaultState(); store.api = client
+        var local = ExtendedState(); local.ownMailboxes = [oldMailbox]; store.state.extended = local
+        let arrived = expectation(description: "Old profile revocation waits on network")
+        var pending: DelayedProtocol?
+        DelayedProtocol.receive = { value in pending = value; arrived.fulfill() }
+        let operation = Task { try await store.revokePrivateAddresses(peer) }
+        await fulfillment(of: [arrived], timeout: 3)
+        XCTAssertEqual(pending?.request.httpMethod, "DELETE")
+        store.generation += 1
+        local.ownMailboxes = [newMailbox]; local.peerMailboxes = [peer: newMailbox.address]
+        store.state.extended = local
+        try XCTUnwrap(pending).reply(["ok": true])
+        do { try await operation.value; XCTFail("Old revocation crossed profiles") }
+        catch is CancellationError { }
+        XCTAssertEqual(store.extended.ownMailboxes.map(\.id), [newMailbox.id])
+        XCTAssertEqual(store.extended.peerMailboxes[peer], newMailbox.address)
+    }
+
     @MainActor func testVoicePlaybackCannotReplaceTheAudioCategoryDuringACall() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         defer { try? FileManager.default.removeItem(at: file) }

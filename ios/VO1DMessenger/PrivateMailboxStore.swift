@@ -126,7 +126,12 @@ extension ChatStore {
     }
     func revokePrivateAddresses(_ peerID: String) async throws {
         guard let api else { return }
-        for mailbox in extended.ownMailboxes.filter({ $0.peerID == peerID }) { try await api.deleteMailbox(mailbox) }
+        let fence = sessionFence
+        for mailbox in extended.ownMailboxes.filter({ $0.peerID == peerID }) {
+            try await api.deleteMailbox(mailbox)
+            try requireCurrentSession(fence)
+        }
+        try requireCurrentSession(fence)
         var local = extended
         local.ownMailboxes.removeAll { $0.peerID == peerID }
         local.peerMailboxes = local.peerMailboxes.filter { $0.key != peerID && !$0.key.hasPrefix(peerID+"|") }; local.invitationBundles[peerID] = nil
