@@ -79,7 +79,21 @@ extension ChatStore {
         let start = max(0, extended.privateInboxOffset ?? 0) % active.count
         for offset in 0..<min(32, active.count) {
             let position = (start + offset) % active.count, mailbox = active[position]
-            let envelopes = try await api.privateInbox(mailbox)
+            let envelopes: [OpaqueEnvelope]
+            do {
+                envelopes = try await api.privateInbox(mailbox)
+            } catch let failure as HTTPFailure where failure.status == 404 {
+                // A relay reset removes anonymous addresses too. Require a live
+                // enrolled account before restoring an empty address from this vault.
+                // Revoked addresses still fail the relay's permanent tombstone.
+                let _: [String: String?] = try await api.request("v1/discovery")
+                guard expected == generation else { throw CancellationError() }
+                try await api.registerMailbox(mailbox)
+                guard expected == generation else { throw CancellationError() }
+                try? await PushCoordinator.shared.registerMailbox(mailbox, api: api)
+                guard expected == generation else { throw CancellationError() }
+                envelopes = try await api.privateInbox(mailbox)
+            }
             guard expected == generation else { throw CancellationError() }
             var ack: [String] = []
             for envelope in envelopes {

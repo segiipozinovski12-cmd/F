@@ -61,6 +61,9 @@ final class APIClient {
             isolated.streamIsolation = Crypto.hex(SHA256.hash(data:Data("VO1D-STREAM-2\n\(privacy.streamIsolation)\n\(capabilityNamespace)\n\(scope)".utf8)))
         }
         let configuration = try TransportConfiguration.make(isolated)
+        #if DEBUG
+        if let protocols = Self.testingProtocolClasses { configuration.protocolClasses = protocols }
+        #endif
         let session = URLSession(configuration:configuration,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
         if capabilitySessions.count >= 64, let key = capabilitySessions.keys.first {
             capabilitySessions.removeValue(forKey:key)?.finishTasksAndInvalidate()

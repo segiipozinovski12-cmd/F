@@ -9,8 +9,8 @@ private final class DelayedProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() { Task { @MainActor in Self.receive?(self) } }
     override func stopLoading() {}
-    func reply(_ object: [String: Any]) throws {
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+    func reply(_ object: [String: Any], status: Int = 200) throws {
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: try JSONSerialization.data(withJSONObject: object))
         client?.urlProtocolDidFinishLoading(self)
@@ -198,5 +198,96 @@ extension PrivacyRegressionTests {
         XCTAssertEqual(registrations[0]["enroll"] as? Bool, true)
         XCTAssertEqual(registrations[1]["enroll"] as? Bool, false)
         XCTAssertEqual(registrations[0]["enrollmentVersion"] as? Int, 2)
+    }
+}
+
+extension PrivacyRegressionTests {
+    @MainActor func testMissingMailboxRecoveryRequiresExplicitEnrollment() async throws {
+        APIClient.testingProtocolClasses = [DelayedProtocol.self]
+        let store = ChatStore(), original = store.state
+        let identity = try XCTUnwrap(store.identity)
+        let client = try APIClient(server: "https://regression.invalid", identity: identity)
+        defer {
+            DelayedProtocol.receive = nil; APIClient.testingProtocolClasses = nil; client.invalidate()
+            store.state = original; try? store.save()
+        }
+        let mailbox = LocalMailbox(
+            address: MailboxAddress(id: try Crypto.random(32).base64URL,
+                                    writeToken: try Crypto.random(32).base64URL,
+                                    expiresAt: Int(Date().timeIntervalSince1970) + 86400),
+            readToken: try Crypto.random(32).base64URL, peerID: nil, registered: true, proof: "0")
+        store.state.extended = ExtendedState()
+        var local = store.extended; local.ownMailboxes = [mailbox]; store.state.extended = local
+        var creations = 0
+        DelayedProtocol.receive = { request in
+            do {
+                switch request.request.url?.path {
+                case "/v2/mailboxes/\(mailbox.id)/inbox": try request.reply(["error":"missing"], status: 404)
+                case "/v1/discovery": try request.reply(["error":"session expired"], status: 401)
+                case "/v2/capabilities": try request.reply(["accountEpoch":"new-epoch"])
+                case "/v1/register": try request.reply(["error":"explicit enrollment required"], status: 410)
+                case "/v2/mailboxes":
+                    creations += 1; try request.reply(["ok":true])
+                default:
+                    XCTFail("Unexpected reset recovery route")
+                    try request.reply(["error":"unexpected"], status: 400)
+                }
+            } catch { request.client?.urlProtocol(request, didFailWithError: error) }
+        }
+        do {
+            try await store.collectPrivateInbox(api: client, identity: identity, generation: store.generation)
+            XCTFail("A reset account silently recovered a mailbox")
+        } catch let failure as HTTPFailure { XCTAssertEqual(failure.status, 410) }
+        XCTAssertEqual(creations, 0)
+    }
+
+    @MainActor func testEnrolledMailboxRecoveryRestoresAddressWithoutAccountHeaders() async throws {
+        APIClient.testingProtocolClasses = [DelayedProtocol.self]
+        let store = ChatStore(), original = store.state
+        let identity = try XCTUnwrap(store.identity)
+        let client = try APIClient(server: "https://regression.invalid", identity: identity)
+        defer {
+            DelayedProtocol.receive = nil; APIClient.testingProtocolClasses = nil; client.invalidate()
+            store.state = original; try? store.save()
+        }
+        let mailbox = LocalMailbox(
+            address: MailboxAddress(id: try Crypto.random(32).base64URL,
+                                    writeToken: try Crypto.random(32).base64URL,
+                                    expiresAt: Int(Date().timeIntervalSince1970) + 86400),
+            readToken: try Crypto.random(32).base64URL, peerID: nil, registered: true, proof: "0")
+        store.state.extended = ExtendedState()
+        var local = store.extended; local.ownMailboxes = [mailbox]; store.state.extended = local
+        var creations = 0, inboxReads = 0, accountChecks = 0
+        DelayedProtocol.receive = { request in
+            do {
+                switch request.request.url?.path {
+                case "/v2/capabilities": try request.reply(["accountEpoch":"current-epoch"])
+                case "/v1/register": try request.reply(["ok":true])
+                case "/v1/challenge": try request.reply(["nonce":"mailbox-recovery-challenge"])
+                case "/v1/session": try request.reply(["token":"enrolled-session"])
+                case "/v1/discovery":
+                    accountChecks += 1
+                    XCTAssertEqual(request.request.value(forHTTPHeaderField: "Authorization"), "Bearer enrolled-session")
+                    try request.reply(["code":"ABCD", "username":NSNull()])
+                case "/v2/mailboxes/\(mailbox.id)/inbox":
+                    inboxReads += 1
+                    XCTAssertEqual(request.request.value(forHTTPHeaderField: "Authorization"), "Capability \(mailbox.readToken)")
+                    if inboxReads == 1 { try request.reply(["error":"missing"], status: 404) }
+                    else { try request.reply(["envelopes":[]]) }
+                case "/v2/mailboxes":
+                    XCTAssertNil(request.request.value(forHTTPHeaderField: "Authorization"))
+                    creations += 1; try request.reply(["ok":true])
+                default:
+                    XCTFail("Unexpected enrolled recovery route")
+                    try request.reply(["error":"unexpected"], status: 400)
+                }
+            } catch { request.client?.urlProtocol(request, didFailWithError: error) }
+        }
+        try await client.authenticate()
+        try await store.collectPrivateInbox(api: client, identity: identity, generation: store.generation)
+        XCTAssertEqual(creations, 1)
+        XCTAssertEqual(inboxReads, 2)
+        XCTAssertEqual(accountChecks, 1)
+        XCTAssertEqual(store.extended.ownMailboxes.first?.address, mailbox.address)
     }
 }

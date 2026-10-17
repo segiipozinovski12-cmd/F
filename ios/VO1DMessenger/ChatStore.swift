@@ -222,6 +222,7 @@ final class ChatStore: ObservableObject {
         _ = try ensureCredentials()
         state.publicCode = publicCode
         try await restoreDiscovery(using: client)
+        if serverResetRequired { resumeNetworkQueue() }
         state.onboarded = true
         serverResetRequired = false
         if firstLaunch { state.credentialsAcknowledged = false }
