@@ -18,6 +18,21 @@ private final class DelayedProtocol: URLProtocol, @unchecked Sendable {
 }
 
 final class PrivacyRegressionTests: XCTestCase {
+    @MainActor func testCancellingBeforeMicrophonePermissionCannotStartRecordingLater() async throws {
+        let asked = expectation(description: "System microphone prompt")
+        var decision: CheckedContinuation<Bool, Never>?
+        let recorder = VoiceRecorder(permission: {
+            await withCheckedContinuation { continuation in decision = continuation; asked.fulfill() }
+        })
+        let operation = Task { try await recorder.start() }
+        await fulfillment(of: [asked], timeout: 3)
+        recorder.cancel()
+        try XCTUnwrap(decision).resume(returning: true)
+        do { try await operation.value; XCTFail("Cancelled microphone prompt started recording") }
+        catch is CancellationError { }
+        XCTAssertFalse(recorder.recording)
+        XCTAssertEqual(recorder.seconds, 0)
+    }
     @MainActor func testLateUsernameResponseCannotWriteIntoAnotherSession() async throws {
         APIClient.testingProtocolClasses = [DelayedProtocol.self]
         let store = ChatStore(), original = store.state, oldAPI = store.api, oldGeneration = store.generation

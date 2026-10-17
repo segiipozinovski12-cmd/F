@@ -9,6 +9,9 @@ struct ChatView: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var reactionTarget: ChatMessage?
+    @State private var viewProfileID = ""
+    @State private var viewIdentityID = ""
+    private var canUseView: Bool { viewProfileID == store.profileID && viewIdentityID == store.myID && store.sessionUnlocked && !store.locked }
     private var appPalette: VoidPalette { store.appearance.appTheme.palette }
     private var chatPalette: VoidPalette { store.chatTheme(roomID).palette(app: appPalette) }
     @State private var text = ""
@@ -340,16 +343,20 @@ struct ChatView: View {
             .quickLookPreview($preview)
             .onChange(of: preview) { _, value in if value == nil { MediaFiles.clear() } }
             .onAppear {
+                viewProfileID = store.profileID
+                viewIdentityID = store.myID
                 text = room?.draft ?? ""
                 store.activeRoomID = roomID
             }
             .onDisappear {
                 audio.cancel()
-                store.activeRoomID = nil
-                store.updateRoom(roomID) { $0.draft = text }
+                if viewProfileID == store.profileID && viewIdentityID == store.myID {
+                    if store.activeRoomID == roomID { store.activeRoomID = nil }
+                    store.updateRoom(roomID) { $0.draft = text }
+                }
                 MediaFiles.clear()
             }
-            .onChange(of: text) { _, _ in Task { await store.sendTyping(roomID) } }
+            .onChange(of: text) { _, _ in if canUseView { Task { await store.sendTyping(roomID) } } }
             .confirmationDialog("Удалить выбранные сообщения?", isPresented: $showDeleteSelection, titleVisibility: .visible) {
                 Button("Удалить", role: .destructive) {
                     perform {
@@ -462,7 +469,7 @@ struct ChatView: View {
                     TextField("Сообщение", text: $text, axis: .vertical).lineLimit(1...5).padding(.vertical, 12).padding(.horizontal, 14)
                         .background(chatPalette.panel, in: RoundedRectangle(cornerRadius: 24))
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button { Task { do { try await audio.start() } catch { store.error = error.localizedDescription } } } label: {
+                        Button { Task { do { try await audio.start() } catch is CancellationError { } catch { store.error = error.localizedDescription } } } label: {
                             Image(systemName: "mic").font(.title3).frame(width: 42, height: 42).background(Theme.panel, in: Circle())
                         }.accessibilityLabel("Записать голосовое сообщение")
                     } else {
@@ -844,6 +851,8 @@ struct ChatView: View {
 
     @MainActor
     func processImportedFile(_ result: Result<URL, Error>) async {
+        guard canUseView else { return }
+        let fence = store.sessionFence
         do {
             let url = try result.get()
             let granted = url.startAccessingSecurityScopedResource()
@@ -860,6 +869,8 @@ struct ChatView: View {
             let data = try await Task.detached(priority: .userInitiated) {
                 try Data(contentsOf: url, options: [.mappedIfSafe])
             }.value
+            try store.requireCurrentSession(fence)
+            guard canUseView else { return }
 
             let mime = values.contentType?.preferredMIMEType ?? "application/octet-stream"
             let name = String(url.lastPathComponent.prefix(180))
@@ -867,7 +878,8 @@ struct ChatView: View {
             let warnings=SafeContent.metadataWarnings(data:data,mime:mime)
             if !warnings.isEmpty { reviewFile=FileReview(data:data,mime:mime,name:name,warnings:warnings); return }
             await processFileData(data,mime:mime,name:name)
-        } catch {
+        } catch is CancellationError { return }
+        catch {
             Haptics.warning()
             store.error = error.localizedDescription
         }
@@ -875,6 +887,8 @@ struct ChatView: View {
 
     @MainActor
     func processFileData(_ data: Data,mime: String,name: String) async {
+        guard canUseView else { return }
+        let fence = store.sessionFence
         do {
             guard data.count<=FileTransferPolicy.limitBytes(store.preferences) else { throw MessengerError.invalid("Файл превышает выбранный лимит") }
             if data.count>3*1024*1024 && store.preferences.wifiOnlyUploads && !NetworkState.shared.wifi { throw MessengerError.invalid("Для загрузки включи Wi-Fi или отключи ограничение в приватности") }
@@ -905,32 +919,26 @@ struct ChatView: View {
                 data: data,
                 preview: previewData
             )
+            try store.requireCurrentSession(fence)
+            guard canUseView else { return }
             send(attachment)
             Haptics.success()
-        } catch { store.error=error.localizedDescription }
+        } catch is CancellationError { return }
+        catch { store.error=error.localizedDescription }
     }
 
     @MainActor
     func processPhoto(_ item: PhotosPickerItem, viewSeconds: Int?) async {
+        guard canUseView else { return }
+        let fence = store.sessionFence
         do {
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else { return }
-
-            let maxSide: CGFloat = 1600
-            let scale = min(1, maxSide / max(image.size.width, image.size.height))
-            let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = 1
-            let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-                image.draw(in: CGRect(origin: .zero, size: size))
-            }
-            guard let jpeg = resized.jpegData(compressionQuality: 0.78) else { return }
-            guard jpeg.count <= 3 * 1024 * 1024 else {
-                throw MessengerError.invalid("Фото получилось слишком большим")
-            }
-
+            guard let data = try await item.loadTransferable(type: Data.self) else { return }
+            try store.requireCurrentSession(fence)
+            guard canUseView else { return }
+            guard let jpeg = SocialImage.jpeg(data, maxSide: 1600, limit: 3 * 1024 * 1024) else { throw MessengerError.invalid("Не удалось подготовить фото") }
             photoDraft=PhotoDraft(data:jpeg,seconds:viewSeconds)
-        } catch {
+        } catch is CancellationError { return }
+        catch {
             store.error = error.localizedDescription
         }
     }
@@ -941,6 +949,7 @@ struct ChatView: View {
         scheduledAt: Date? = nil,
         viewOnceSeconds: Int? = nil
     ) {
+        guard canUseView else { return }
         perform {
             if let editing {
                 try store.action("edit", message: editing, value: text)

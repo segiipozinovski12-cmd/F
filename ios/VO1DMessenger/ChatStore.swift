@@ -1042,6 +1042,7 @@ final class ChatStore: ObservableObject {
     }
 
     func downloadRemoteAttachment(_ attachment: Attachment) async throws -> Data {
+        let fence = sessionFence
         try validateAttachment(attachment)
         guard let api,
               let blobID = attachment.blobID,
@@ -1054,6 +1055,8 @@ final class ChatStore: ObservableObject {
         let ciphertext: Data
         if let token = attachment.blobReadToken { ciphertext = try await api.downloadPrivateBlob(blobID,token:token) }
         else { ciphertext = try await api.downloadBlob(blobID) }
+        try requireCurrentSession(fence)
+        guard sessionUnlocked, !locked else { throw CancellationError() }
         let digest = Crypto.hex(SHA256.hash(data: ciphertext))
         guard digest.lowercased() == expectedDigest.lowercased() else {
             throw MessengerError.invalid("Проверка SHA-256 вложения не пройдена")
@@ -1069,6 +1072,8 @@ final class ChatStore: ObservableObject {
             let box = try AES.GCM.SealedBox(combined: ciphertext)
             return try AES.GCM.open(box, using: key, authenticating: aad)
         }.value
+        try requireCurrentSession(fence)
+        guard sessionUnlocked, !locked else { throw CancellationError() }
 
         guard clear.count == plainSize else {
             throw MessengerError.invalid("Размер расшифрованного вложения не совпадает")
@@ -1853,18 +1858,24 @@ final class ChatStore: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func setLock(_ enabled: Bool) async {
+        let fence = sessionFence
         if !enabled && activeProfile?.isPrivateSpace == true { error = "В Private Space защита входа обязательна"; return }
         if enabled {
             let context = LAContext()
             do {
                 guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Подтверди защиту VO1D") else { return }
+                try requireCurrentSession(fence)
             } catch { self.error = error.localizedDescription; return }
         }
         state.appLock = enabled; persist()
     }
     func unlock() async {
+        let fence = sessionFence
         do {
-            if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Открыть приватные чаты VO1D") { locked = false }
+            if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Открыть приватные чаты VO1D") {
+                try requireCurrentSession(fence)
+                locked = false
+            }
         } catch { self.error = error.localizedDescription }
     }
     func resetLocalIdentity() throws {

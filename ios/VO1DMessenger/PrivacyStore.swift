@@ -136,8 +136,10 @@ extension ChatStore {
     }
 
     func toggleHidden(_ id: String) async {
+        let fence = sessionFence
         do {
             guard try await LAContext().evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"Защитить скрытые чаты") else { return }
+            try requireCurrentSession(fence)
             changeExtended {
                 if $0.hiddenRooms.contains(id) { $0.hiddenRooms.removeAll { $0 == id } }
                 else { $0.hiddenRooms.append(id) }
@@ -147,8 +149,12 @@ extension ChatStore {
     }
 
     func revealHidden() async {
+        let fence = sessionFence
         do {
-            if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"Открыть скрытые чаты") { revealedHiddenRooms = true }
+            if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication,localizedReason:"Открыть скрытые чаты") {
+                try requireCurrentSession(fence)
+                revealedHiddenRooms = true
+            }
         } catch { self.error = error.localizedDescription }
     }
 

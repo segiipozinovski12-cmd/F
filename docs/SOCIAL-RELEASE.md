@@ -51,6 +51,10 @@ group/channel creation and explicit incoming-call microphone handling remain.
   local details no longer broadcasts a profile update to every trusted contact.
 * Nearby discovery/invitation callbacks from an old browser/advertiser are fenced
   after stop or identity switch, in addition to existing session packet fencing.
+* Cancelled microphone prompts cannot start recording later; recorder cleanup only
+  deactivates a session it owns and never deactivates an active call.
+* Delayed attachment imports/downloads and biometric results are identity-fenced;
+  an old chat cannot save its draft into another identity.
 * Foreground account synchronization waits for local access/biometric gates.
   Separately opted-in delegated background calls retain their explicit policy.
 * The local access field masks typed characters. Lock and capture curtains stay
