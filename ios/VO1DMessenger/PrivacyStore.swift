@@ -183,6 +183,7 @@ extension ChatStore {
 
     func removeRoom(_ roomID: String) {
         guard !isLocalUtilityRoom(roomID) else { return }
+        NotificationCoordinator.shared.cancelReminders(extended.reminders.filter { $0.roomID == roomID }.map(\.id))
         let ids = Set(state.messages.filter { $0.roomID == roomID }.map(\.id))
         state.outbox.removeAll { ids.contains($0.messageID ?? "") }
         state.messages.removeAll { $0.roomID == roomID }

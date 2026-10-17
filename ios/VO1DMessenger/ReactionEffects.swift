@@ -81,20 +81,16 @@ private struct ReactionBurst: View {
     private var style: ReactionStyle { .forEmoji(emoji) }
     var body: some View {
         ZStack {
-            if !reduceMotion {
-                Circle().fill(.white.opacity(0.14 * (1 - progress)))
-                    .frame(width: 86, height: 86).blur(radius: 9)
-                    .scaleEffect(0.35 + progress * 1.3)
-                ForEach(0..<style.particles, id: \.self) { index in
-                    particle(index)
-                }
-            }
+            if !reduceMotion { ReactionParticleField(emoji: emoji, progress: progress) }
             Text(emoji).font(.system(size: reduceMotion ? 28 : 52))
                 .scaleEffect(reduceMotion ? 1 : (leaving ? 0.85 : popped ? 1 : 0.2))
-                .rotationEffect(.degrees(reduceMotion ? 0 : (style == .laughter ? sin(progress * .pi * 6) * 14 : (1 - progress) * -12)))
+                .rotationEffect(.degrees(reduceMotion ? 0 : (1 - progress) * -12))
                 .offset(y: reduceMotion ? 0 : (leaving ? -36 : popped ? -15 : 8))
                 .opacity(leaving ? 0 : 1)
                 .shadow(color: .black.opacity(0.25), radius: 7, y: 4)
+                .phaseAnimator(!reduceMotion && style == .laughter ? [0.0, -14, 14, -10, 10, 0] : [0.0], trigger: popped) { content, angle in
+                    content.rotationEffect(.degrees(angle))
+                } animation: { _ in .easeInOut(duration: 0.12) }
         }
         .frame(width: 168, height: 160)
         .allowsHitTesting(false).accessibilityHidden(true)
@@ -105,6 +101,27 @@ private struct ReactionBurst: View {
             withAnimation(.linear(duration: 1.25)) { progress = 1 }
             do { try await Task.sleep(for: .milliseconds(reduceMotion ? 350 : 650)) } catch { return }
             withAnimation(.easeInOut(duration: 0.48)) { leaving = true }
+        }
+    }
+}
+
+/// Evaluate curved trajectories and particle size at each interpolated frame.
+private struct ReactionParticleField: View, Animatable {
+    var emoji: String
+    var progress: Double
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+    private var style: ReactionStyle { .forEmoji(emoji) }
+    var body: some View {
+        ZStack {
+            Circle().fill(.white.opacity(0.14 * (1 - progress)))
+                .frame(width: 86, height: 86).blur(radius: 9)
+                .scaleEffect(0.35 + progress * 1.3)
+            ForEach(0..<(ProcessInfo.processInfo.isLowPowerModeEnabled ? 8 : style.particles), id: \.self) { index in
+                particle(index)
+            }
         }
     }
     private func particle(_ index: Int) -> some View {

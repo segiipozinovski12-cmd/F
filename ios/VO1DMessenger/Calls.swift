@@ -195,6 +195,7 @@ final class CallManager: ObservableObject {
     private var connectTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
+    private var mediaStartTask: Task<Void, Never>?
     private var configurationID = UUID()
     private var connectionID = UUID()
 
@@ -453,6 +454,7 @@ final class CallManager: ObservableObject {
 
     fileprivate func audioDeactivated() {
         audioSessionActive = false
+        mediaStartTask?.cancel(); mediaStartTask = nil
         audio.stop()
     }
 
@@ -714,19 +716,35 @@ final class CallManager: ObservableObject {
         guard audioSessionActive,
               let current = session,
               current.phase == .active,
-              callKey != nil else { return }
-
-        do {
-            try audio.start { [weak self] frame in
-                Task { @MainActor in
-                    await self?.sendAudio(frame)
+              callKey != nil, mediaStartTask == nil else { return }
+        let expected = current.callID
+        mediaStartTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if session?.callID == expected { mediaStartTask = nil } }
+            // CallKit activation can precede a valid hardware route. Give the
+            // audio bus a short bounded warm-up instead of hanging up instantly.
+            for attempt in 0..<3 {
+                guard !Task.isCancelled, session?.callID == expected, session?.phase == .active, audioSessionActive else { return }
+                do {
+                    try audio.start { [weak self] frame in
+                        Task { @MainActor in
+                            guard let self, self.session?.callID == expected else { return }
+                            await self.sendAudio(frame)
+                        }
+                    }
+                    audio.muted = muted
+                    audio.setSpeaker(speaker)
+                    return
+                } catch {
+                    audio.stop()
+                    if attempt == 2 {
+                        lastFailure = "Не удалось включить звук звонка: \(error.localizedDescription)"
+                        failCurrent(reason: .failed)
+                        return
+                    }
+                    do { try await Task.sleep(for: .milliseconds(250 * (attempt + 1))) } catch { return }
                 }
             }
-            audio.muted = muted
-            audio.setSpeaker(speaker)
-        } catch {
-            lastFailure = error.localizedDescription
-            failCurrent(reason: .failed)
         }
     }
 
@@ -833,6 +851,7 @@ final class CallManager: ObservableObject {
     }
 
     private func cleanup() {
+        mediaStartTask?.cancel(); mediaStartTask = nil
         audio.stop()
         session = nil
         peerCard = nil
