@@ -95,7 +95,7 @@ struct SettingsView: View {
                 bio = store.state.bio ?? ""
                 if !username.isEmpty {
                     usernameAvailable = true
-                    usernameStatus = "Текущий @\(username)"
+                    usernameStatus = username == "vo1d" ? "Закреплён навсегда" : "Текущий @\(username)"
                 }
             }
             .task { await store.refreshPushStatus() }
@@ -179,6 +179,12 @@ struct SettingsView: View {
                     usernameCheckTask?.cancel()
                     usernameAvailable = nil
 
+                    if store.state.username == "vo1d" {
+                        usernameAvailable = true
+                        usernameStatus = "Закреплён навсегда"
+                        return
+                    }
+
                     if clean.isEmpty {
                         usernameStatus = "4–20 символов: a-z, 0-9, _"
                         return
@@ -211,6 +217,11 @@ struct SettingsView: View {
                 }
                 .font(.caption2)
                 .foregroundStyle(usernameAvailable == false ? .white.opacity(0.58) : Theme.secondary)
+            }
+            .disabled(store.state.username == "vo1d")
+            if store.state.username == "vo1d" {
+                Label("Первый зарегистрированный владелец · username изменить нельзя", systemImage: "lock.fill")
+                    .font(.caption2).foregroundStyle(Theme.secondary)
             }
 
             TextField("О себе", text: $bio, axis: .vertical)

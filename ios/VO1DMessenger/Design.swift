@@ -195,6 +195,7 @@ struct FeatureLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 13) {
             configuration.icon.font(.system(size: 16, weight: .semibold))
+                .symbolVariant(.fill)
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: 34, height: 34)
                 .background(LinearGradient(colors: [.white.opacity(0.13), .white.opacity(0.035)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 12))

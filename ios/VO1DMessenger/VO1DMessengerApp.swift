@@ -25,7 +25,6 @@ struct VO1DMessengerApp: App {
                 .tint(store.appearance.appTheme.palette.accent)
                 .buttonStyle(RoundedActionStyle())
                 .buttonBorderShape(.capsule)
-                .symbolVariant(.fill)
                 .scrollContentBackground(.hidden)
                 .presentationCornerRadius(30)
                 .task {
