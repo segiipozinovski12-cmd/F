@@ -49,6 +49,30 @@ def archive_member(name, data, long_name=False):
 
 
 class NativeSetupTests(unittest.TestCase):
+    def test_callkit_modes_are_present_in_debug_and_release_metadata(self):
+        app = SCRIPTS.parent / 'ios' / 'VO1DMessenger'
+        for name in ('Info.Debug.plist', 'Info.plist'):
+            with self.subTest(configuration=name):
+                info = plistlib.loads((app / name).read_bytes())
+                bundle.validate_call_configuration(info)
+
+    def test_bundle_validation_rejects_audio_only_debug_before_native_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleExecutable': 'VO1DMessenger', 'UIBackgroundModes': ['audio'],
+            }))
+            with self.assertRaisesRegex(RuntimeError, "CallKit requires.*voip"):
+                bundle.validate(app)
+
+    def test_callkit_modes_do_not_require_an_apns_entitlement(self):
+        app = SCRIPTS.parent / 'ios' / 'VO1DMessenger'
+        debug = plistlib.loads((app / 'Info.Debug.plist').read_bytes())
+        entitlements = plistlib.loads((app / 'VO1DMessenger.Debug.entitlements').read_bytes())
+        self.assertFalse(debug['VO1DPushEnabled'])
+        self.assertNotIn('aps-environment', entitlements)
+        bundle.validate_call_configuration(debug)
+
     def test_signal_archive_preserves_bsd_names_and_removes_stale_symbol_index(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / 'signal.a'
