@@ -18,6 +18,31 @@ private final class DelayedProtocol: URLProtocol, @unchecked Sendable {
 }
 
 final class PrivacyRegressionTests: XCTestCase {
+    @MainActor func testLateAccountDeletionCannotEraseAnotherSessionVaultOrKeys() async throws {
+        APIClient.testingProtocolClasses = [DelayedProtocol.self]
+        let store = ChatStore(), original = store.state, oldAPI = store.api, oldGeneration = store.generation
+        let client = try APIClient(server: "https://regression.invalid", identity: XCTUnwrap(store.identity))
+        defer {
+            DelayedProtocol.receive = nil; APIClient.testingProtocolClasses = nil; client.invalidate()
+            store.state = original; store.generation = oldGeneration; store.api = oldAPI; try? store.save()
+        }
+        store.state = VaultState(); store.api = client
+        let arrived = expectation(description: "Account deletion waits on network")
+        var pending: DelayedProtocol?
+        DelayedProtocol.receive = { value in pending = value; arrived.fulfill() }
+        let operation = Task { await store.deleteAccount() }
+        await fulfillment(of: [arrived], timeout: 3)
+        XCTAssertEqual(pending?.request.url?.path, "/v1/account")
+        store.generation += 1; store.state.nickname = "Second identity survives"
+        try store.save()
+        let identityID = store.myID, vault = try XCTUnwrap(store.vault)
+        let encrypted = try Data(contentsOf: vault.url)
+        try XCTUnwrap(pending).reply(["ok": true])
+        await operation.value
+        XCTAssertEqual(store.myID, identityID)
+        XCTAssertEqual(store.state.nickname, "Second identity survives")
+        XCTAssertEqual(try Data(contentsOf: vault.url), encrypted)
+    }
     @MainActor func testCancellingBeforeMicrophonePermissionCannotStartRecordingLater() async throws {
         let asked = expectation(description: "System microphone prompt")
         var decision: CheckedContinuation<Bool, Never>?

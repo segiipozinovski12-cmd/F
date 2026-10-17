@@ -436,8 +436,10 @@ final class ChatStore: ObservableObject {
         busy = true
         defer { busy = false }
         generation += 1
+        let fence = sessionFence
         if let api { try? await api.deleteAccount() }
         do {
+            try requireCurrentSession(fence)
             try resetLocalIdentity()
             return true
         } catch {
@@ -1901,13 +1903,17 @@ final class ChatStore: ObservableObject {
     func deleteAccount() async {
         busy = true
         defer { busy = false }
+        generation += 1
+        let fence = sessionFence
         do {
-            generation += 1
             guard let api else { throw MessengerError.invalid("Для удаления данных с relay сначала подключись к нему") }
             try await erasePrivateRelayStorage()
+            try requireCurrentSession(fence)
             try await api.deleteAccount()
+            try requireCurrentSession(fence)
             try resetLocalIdentity()
-        } catch { self.error = error.localizedDescription }
+        } catch is CancellationError { return }
+        catch { self.error = error.localizedDescription }
     }
     func name(_ id: String) -> String {
         if id == myID { return "Ты" }
@@ -1935,8 +1941,10 @@ final class ChatStore: ObservableObject {
     }
 
     func setNotifications(_ enabled: Bool) async {
+        let fence = sessionFence
         if enabled {
             let granted = await NotificationCoordinator.shared.requestPermission()
+            guard (try? requireCurrentSession(fence)) != nil else { return }
             state.notificationsEnabled = granted
             if !granted { error = "Разрешение на уведомления не выдано в iOS" }
         } else {
@@ -1944,6 +1952,7 @@ final class ChatStore: ObservableObject {
             NotificationCoordinator.shared.clearDelivered()
         }
         if let api { try? await PushCoordinator.shared.register(api:api,enabled:state.notificationsEnabled==true) }
+        guard (try? requireCurrentSession(fence)) != nil else { return }
         persist()
     }
 

@@ -42,6 +42,9 @@ group/channel creation and explicit incoming-call microphone handling remain.
 
 ## Security fixes in this update
 
+* Account/emergency deletion and mailbox/blob cleanup are fenced after network
+  waits so they cannot reset or modify a newly opened identity. A delayed deletion
+  regression verifies that the other vault and identity keys remain intact.
 * A delayed username, contact lookup, privacy update or avatar import is fenced to
   the identity and transport generation that initiated it. Contact-request rollback
   no longer spans a network wait or overwrites a subsequently opened identity.
