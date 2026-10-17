@@ -1055,7 +1055,7 @@ struct CallMiniBanner: View {
     @EnvironmentObject private var calls: CallManager
 
     var body: some View {
-        HStack(spacing: 13) {
+        VStack(spacing: 16) {
             Button {
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.85)) {
                     calls.setCallScreenExpanded(true)
@@ -1065,12 +1065,12 @@ struct CallMiniBanner: View {
                     Avatar(name: session.peerName, size: 48)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(session.incoming && session.phase == .ringing ? "Входящий звонок" : "VO1D · Звонок")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.58))
                         Text(session.peerName)
-                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
-                            .lineLimit(1)
+                            .lineLimit(2)
                     }
                     Spacer(minLength: 0)
                 }
@@ -1078,6 +1078,7 @@ struct CallMiniBanner: View {
             }
             .buttonStyle(.plain)
 
+            HStack(spacing: 12) {
             if session.incoming && session.phase == .ringing {
                 bannerAction("phone.down.fill", fill: .white.opacity(0.13), foreground: .white, label: "Отклонить") {
                     calls.endFromApp()
@@ -1094,6 +1095,7 @@ struct CallMiniBanner: View {
                 bannerAction("phone.down.fill", fill: .white, foreground: .black, label: "Завершить") {
                     calls.endFromApp()
                 }
+            }
             }
         }
         .padding(.horizontal, 16)
@@ -1120,11 +1122,11 @@ struct CallMiniBanner: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 19, weight: .bold))
+            Label(label, systemImage: symbol)
+                .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(foreground)
-                .frame(width: 49, height: 49)
-                .background(fill, in: Circle())
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(fill, in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
