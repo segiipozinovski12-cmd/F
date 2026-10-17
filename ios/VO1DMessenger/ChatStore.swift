@@ -1860,7 +1860,7 @@ final class ChatStore: ObservableObject {
     func setLock(_ enabled: Bool) async {
         let fence = sessionFence
         if !enabled && activeProfile?.isPrivateSpace == true { error = "В Private Space защита входа обязательна"; return }
-        if enabled {
+        if enabled != state.appLock {
             let context = LAContext()
             do {
                 guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Подтверди защиту VO1D") else { return }

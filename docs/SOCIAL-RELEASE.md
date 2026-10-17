@@ -55,6 +55,8 @@ group/channel creation and explicit incoming-call microphone handling remain.
   deactivates a session it owns and never deactivates an active call.
 * Delayed attachment imports/downloads and biometric results are identity-fenced;
   an old chat cannot save its draft into another identity.
+* Disabling device authentication now requires device authentication too; a late
+  biometric response cannot unlock another identity.
 * Foreground account synchronization waits for local access/biometric gates.
   Separately opted-in delegated background calls retain their explicit policy.
 * The local access field masks typed characters. Lock and capture curtains stay
