@@ -1,64 +1,28 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import ImageIO
 
 enum SocialImage {
     static func jpeg(_ data: Data, maxSide: CGFloat = 960, limit: Int = 400_000) -> Data? {
-        guard data.count <= 20_000_000, let source = UIImage(data: data), source.size.width > 0, source.size.height > 0 else { return nil }
-        let scale = min(1, maxSide / max(source.size.width, source.size.height))
-        let format = UIGraphicsImageRendererFormat(); format.scale = 1
-        let size = CGSize(width: max(1, source.size.width * scale), height: max(1, source.size.height * scale))
-        let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in source.draw(in: CGRect(origin: .zero, size: size)) }
+        guard data.count <= 20_000_000, maxSide.isFinite, (1...2048).contains(maxSide),
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+              width.doubleValue > 0, height.doubleValue > 0,
+              width.doubleValue * height.doubleValue <= 120_000_000,
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: Int(maxSide),
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else { return nil }
+        let image = UIImage(cgImage: thumbnail)
         for quality in [0.8, 0.6, 0.4] {
             if let jpeg = image.jpegData(compressionQuality: quality), jpeg.count <= limit { return jpeg }
         }
         return nil
-    }
-}
-struct ProfilePreviewView: View {
-    var peerID: String? = nil
-    @EnvironmentObject var store: ChatStore
-    private var mine: Bool { peerID == nil || peerID == store.myID }
-    private var id: String { peerID ?? store.myID }
-    private var profile: SharedProfile {
-        mine ? store.ownSharedProfile : store.social.profiles[id] ?? SharedProfile(name: store.name(id), bio: "", avatar: nil, updatedAt: .distantPast, status: "")
-    }
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                Avatar(name: profile.name, size: 120, imageData: profile.avatar).padding(.top, 26)
-                VStack(spacing: 8) {
-                    Text(profile.name).font(.largeTitle.bold())
-                    if mine, let username = store.state.username { Text("@\(username)").font(.callout.monospaced()).foregroundStyle(.secondary) }
-                    if !profile.status.isEmpty { Text(profile.status).font(.title3) }
-                    if (mine && store.hasPremium) || (!mine && profile.premium?.kind == "premium" && (profile.premium?.expiresAt ?? 0) > Int(Date().timeIntervalSince1970)) { Label("VO1D PREMIUM", systemImage: "sparkles").font(.caption.bold()) }
-                    if !profile.bio.isEmpty { Text(profile.bio).multilineTextAlignment(.center).padding(.top, 6) }
-                }
-                if mine {
-                    Text("Так твой профиль выглядит для контактов, которым ты его отправил.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    NavigationLink { StoryComposerView() } label: { Label("Добавить историю", systemImage: "plus.circle") }.buttonStyle(.borderedProminent)
-                    NavigationLink { PremiumView() } label: { Label("Premium и коллекция", systemImage: "diamond") }
-                }
-                ForEach((mine ? store.social.collectibles : profile.collectibles ?? []).filter { (try? $0.validate(owner: id)) != nil }) { item in
-                    VStack(spacing: 10) {
-                        Image(systemName: item.symbol).font(.system(size: 44))
-                        Text(item.label).font(.headline)
-                        Text("#" + String(item.id.prefix(8)).uppercased()).font(.caption.monospaced()).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity).padding(24).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 24))
-                }
-                ForEach(store.social.stories.filter { $0.author == id && $0.expiresAt > Date() }.sorted { $0.createdAt > $1.createdAt }) { story in
-                    StoryCard(story: story)
-                }
-                if !mine {
-                    Text("Профиль получен через E2EE. Изменения появятся после обмена с собеседником.").font(.caption).foregroundStyle(.secondary)
-                    Button("Обновить профиль") { request() }
-                }
-            }.padding(24).frame(maxWidth: .infinity)
-        }.background(.black).navigationTitle("Профиль").navigationBarTitleDisplayMode(.inline)
-            .task { if !mine { request() } }
-    }
-    private func request() {
-        do { try store.requestProfile(id); Task { await store.sync() } } catch { store.error = error.localizedDescription }
     }
 }
 struct StoryCard: View {
@@ -81,29 +45,58 @@ struct StoryCard: View {
         }.frame(maxWidth: .infinity, alignment: .leading).padding(18).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24))
     }
 }
+struct StoryViewerView: View {
+    let author: String
+    @EnvironmentObject private var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var page = ""
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { clock in
+            let stories = store.social.stories.filter { $0.author == author && $0.expiresAt > clock.date }.sorted { $0.createdAt < $1.createdAt }
+            VStack(spacing: 16) {
+                if stories.isEmpty {
+                    ContentUnavailableView("История уже исчезла", systemImage: "clock", description: Text("Истории доступны 24 часа."))
+                } else {
+                    HStack(spacing: 5) {
+                        ForEach(stories) { story in
+                            Capsule().fill(.white.opacity(page == story.id ? 0.95 : 0.18)).frame(height: 3)
+                        }
+                    }.padding(.horizontal, 24)
+                    TabView(selection: $page) {
+                        ForEach(stories) { story in
+                            ScrollView { StoryCard(story: story).padding(22).softAppear() }.tag(story.id)
+                        }
+                    }.tabViewStyle(.page(indexDisplayMode: .never))
+                    Text("Листай в стороны · копии могут быть сохранены получателями").font(.caption2).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).padding(.horizontal, 24)
+                }
+            }
+            .onAppear { if page.isEmpty { page = stories.first?.id ?? "" } }
+            .onChange(of: stories.map(\.id)) { _, ids in if !ids.contains(page) { page = ids.first ?? "" } }
+            .animation(reduceMotion ? nil : Motion.layout, value: stories.map(\.id))
+        }
+        .background { VoidBackground() }
+        .navigationTitle(author == store.myID ? "Твои истории" : store.name(author))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
 struct StoriesStrip: View {
     @EnvironmentObject var store: ChatStore
     private var authors: [String] { Array(Set(store.social.stories.filter { $0.expiresAt > Date() }.map(\.author))).sorted() }
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 18) {
-                NavigationLink { StoryComposerView() } label: {
-                    VStack(spacing: 7) {
-                        Image(systemName: "plus").font(.title2).frame(width: 58, height: 58).background(.white.opacity(0.08), in: Circle()).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                        Text("История").font(.caption2)
-                    }
-                }.buttonStyle(.plain)
+            HStack(alignment: .top, spacing: 14) {
                 ForEach(authors, id: \.self) { author in
-                    NavigationLink { ProfilePreviewView(peerID: author) } label: {
+                    NavigationLink { StoryViewerView(author: author) } label: {
                         VStack(spacing: 7) {
-                            Avatar(name: store.name(author), size: 58, imageData: author == store.myID ? store.state.profileAvatar : store.social.profiles[author]?.avatar)
-                                .padding(4).overlay(Circle().stroke(.white, lineWidth: 1.5))
+                            Avatar(name: store.name(author), size: 44, imageData: author == store.myID ? store.state.profileAvatar : store.social.profiles[author]?.avatar)
+                                .clipShape(Circle()).padding(4).overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1.5))
                             Text(author == store.myID ? "Ты" : store.name(author)).font(.caption2).lineLimit(1).frame(width: 66)
                         }
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(MotionButtonStyle()).transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
             }.padding(.vertical, 4)
         }
+        .frame(height: authors.isEmpty ? 0 : 84)
     }
 }
 struct StoryComposerView: View {

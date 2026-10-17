@@ -7,6 +7,10 @@ struct ChatView: View {
     let roomID: String
     var initialMessageID: String? = nil
     @EnvironmentObject var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var reactionTarget: ChatMessage?
+    private var appPalette: VoidPalette { store.appearance.appTheme.palette }
+    private var chatPalette: VoidPalette { store.chatTheme(roomID).palette(app: appPalette) }
     @State private var text = ""
     @State private var messageLimit = 80
     @State private var authorFilter = ""
@@ -85,7 +89,7 @@ struct ChatView: View {
                                     Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MotionButtonStyle())
                         }
 
                         if room.isGroup, let topics = room.topics, !topics.isEmpty {
@@ -104,7 +108,7 @@ struct ChatView: View {
                                             .background(selectedTopic == nil ? Color.white : Color.white.opacity(0.06), in: Capsule())
                                             .foregroundStyle(selectedTopic == nil ? .black : Theme.secondary)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MotionButtonStyle())
 
                                     ForEach(topics, id: \.self) { topic in
                                         Button {
@@ -121,7 +125,7 @@ struct ChatView: View {
                                                 .background(selectedTopic == topic ? Color.white : Color.white.opacity(0.06), in: Capsule())
                                                 .foregroundStyle(selectedTopic == topic ? .black : Theme.secondary)
                                         }
-                                        .buttonStyle(.plain)
+                                        .buttonStyle(MotionButtonStyle())
                                     }
                                 }
                                 .padding(.horizontal, 14)
@@ -152,16 +156,18 @@ struct ChatView: View {
                                 }
                                 ForEach(messages) { message in
                                     bubble(message, group: room.isGroup).id(message.id)
+                                        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
                                 }
                                 Color.clear.frame(height: 1).id("bottom")
                             }
                             .padding(.horizontal, 18)
                             .padding(.bottom, 10)
+                            .animation(reduceMotion ? nil : Motion.layout, value: messages.map(\.id))
                         }
                         .scrollDismissesKeyboard(.interactively)
                         .onChange(of: messages.count) { _, _ in
                             guard initialMessageID==nil && search.isEmpty else { return }
-                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                            withAnimation(reduceMotion ? nil : Motion.layout) { proxy.scrollTo("bottom", anchor: .bottom) }
                             store.markRead(roomID)
                         }
                         .onAppear {
@@ -204,7 +210,12 @@ struct ChatView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             } else { ContentUnavailableView("Чат недоступен", systemImage: "bubble.left") }
-        }.background(Theme.background)
+        }.background { ChatBackdrop(palette: chatPalette, texture: store.appearance.chatTexture) }
+            .animation(reduceMotion ? nil : Motion.layout, value: selectionMode)
+            .animation(reduceMotion ? nil : Motion.layout, value: reply?.id)
+            .animation(reduceMotion ? nil : Motion.layout, value: editing?.id)
+            .animation(reduceMotion ? nil : Motion.layout, value: selectedTopic)
+            .animation(reduceMotion ? nil : Motion.layout, value: audio.recording)
             .navigationTitle(room?.title ?? "Чат").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -219,14 +230,12 @@ struct ChatView: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
-                        if let room, !room.isGroup, let peer = room.members.first(where: { $0.id != store.myID }), !store.isLocalUtilityRoom(roomID) {
-                            NavigationLink("Профиль собеседника") { ProfilePreviewView(peerID: peer.id) }
-                        }
                         Button("Отправить одноразовый текст · 30 секунд", systemImage: "eye.slash") { ghostConfirm = true }
                             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editing != nil || store.isLocalUtilityRoom(roomID))
                         Button("Фильтр по автору и дате") { filterSheet=true }
                         NavigationLink("Ссылки чата") { ChatLinksView(roomID:roomID) }
                         NavigationLink("Настройки чата") { RoomToolsView(roomID:roomID) }
+                        NavigationLink("Оформление чата", systemImage: "paintpalette") { AppearanceSettingsView(roomID: roomID) }
                         if let room, !store.isLocalUtilityRoom(roomID) {
                             Menu("Пожаловаться") {
                                 ForEach(room.members.filter { $0.id != store.myID }) { member in
@@ -280,6 +289,11 @@ struct ChatView: View {
                 }
             }
             .sheet(isPresented: $info) { RoomInfoView(roomID: roomID) }
+            .sheet(item: $reactionTarget) { message in
+                ReactionPickerView(selected: message.reactions[store.myID]) { emoji in
+                    perform { try store.action("reaction", message: message, value: emoji) }
+                }
+            }
             .sheet(item: $reportTarget) { ReportComposerView(target: $0) }
             .confirmationDialog("Отправить одноразовый текст?", isPresented: $ghostConfirm, titleVisibility: .visible) {
                 Button("Отправить · просмотр 30 секунд") { send(viewOnceSeconds: 30) }
@@ -446,7 +460,7 @@ struct ChatView: View {
                     }
                     .accessibilityLabel("Добавить вложение")
                     TextField("Сообщение", text: $text, axis: .vertical).lineLimit(1...5).padding(.vertical, 12).padding(.horizontal, 14)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 21))
+                        .background(chatPalette.panel, in: RoundedRectangle(cornerRadius: 24))
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button { Task { do { try await audio.start() } catch { store.error = error.localizedDescription } } } label: {
                             Image(systemName: "mic").font(.title3).frame(width: 42, height: 42).background(Theme.panel, in: Circle())
@@ -493,14 +507,16 @@ struct ChatView: View {
                     }
                 }.padding(.horizontal, 14).padding(.vertical, 10)
             }
-        }.background(Theme.background).overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5) }
+        }.background(chatPalette.background.opacity(0.96)).overlay(alignment: .top) { Capsule().fill(.white.opacity(0.06)).frame(height: 0.5) }
     }
     func bubble(_ message: ChatMessage, group: Bool) -> some View {
         let mine = message.sender == store.myID
         return HStack(alignment: .bottom) {
             if mine { Spacer(minLength: 42) }
             messageContents(message,group:group,mine:mine).padding(13).foregroundStyle(mine ? Color.black : Color.white)
-                .background(mine ? Color(red: 0.88, green: 0.88, blue: 0.92) : Theme.panel, in: RoundedRectangle(cornerRadius: 21))
+                .background(mine ? store.chatTheme(roomID).outgoing(app: appPalette) : chatPalette.panel, in: RoundedRectangle(cornerRadius: 23, style: .continuous))
+                .reactionFeedback(message.reactions, mine: mine)
+                .animation(reduceMotion ? nil : Motion.layout, value: message.reactions)
                 .overlay(alignment: mine ? .topLeading : .topTrailing) {
                     if selectionMode {
                         Button {
@@ -515,7 +531,7 @@ struct ChatView: View {
                                 .foregroundStyle(mine ? .black : .white)
                                 .padding(6)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MotionButtonStyle())
                     }
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
@@ -613,7 +629,7 @@ struct ChatView: View {
                             SafeContent.copy(message.text,seconds:store.preferences.clipboardSeconds)
                         }
                     }
-                    Menu("Реакция") { ForEach(ReactionCatalog.all, id: \.self) { emoji in Button(emoji) { perform { try store.action("reaction", message: message, value: emoji) } } } }
+                    Button("Реакция", systemImage: "face.smiling") { reactionTarget = message }
                     if mine && message.call == nil {
                         Button("Редактировать", systemImage: "pencil") { editing = message; reply = nil; text = message.text }
                         Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
@@ -658,7 +674,7 @@ struct ChatView: View {
                                     .frame(maxHeight: 260)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MotionButtonStyle())
                         }
                     } else if attachment.mime.hasPrefix("audio/") {
                         VoiceMessagePlayer(
@@ -683,7 +699,7 @@ struct ChatView: View {
                             }
                             .padding(6)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MotionButtonStyle())
                     }
                 }
     }
@@ -793,10 +809,10 @@ struct ChatView: View {
                     }
                 }.font(.system(size: 10)).opacity(0.55).frame(maxWidth: .infinity, alignment: .trailing)
                 if !message.reactions.isEmpty {
-                    Text(message.reactions.values.sorted().joined(separator: " ")).font(.subheadline).padding(.horizontal, 8).padding(.vertical, 4).background(.black.opacity(0.08), in: Capsule())
-                        .contentTransition(.numericText())
-                        .animation(.spring(response: 0.3, dampingFraction: 0.66), value: message.reactions)
-                        .transition(.scale(scale: 0.7).combined(with: .opacity))
+                    MessageReactionsView(reactions: message.reactions, ownID: store.myID, mine: mine) { emoji in
+                        Haptics.light()
+                        perform { try store.action("reaction", message: message, value: emoji) }
+                    }.transition(.scale(scale: 0.8, anchor: .bottomLeading).combined(with: .opacity))
                 }
             }
     }
@@ -862,7 +878,7 @@ struct ChatView: View {
         do {
             guard data.count<=FileTransferPolicy.limitBytes(store.preferences) else { throw MessengerError.invalid("Файл превышает выбранный лимит") }
             if data.count>3*1024*1024 && store.preferences.wifiOnlyUploads && !NetworkState.shared.wifi { throw MessengerError.invalid("Для загрузки включи Wi-Fi или отключи ограничение в приватности") }
-            let name=store.preferences.anonymizeFilenames ? "File." + (URL(fileURLWithPath:name).pathExtension.isEmpty ? "bin" : URL(fileURLWithPath:name).pathExtension) : name
+            let name = FileTransferPolicy.name(name, preferences: store.preferences)
             if data.count <= 3 * 1024 * 1024 {
                 send(Attachment(name: name, mime: mime, data: data))
                 return
@@ -1035,7 +1051,7 @@ private struct PollMessageView: View {
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MotionButtonStyle())
                 .disabled(poll.closed)
             }
 
@@ -1244,7 +1260,7 @@ private struct ForwardPickerView: View {
                                 }
                                 .panel()
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MotionButtonStyle())
                         }
                     }
                     .padding(20)
@@ -1348,7 +1364,7 @@ private struct RemoteAttachmentCard: View {
             }
             .padding(4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MotionButtonStyle())
         .accessibilityLabel(downloading ? "Отменить загрузку" : "Загрузить файл")
         .onDisappear { downloadTask?.cancel() }
     }
@@ -1686,7 +1702,7 @@ private struct GroupManagementView: View {
                             Image(systemName: "plus.circle.fill")
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(MotionButtonStyle())
                 }
                 .navigationTitle("Добавить")
                 .navigationBarTitleDisplayMode(.inline)

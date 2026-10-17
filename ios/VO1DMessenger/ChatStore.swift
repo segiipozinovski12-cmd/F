@@ -115,8 +115,9 @@ final class ChatStore: ObservableObject {
     }
 
     func connectProductionRelay() async {
-        guard state.onboarded, !busy, fatalError == nil, let identity,
+        guard state.onboarded, sessionUnlocked, !locked, !busy, fatalError == nil, let identity,
               connectingGeneration != generation else { return }
+        guard NetworkState.shared.connected else { connection = "Нет сети · отправим автоматически"; return }
         // A foreground wake must not replace a healthy WSS session or an
         // incoming CallKit handshake. API requests refresh their own bearer.
         if api != nil, connection == "Подключён" { return }
@@ -162,18 +163,18 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    func configure(name: String, server: String, username: String? = nil) async {
+    func configure(name: String, server: String) async {
         busy = true
         defer { busy = false }
 
         do {
-            try await configureAttempt(name: name, server: server, allowIdentityRecovery: true, username: username)
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: true)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func configureAttempt(name: String, server: String, allowIdentityRecovery: Bool, username: String? = nil) async throws {
+    private func configureAttempt(name: String, server: String, allowIdentityRecovery: Bool) async throws {
         guard let identity else { throw MessengerError.invalid("Ключи устройства недоступны") }
         let expected = generation
         let firstLaunch = !state.onboarded
@@ -203,7 +204,7 @@ final class ChatStore: ObservableObject {
             _ = try ensureCredentials()
             try save()
 
-            try await configureAttempt(name: name, server: server, allowIdentityRecovery: false, username: username)
+            try await configureAttempt(name: name, server: server, allowIdentityRecovery: false)
             return
         }
 
@@ -220,10 +221,6 @@ final class ChatStore: ObservableObject {
         _ = try ensureCredentials()
         state.publicCode = publicCode
         try await restoreDiscovery(using: client)
-        if let username = username?.trimmingCharacters(in: .whitespacesAndNewlines), !username.isEmpty, state.username != "vo1d" {
-            state.username = try await client.claimUsername(username)
-            guard expected == generation else { throw CancellationError() }
-        }
         state.onboarded = true
         serverResetRequired = false
         if firstLaunch { state.credentialsAcknowledged = false }
@@ -467,12 +464,15 @@ final class ChatStore: ObservableObject {
             error = "Нет соединения с VO1D"
             return false
         }
+        let fence = sessionFence
         do {
             let username = try await api.claimUsername(value)
+            try requireCurrentSession(fence)
             state.username = username
             try save()
             return true
         } catch {
+            guard (try? requireCurrentSession(fence)) != nil else { return false }
             self.error = error.localizedDescription
             return false
         }
@@ -486,6 +486,7 @@ final class ChatStore: ObservableObject {
         return "vo1d://contact/\(code)"
     }
     func addContact(_ value: String) async throws -> Contact {
+        let fence = sessionFence
         var input = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let card: ContactCard
         let name: String
@@ -501,6 +502,7 @@ final class ChatStore: ObservableObject {
 
         if input.hasPrefix("vo1d://private/") {
             let invite = try await decodePrivateLink(input)
+            try requireCurrentSession(fence)
             try importPrivateInvite(invite)
             card = invite.card; name = String(invite.name.prefix(40))
         } else if input.hasPrefix("vo1d://invite/") {
@@ -546,6 +548,7 @@ final class ChatStore: ObservableObject {
                 name = "Ghost \(card.shortID.prefix(6))"
             }
         }
+        try requireCurrentSession(fence)
         try Crypto.validate(card)
         try validateScopedContact(card.id)
         guard card.id != myID else { throw MessengerError.invalid("Это твой собственный ID") }
@@ -553,12 +556,14 @@ final class ChatStore: ObservableObject {
             guard existing.card == card else { throw MessengerError.invalid("Ключ контакта изменился") }
             return existing
         }
-        try bindScopedID(card.id,scope:.contact)
         let bot = try? await api?.botDirectory(card.id)
+        try requireCurrentSession(fence)
+        try bindScopedID(card.id,scope:.contact)
         let contact = Contact(card: card, name: bot?.name ?? name, isBot: bot != nil)
         state.contacts.append(contact)
         changeExtended { if !$0.trustedIDs.contains(card.id) { $0.trustedIDs.append(card.id) } }
         try? await trustOnServer(card.id,trusted:true)
+        try requireCurrentSession(fence)
         try save()
         return contact
     }
@@ -1439,8 +1444,14 @@ final class ChatStore: ObservableObject {
     }
 
     func sync() async {
-        guard fatalError == nil, !syncing, !locked, state.onboarded, let api, let identity else { return }
+        guard fatalError == nil, !syncing, !locked, sessionUnlocked, state.onboarded else { return }
         try? NearbyTransport.shared.flush()
+        guard NetworkState.shared.connected else {
+            processScheduledMessages(); expire()
+            connection = "Нет сети · отправим автоматически"
+            return
+        }
+        guard let api, let identity else { return }
         syncing = true; let currentGeneration = generation
         defer { syncing = false }
         do {

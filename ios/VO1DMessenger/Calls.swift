@@ -931,6 +931,6 @@ struct CallScreen: View {
             }
             .frame(width: 82)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MotionButtonStyle())
     }
 }

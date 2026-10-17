@@ -80,8 +80,6 @@
 	</dict>
 	<key>VO1DPushEnabled</key>
 	<true/>
-	<key>VO1DCommercePublicKey</key>
-	<string>$(VO1D_COMMERCE_PUBLIC_KEY)</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>VO1D связывает устройства рядом для зашифрованной переписки без интернета, только когда ты включаешь эту функцию.</string>
 	<key>NSBonjourServices</key>

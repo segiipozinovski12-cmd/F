@@ -31,42 +31,38 @@ struct SettingsView: View {
                         }
                         .padding(.bottom, 4)
 
-                        NavigationLink { ProfilePreviewView() } label: {
-                            Label("МОЙ ПРОФИЛЬ", systemImage: "person.crop.circle")
-                                .frame(maxWidth: .infinity, alignment: .leading).panel()
-                        }.buttonStyle(.plain)
-                        NavigationLink { PremiumView() } label: {
-                            Label("VO1D PREMIUM", systemImage: "sparkles")
-                                .frame(maxWidth: .infinity, alignment: .leading).panel()
-                        }.buttonStyle(.plain)
                         profileCard
+                        NavigationLink { AppearanceSettingsView() } label: {
+                            Label("ОФОРМЛЕНИЕ И ТЕМЫ", systemImage: "paintpalette")
+                                .frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink { ProfilesView() } label: {
                             Label("НЕЗАВИСИМЫЕ ЛИЧНОСТИ",systemImage:"person.crop.rectangle.stack")
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MotionButtonStyle())
                         keysCard
                         NavigationLink { NearbyView() } label: {
                             Label("СВЯЗЬ РЯДОМ БЕЗ ИНТЕРНЕТА", systemImage: "antenna.radiowaves.left.and.right")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink { BotFatherView() } label: {
                             Label("@vo1d_bot_father · МОИ БОТЫ", systemImage: "terminal")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink { ReportCenterView() } label: {
                             Label("ЖАЛОБЫ И МОДЕРАЦИЯ", systemImage: "flag")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink { NextSecurityCenterView() } label: {
                             Label("SECURITY CHECK И TRUST CIRCLE", systemImage: "checkmark.shield")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink {
                             ToolsCenterView()
                         } label: {
                             Label("ПРИВАТНОСТЬ И ИНСТРУМЕНТЫ",systemImage:"lock.shield")
                                 .frame(maxWidth:.infinity,alignment:.leading).panel()
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MotionButtonStyle())
                         privacyCard
                         voiceCard
                         callsCard
@@ -87,6 +83,7 @@ struct SettingsView: View {
                         .padding(.vertical, 24)
                     }
                     .padding(22)
+                    .softAppear()
                 }
             }
             .navigationBarHidden(true)
@@ -144,7 +141,7 @@ struct SettingsView: View {
                         .frame(width: 40, height: 40)
                         .background(.white.opacity(0.08), in: Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MotionButtonStyle())
                 .accessibilityLabel("Изменить аватар")
             }
 
@@ -239,6 +236,7 @@ struct SettingsView: View {
             Button {
                 let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !cleanedName.isEmpty else { return }
+                let fence = store.sessionFence
 
                 Task {
                     if !username.isEmpty {
@@ -249,9 +247,10 @@ struct SettingsView: View {
                         guard await store.claimUsername(username) else { return }
                     }
 
+                    guard (try? store.requireCurrentSession(fence)) != nil else { return }
                     store.state.nickname = String(cleanedName.prefix(40))
                     store.state.bio = String(bio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-                    do { try store.shareProfile(); await store.sync() } catch { store.error = error.localizedDescription }
+                    do { try store.save() } catch { store.error = error.localizedDescription }
                     usernameAvailable = true
                     usernameStatus = store.state.username.map { "Текущий @\($0)" } ?? ""
                 }
@@ -351,7 +350,7 @@ struct SettingsView: View {
                             .foregroundStyle(.white.opacity(0.48))
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MotionButtonStyle())
 
                 if effect != .shadow {
                     Divider().overlay(.white.opacity(0.07))
@@ -537,35 +536,17 @@ struct SettingsView: View {
 
     @MainActor
     private func loadAvatar(_ item: PhotosPickerItem) async {
+        let fence = store.sessionFence
         do {
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else {
-                return
+            guard let data = try await item.loadTransferable(type: Data.self) else { return }
+            try store.requireCurrentSession(fence)
+            guard let jpeg = SocialImage.jpeg(data, maxSide: 384, limit: 160_000) else {
+                throw MessengerError.invalid("Не удалось подготовить аватар до 160 КБ")
             }
-
-            let maxSide: CGFloat = 384
-            let scale = min(1, maxSide / max(image.size.width, image.size.height))
-            let target = CGSize(
-                width: max(1, image.size.width * scale),
-                height: max(1, image.size.height * scale)
-            )
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = 1
-            let renderer = UIGraphicsImageRenderer(size: target, format: format)
-            let rendered = renderer.image { _ in
-                image.draw(in: CGRect(origin: .zero, size: target))
-            }
-
-            guard let jpeg = rendered.jpegData(compressionQuality: 0.65),
-                  jpeg.count <= 160_000 else {
-                throw MessengerError.invalid("Аватар получился слишком большим")
-            }
-
             store.state.profileAvatar = jpeg
-            store.persist()
-        } catch {
-            store.error = error.localizedDescription
-        }
+            try store.save()
+        } catch is CancellationError { return }
+        catch { store.error = error.localizedDescription }
     }
 
     private func sectionTitle(_ title: String, icon: String) -> some View {

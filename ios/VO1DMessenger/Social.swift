@@ -9,8 +9,6 @@ struct SharedProfile: Codable, Hashable {
     var avatar: Data?
     var updatedAt: Date
     var status: String
-    var premium: PremiumReceipt? = nil
-    var collectibles: [CollectibleReceipt]? = nil
     func validate(now: Date = Date()) throws {
         guard !name.isEmpty, name.count <= 40, bio.count <= 160, status.count <= 32,
               (avatar?.count ?? 0) <= 160_000, updatedAt <= now.addingTimeInterval(60) else {
@@ -40,8 +38,6 @@ struct SocialState: Codable {
     var storyAudience: [String: [String]] = [:]
     var deletedStories: [String: Date] = [:]
     var status = ""
-    var premium: PremiumReceipt? = nil
-    var collectibles: [CollectibleReceipt] = []
 }
 enum ReactionCatalog {
     static let all = ["❤️", "👍", "👎", "🔥", "😂", "🤣", "🥰", "😍", "😎", "🤝", "👏", "💯", "⚡️", "🖤", "🤍", "👀", "🤔", "😮", "😢", "😭", "🤯", "🫡", "💀", "🗿", "🎉", "🚀", "🏆", "🍕", "🤡", "💔", "🙏", "👌"]
@@ -53,36 +49,12 @@ extension ChatEvent {
 extension ChatStore {
     var social: SocialState { state.social ?? SocialState() }
     var ownSharedProfile: SharedProfile {
-        var profile = SharedProfile(name: state.nickname, bio: state.bio ?? "", avatar: state.profileAvatar.flatMap { $0.count <= 160_000 ? $0 : SocialImage.jpeg($0, maxSide: 384, limit: 160_000) }, updatedAt: Date(), status: hasPremium ? social.status : "")
-        profile.premium = hasPremium ? social.premium : nil
-        profile.collectibles = Array(social.collectibles.filter { (try? $0.validate(owner: myID)) != nil }.prefix(12))
-        return profile
+        SharedProfile(name: state.nickname, bio: state.bio ?? "", avatar: state.profileAvatar.flatMap { $0.count <= 160_000 ? $0 : SocialImage.jpeg($0, maxSide: 384, limit: 160_000) }, updatedAt: Date(), status: social.status)
     }
     func socialRoom(_ contact: Contact) throws -> Room {
         guard let ownCard else { throw MessengerError.invalid("Нет личности") }
         return Room(id: "dm:" + [myID, contact.id].sorted().joined(separator: ":"), title: contact.name,
                     members: [ownCard, contact.card], creator: "", isGroup: false, createdAt: Date())
-    }
-    func shareProfile(to ids: Set<String>? = nil) throws {
-        try ownSharedProfile.validate()
-        let previous = state
-        do {
-            for contact in state.contacts where !contact.blocked && contact.isBot != true && !isBuiltinBot(contact.id) &&
-                extended.trustedIDs.contains(contact.id) && (ids == nil || ids!.contains(contact.id)) {
-                let room = try socialRoom(contact)
-                var event = ChatEvent(kind: "profile", room: room, senderName: state.nickname)
-                event.sharedProfile = ownSharedProfile
-                try enqueue(event, room: room, to: [contact.card])
-            }
-            try save()
-        } catch { state = previous; throw error }
-    }
-    func requestProfile(_ peerID: String) throws {
-        guard let contact = state.contacts.first(where: { $0.id == peerID && !$0.blocked }), !isBuiltinBot(peerID) else { return }
-        let room = try socialRoom(contact)
-        try enqueue(ChatEvent(kind: "profileRequest", room: room, senderName: state.nickname), room: room, to: [contact.card])
-        try shareProfile(to: [peerID])
-        try save()
     }
     func publishStory(text: String, image: Data?, audience: Set<String>) throws {
         guard !audience.isEmpty, audience.count <= 50 else { throw MessengerError.invalid("Выбери от 1 до 50 получателей истории") }
@@ -92,7 +64,7 @@ extension ChatStore {
         guard queuedBytes + ((image?.count ?? 0) + text.utf8.count + 180_000) * audience.count <= 40 * 1024 * 1024 else {
             throw MessengerError.invalid("Сначала дождись отправки очереди историй")
         }
-        guard social.stories.filter({ $0.author == myID && $0.expiresAt > now }).count < (hasPremium ? 30 : 5) else {
+        guard social.stories.filter({ $0.author == myID && $0.expiresAt > now }).count < 30 else {
             throw MessengerError.invalid("Достигнут лимит активных историй")
         }
         let contacts = state.contacts.filter { audience.contains($0.id) && !$0.blocked && $0.isBot != true && !isBuiltinBot($0.id) && extended.trustedIDs.contains($0.id) }
@@ -129,22 +101,19 @@ extension ChatStore {
         guard !event.room.isGroup, event.room.members.count == 2,
               Set(event.room.members.map(\.id)) == Set([myID, sender.id]), event.room.members.contains(sender),
               event.room.id == "dm:" + [myID, sender.id].sorted().joined(separator: ":"),
-              let contact = state.contacts.first(where: { $0.card == sender && !$0.blocked }),
+              state.contacts.contains(where: { $0.card == sender && !$0.blocked }),
               extended.trustedIDs.contains(sender.id) else { return true }
         try validateScopedRoom(event.room)
         var value = social
         if let profile = event.sharedProfile {
             try profile.validate()
-            if let receipt = profile.premium { try receipt.validate(owner: sender.id) }
-            guard (profile.collectibles?.count ?? 0) <= 12 else { throw MessengerError.invalid("Слишком большая коллекция") }
-            for item in profile.collectibles ?? [] { try item.validate(owner: sender.id) }
             if profile.updatedAt >= (value.profiles[sender.id]?.updatedAt ?? .distantPast) { value.profiles[sender.id] = profile }
         }
         switch event.kind {
         case "profileRequest":
-            let room = try socialRoom(contact)
-            var response = ChatEvent(kind: "profile", room: room, senderName: state.nickname)
-            response.sharedProfile = ownSharedProfile; try enqueue(response, room: room, to: [sender])
+            // Older clients can send this event, but it must not automatically
+            // disclose our name, avatar or bio in response to a remote request.
+            break
         case "story":
             guard let story = event.story else { throw MessengerError.invalid("Нет истории") }
             try story.validate(sender: sender.id)

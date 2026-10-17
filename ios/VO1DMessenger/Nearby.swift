@@ -29,17 +29,17 @@ private final class NearbyDelegate: NSObject, MCSessionDelegate, MCNearbyService
         if let localURL { try? FileManager.default.removeItem(at: localURL) }
     }
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
-        Task { @MainActor in owner?.found(peerID) }
+        Task { @MainActor in owner?.found(peerID, browser: browser) }
     }
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
-        Task { @MainActor in owner?.peers.removeAll { $0 == peerID } }
+        Task { @MainActor in owner?.lost(peerID, browser: browser) }
     }
     func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
         Task { @MainActor in owner?.status = "Поиск рядом недоступен: \(error.localizedDescription)" }
     }
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didReceiveInvitationFromPeer peerID: MCPeerID, withContext context: Data?, invitationHandler: @escaping (Bool, MCSession?) -> Void) {
         Task { @MainActor in
-            guard let owner, owner.pendingInvitation == nil, owner.store?.sessionUnlocked == true, owner.store?.locked == false else { invitationHandler(false, nil); return }
+            guard let owner, owner.isCurrent(advertiser), owner.pendingInvitation == nil, owner.store?.sessionUnlocked == true, owner.store?.locked == false else { invitationHandler(false, nil); return }
             owner.pendingInvitation = peerID
             owner.invitationHandler = invitationHandler
         }
@@ -85,7 +85,15 @@ final class NearbyTransport: ObservableObject {
         advertiser = nil; browser = nil; channel = nil; store = nil
         challenges = [:]; authenticated = [:]; frames = [:]; peers = []; enabled = false; status = "Выключено"
     }
-    fileprivate func found(_ peer: MCPeerID) { if !peers.contains(peer) && peers.count < 30 { peers.append(peer) } }
+    fileprivate func isCurrent(_ value: MCNearbyServiceAdvertiser) -> Bool { enabled && value === advertiser }
+    fileprivate func found(_ peer: MCPeerID, browser value: MCNearbyServiceBrowser) {
+        guard enabled, value === browser else { return }
+        if !peers.contains(peer) && peers.count < 30 { peers.append(peer) }
+    }
+    fileprivate func lost(_ peer: MCPeerID, browser value: MCNearbyServiceBrowser) {
+        guard enabled, value === browser else { return }
+        peers.removeAll { $0 == peer }
+    }
     func invite(_ peer: MCPeerID) {
         guard let channel, channel.connectedPeers.count < 4 else { return }
         browser?.invitePeer(peer, to: channel, withContext: nil, timeout: 20)

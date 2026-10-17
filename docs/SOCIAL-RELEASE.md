@@ -1,150 +1,118 @@
-# VO1D social / reliability update
+# VO1D NEXT · free interface and privacy update
 
-This is source work on `codex/vo1d-next`. Production deployment, billing credentials,
-Apple signing and physical two-phone checks are separate operations. Do not describe
-this branch as independently audited or universally anonymous.
+Branch: `codex/vo1d-next`. Build on a Mac with `bash scripts/open_iphone.sh`.
+The script prepares the pinned SDK and opens Xcode; choose a signing Team and an
+attached iPhone, then Run. Release signing/distribution remains the owner's step.
 
-## Reliability and UX
+## Current interface
 
-* The onboarding default is now searchable everyday mode. The previous private-delivery default disabled code/username discovery and required QR routes. Mode switching explicitly restores discovery without disabling the selected Tor route. Optional unique username enrollment is separate from display name.
-* Four-character `@name` searches go to username discovery. Bare four-character
-  values try compact ID, then username only on 400/404. Network errors do not
-  silently change the lookup type.
-* Searchable compact IDs are allocated by the relay; the app no longer invents a
-  local four-character ID. Prekeys are published before onboarding completes.
-  Missing recipient prekeys remain retryable rather than permanently stopping delivery.
-* Reconnection reads server discovery and restores a saved username when available;
-  a conflicting claim is surfaced without blocking local history. A persistent
-  `/data` volume and the same relay origin on both phones remain necessary.
-* Groups and channels can start with just the creator. Invitations remain opt-in;
-  the receiver sees a message request until acceptance. Creation triggers a queue flush.
-* Foreground wakes retain healthy call sockets. Outgoing calls request microphone
-  permission and wait for WSS readiness; pushed answers re-read the resolved peer ID.
-  Failures report offline/busy/consent details instead of silently closing the UI.
-* Sending/reactions trigger immediate synchronization. Outbox processing precedes
-  private-inbox polling, report delivery and bot work; ciphertext is still saved before send.
-* The archive filter chip is removed. Pull down to reveal the archive row; pull
-  again hides it. Context actions still move conversations in/out of the archive.
-* Settings → My Profile previews the shared card. A chat menu opens the other
-  profile. There are 32 reactions with reversible selection and animated updates;
-  unlock/chat/archive transitions are animated, with reduced-motion handling on entry.
+Premium, voucher redemption, signed collectible UI, profile previews and profile
+request controls have been removed. All accounts have 30 simultaneous stories and
+60 folders. Old entitlement JSON fields are ignored when opening the vault; retired
+server records are retained and scrubbed if their owner deletes the account.
+There is no issuer, checkout, blockchain transaction or subscription endpoint.
 
-## Profiles and stories
+Onboarding asks for a display name. A searchable username is optional in Settings;
+a display name is not a username. Everyday mode enables discovery without changing
+an already selected Tor/SOCKS route. Both onboarding and connection settings show
+explicit tradeoffs for private delivery/Tor, including disabled search, invitation
+requirements, background limitations, latency and metadata exposure.
 
-Name/bio/avatar/status are transmitted only as Signal-encrypted control events to
-trusted contacts. Profiles are not a public server directory. Opening another profile
-requests an update, and saving your profile shares an update with trusted contacts.
-Avatars are re-encoded and bounded to 160 KB. Username ownership remains in the
-server discovery API; a display name is not an administrator credential.
+Settings → Appearance offers five dark app palettes, a default chat palette,
+per-conversation overrides, optional static texture, text size and compact rows.
+Choices live in each identity's encrypted vault and are not sent to peers.
+Actions use rounded controls, press feedback and smooth layout transitions. New
+chat rows and unlock content fade in; reply/edit/selection/recording transitions
+animate. Reduce Motion disables movement. Sensitive content hides immediately on
+lock rather than waiting for an exit animation.
 
-Stories have a text/photo composer and an explicit per-story audience. Photo JPEGs
-are re-encoded without original EXIF and limited to 400 KB. Five simultaneous own
-stories are available without Premium, 30 with Premium. Both event and transport
-expiry are at most 24 hours. Received stories validate author, UUID, size, expiry,
-trusted contact and local profile scope. Deletion fans out to the saved original
-audience; bounded tombstones prevent delete-before-delivery resurrection. Stories
-are pruned on expiration and excluded from backup exports. Recipient copies,
-screenshots and host backups cannot be erased remotely.
+Story creation is in the top header, with live story circles directly beneath it.
+Story viewing opens stories only. Stories use explicit trusted-contact audiences,
+Signal encryption, at most 24-hour transport/content expiry, size/queue quotas,
+original-audience deletion and bounded tombstones. They are excluded from backups.
+Recipients may save copies; remote deletion cannot remove those copies.
 
-## Cryptography
+32 reactions use a scrollable picker, grouped emoji/count chips, reversible
+selection, and a visible on-message burst when reactions change. Effects do not
+replay simply because a historical message scrolls into view. Motion and particle
+work only occurs for a new change; there is no continuous reaction timer.
 
-Nearby-only envelopes are explicitly barred from the account relay and do not block later network deliveries.
+Archive is revealed by pulling down, with animated entry and exit. Existing solo
+group/channel creation and explicit incoming-call microphone handling remain.
 
-New live messages, including initial contact packets, require the existing official
-libsignal PQXDH/Double Ratchet. Legacy local history remains readable; unauthenticated
-migration to the older live format is rejected. Calls use signed v3 ephemeral-X25519
-handshakes with AES-256-GCM and replay checks. Direction/4096-frame epoch key derivation
-separates traffic keys. Both phones need the new client for v3 calls. This is not
-post-quantum calling or a continuously forward-secret call ratchet. Malformed audio
-frames are discarded without taking down the receive loop. No numerical security
-multiplier is claimed.
+## Security fixes in this update
 
-## Nearby without internet
+* A delayed username, contact lookup, privacy update or avatar import is fenced to
+  the identity and transport generation that initiated it. Contact-request rollback
+  no longer spans a network wait or overwrites a subsequently opened identity.
+* Privacy/trust sync snapshots the original account's list before sending and
+  aborts after a switch; it cannot send the next identity's contacts to the old API.
+* Legacy profile requests no longer cause automatic metadata replies. Editing
+  local details no longer broadcasts a profile update to every trusted contact.
+* Nearby discovery/invitation callbacks from an old browser/advertiser are fenced
+  after stop or identity switch, in addition to existing session packet fencing.
+* Foreground account synchronization waits for local access/biometric gates.
+  Separately opted-in delegated background calls retain their explicit policy.
+* The local access field masks typed characters. Lock and capture curtains stay
+  immediate, even when general UI transitions are enabled.
+* Avatar/story imports use bounded ImageIO thumbnails instead of rendering a full
+  decompressed source. Original image metadata is not forwarded in the JPEG.
+  Attachment filename anonymization uses the existing bounded extension policy.
 
-Settings → Nearby uses Apple's Multipeer Connectivity over local Wi-Fi/Bluetooth,
-with encryption required and a fresh random advertised device label. Both users
-explicitly enable it and confirm the device connection. A random challenge signed
-by the stored contact key authenticates the peer; only verified trusted contacts
-are accepted. Existing Signal sessions are required: first-key exchange remains
-online/private QR. The exact encrypted envelope is saved before transmission;
-a recipient-signed ACK removes it only after the receiving vault has committed it.
-Retries preserve ciphertext and message IDs. Nearby stops on background, lock,
-identity reset or profile switch. No routing through unknown phones is implemented.
+Official libsignal PQXDH/Double Ratchet remains the message protocol. Existing call
+v3 handshakes use signed ephemeral X25519, directional AES-256-GCM keys and replay
+checks. Calls are not post-quantum and do not have a continuously advancing call
+ratchet. This update is not an independent cryptographic audit or evidence of
+superiority over Signal or Session. A relay can still correlate account/bootstrap,
+call peers and timings; Tor does not make a compromised phone safe or eliminate
+traffic analysis. External browsers and APNs use their own platform networking.
 
-This is proximity delivery, not a global network without internet. Radio neighbors
-can observe local presence; an accepted device receives your public key. Blob
-references already uploaded to the relay need network access for downloading.
-Physical distance, radio throughput and two-phone foreground operation require QA.
+## Connectivity
 
-## Premium and collectibles
+Loss of connectivity automatically keeps the durable encrypted queue and suppresses
+repeated connection attempts. Network return wakes transient retries immediately,
+without bypassing permanent failures, scheduled times or privacy batch delays.
+It uses the selected route; Tor failure never enables direct fallback.
 
-Real entitlement code is implemented; a billing provider is **not** connected.
-Premium supplies 30 stories vs 5, 60 folders vs 20, and a signed profile badge/status.
-Core encryption/Tor/calls/reactions stay free. Collectibles are signed VO1D
-certificates shown in the profile, **not blockchain NFTs**.
+Opt-in Nearby delivery uses Multipeer Connectivity and requires verified trusted
+contacts, a fresh signed challenge, an existing Signal session and required local
+transport encryption. Signed acknowledgments remove saved ciphertext only after a
+receiver commit. Nearby-only packets cannot escape through the account relay.
+Nearby stops on lock, background and identity switch. Uploaded blob references
+still require network access. No unknown-device mesh routing is implemented.
 
-On the relay host set `VO1D_COMMERCE_SIGNING_KEY` to a secret base64 Ed25519 32-byte
-private key. Set its matching public key as `VO1D_COMMERCE_PUBLIC_KEY` when generating
-the Xcode project. Never commit the private key. The generator preserves a previously
-configured public pin. The app accepts only receipts signed by that pinned issuer
-and bound to its identity. Missing pin fails closed. Single-use voucher redemption
-is transactional, race-tested and idempotent; receipt history is account-scoped.
+Communication across 1000 km requires a real carrier/relay/network path. Queueing
+cannot create such a path. Nearby does not secretly enable radios, override iOS
+permissions, or broadcast a public account identity without local opt-in.
 
-After independently verifying a payment, an operator can issue a voucher on the host:
+## Permanent administrator
 
-```bash
-python3 scripts/issue_voucher.py --db /data/relay.sqlite3 --owner USER_ID --days 30
-python3 scripts/issue_voucher.py --db /data/relay.sqlite3 --kind collectible --label 'VOID #1' --symbol diamond.fill --owner USER_ID
-```
+Login/registration never automatically assigns a username. The first authenticated
+explicit claim of `@vo1d` owns it permanently. Concurrent claims have one winner;
+rename/account deletion cannot transfer ownership. Existing permanent ownership is
+preserved by this update, including any owner assigned by the earlier rollout.
+Owner powers remain protected by MFA. The production service was missing the
+persistent MFA-encryption key; it has now been configured in Railway environment
+variables and takes effect at the next deployment. It is not stored in the repo.
 
-No fake checkout, transaction hash or blockchain explorer proof is generated.
-A real provider/chain contract, settlement verification, refund/revocation policy,
-receipt recovery, legal/store distribution requirements and country availability
-remain work. A blockchain transaction is not proof of communication anonymity.
-Configured Tor/SOCKS routing remains the app's transport; external browser checkout
-would not inherit it and therefore is not presented as anonymous in this update.
+## Prior account reset: do not repeat
 
-## Requested production reset
+The earlier user-authorized reset completed on 2026-10-16 at 22:24 UTC:
+`accountReset=vo1d-user-request-20261016-8f5ef8e8`.
+Its private rollback backup remains on the persistent Railway volume at
+`/data/reset-backup-vo1d-user-request-20261016-8f5ef8e8`.
+The startup invocation has been removed. This update does not reset any account,
+username, message, local vault or existing administrator. The public account epoch
+and explicit enrollment marker continue to stop old clients silently enrolling
+previously reset accounts.
 
-The task explicitly requested deletion of all server accounts and first-login
-administrator assignment. Production `/health` confirmed completion at
-2026-10-16 22:24 UTC on revision `7c4b63cd60ba83103de6fb2a7263de85f42c7eaa`:
-`accountReset=vo1d-user-request-20261016-8f5ef8e8`, `adminBootstrapPending=true`.
-No production identity was created for verification. The automatic entrypoint
-invocation was then removed, so future deployments cannot rerun the reset. `server/reset_rollout.py` is a one-time startup rollout,
-not an HTTP wipe endpoint. It only runs for the exact repository owner/name, branch
-`codex/vo1d-next`, production domain `f-production-bdfe.up.railway.app`, persistent
-Railway volume mounted at `/data`, and existing `/data/relay.sqlite3`. Missing or
-mismatched platform metadata skips the reset. A busy checkpoint aborts without
-replacing the database. `VO1D_DISABLE_REQUESTED_RESET=1` disables the rollout.
+## Validation
 
-The helper verifies a private SQLite backup, moves encrypted blobs into that
-backup on the same volume, replaces the database, and records completion atomically
-in the replacement DB. The persistent backup is at
-`/data/reset-backup-vo1d-user-request-20261016-8f5ef8e8`. A recorded rollout is never
-repeated on ordinary redeploy. Remove its entrypoint invocation after confirming
-completion; disable it before restoring a pre-reset backup.
-
-Old account tokens, usernames, moderator ownership and call authorities are erased.
-Old clients cannot silently re-register deleted identities: an unknown account after
-reset requires the current public epoch and an explicit enrollment marker from the
-new client. The app shows a re-registration screen while preserving encrypted local
-history. The first subsequent **signature-authenticated session**, not a public card
-registration, atomically receives permanent `@vo1d` ownership. Set up MFA afterward.
-No synthetic production account is created by the rollout or its verification.
-
-Public `/health` reports the deployed revision, completed reset ID and whether first
-administrator enrollment is pending. These values permit verification without
-publishing user IDs or accessing messages. They do not reveal the backup contents.
-
-For a separately operated offline reset, stop the relay and run:
-
-```bash
-python3 scripts/reset_accounts.py --db /data/relay.sqlite3
-python3 scripts/reset_accounts.py --db /data/relay.sqlite3 --blob-dir /data/blobs --backup /data/reset-backup-UNIQUE --server-stopped --confirm DELETE-ALL-ACCOUNTS
-```
-
-The first command is a read-only preview. Requires Python 3.12. Device vaults and
-host backups are not remotely erased; local history can be deleted separately.
-Retain the private backup for rollback and dispose of it separately when appropriate.
-Railway must keep persistent `/data`; building Xcode does not itself reset a server.
+Server suites cover discovery/visibility, explicit first claim and races,
+permanent-owner recovery, retired endpoints and legacy account-deletion cleanup.
+Native regressions exercise delayed network responses across session switches,
+trust-list isolation, silent profile-request rejection, reconnect queue policy,
+legacy vault/theme decoding and thumbnail bounds. Both macOS CI runners also build
+Debug/Release device code, run XCTest, check app bundles and run Swift/Node Signal
+interop. Physical two-phone call quality, offline radio range, haptics and visual
+motion still require device QA; simulator builds cannot establish these results.

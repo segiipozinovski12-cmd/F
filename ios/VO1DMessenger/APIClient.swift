@@ -3,6 +3,10 @@ import CryptoKit
 
 @MainActor
 final class APIClient {
+    #if DEBUG
+    // XCTest substitutes a local protocol; Release always uses the validated route.
+    static var testingProtocolClasses: [AnyClass]?
+    #endif
     private struct Failure: Decodable { var error: String }
     struct OK: Decodable { var ok: Bool }
     private struct CodeResponse: Decodable { var code: String }
@@ -43,6 +47,9 @@ final class APIClient {
         self.allowEnrollment = allowEnrollment
         self.botExecutor = botExecutor; self.botInstance = botInstance
         let config = try TransportConfiguration.make(privacy)
+        #if DEBUG
+        if let protocols = Self.testingProtocolClasses { config.protocolClasses = protocols }
+        #endif
         session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
     }
 

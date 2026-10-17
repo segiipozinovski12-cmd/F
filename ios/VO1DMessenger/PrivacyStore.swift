@@ -22,14 +22,17 @@ extension ChatStore {
 
     func applyPrivacy() async throws {
         guard let api else { throw MessengerError.invalid("Нет соединения") }
+        let fence = sessionFence
+        let allowed=state.contacts.filter { contact in
+            !contact.blocked && extended.trustedIDs.contains(contact.id) && (!preferences.verifiedOnlyCalls || contact.verified)
+        }.map(\.id)
         struct Body: Encodable { var discoverable: Bool; var inactivityDays: Int; var trustedCalls: Bool }
         let _: APIClient.OK = try await api.request("v1/privacy",method:"POST",
             body: Wire.encoder.encode(Body(discoverable:preferences.discoverable,
                 inactivityDays:preferences.inactivityDays,trustedCalls:preferences.requireRequests || preferences.verifiedOnlyCalls)))
-        let allowed=state.contacts.filter { contact in
-            !contact.blocked && extended.trustedIDs.contains(contact.id) && (!preferences.verifiedOnlyCalls || contact.verified)
-        }.map(\.id)
+        try requireCurrentSession(fence)
         let _: APIClient.OK = try await api.request("v1/trust/sync",method:"POST",body:Wire.encoder.encode(["ids":allowed]))
+        try requireCurrentSession(fence)
         try await BackgroundCalls.prepare(self, api: api)
     }
 
@@ -44,14 +47,18 @@ extension ChatStore {
     func rotatePublicCode() async throws {
         struct Response: Decodable { var code: String }
         guard let api else { throw MessengerError.invalid("Нет соединения") }
+        let fence = sessionFence
         let result: Response = try await api.request("v1/code/rotate",method:"POST",body:Data("{}".utf8))
+        try requireCurrentSession(fence)
         state.publicCode = result.code
         try save()
     }
 
     func releaseUsername() async throws {
         guard let api else { throw MessengerError.invalid("Нет соединения") }
+        let fence = sessionFence
         let _: APIClient.OK = try await api.request("v1/username",method:"DELETE")
+        try requireCurrentSession(fence)
         state.username = nil
         try save()
     }
@@ -75,6 +82,7 @@ extension ChatStore {
     }
 
     func acceptRequest(_ roomID: String) async throws {
+        let fence = sessionFence
         let events = extended.pendingEvents.filter { $0.room.id == roomID }
         guard !events.isEmpty else { return }
         acceptedPendingIDs.insert(roomID)
@@ -90,13 +98,17 @@ extension ChatStore {
             }
             changeExtended { $0.pendingEvents.removeAll { $0.room.id == roomID } }
             try save()
-            for id in Set(events.map { $0.sender.id }) { try? await trustOnServer(id,trusted:true) }
-            try shareProfile(to: Set(events.map { $0.sender.id }))
         } catch {
             state = original
             try? save()
             throw error
         }
+        // Never roll back another identity's vault after an asynchronous response.
+        for id in Set(events.map { $0.sender.id }) {
+            try requireCurrentSession(fence)
+            try? await trustOnServer(id,trusted:true)
+        }
+        try requireCurrentSession(fence)
     }
 
     func declineRequest(_ roomID: String, block: Bool) async {
@@ -142,7 +154,7 @@ extension ChatStore {
 
     func createFolder(_ name: String) {
         let clean = String(name.trimmingCharacters(in:.whitespacesAndNewlines).prefix(32))
-        guard !clean.isEmpty, extended.folders.count < (hasPremium ? 60 : 20) else { return }
+        guard !clean.isEmpty, extended.folders.count < 60 else { return }
         changeExtended { $0.folders.append(ChatFolder(name:clean)) }
     }
 

@@ -29,10 +29,11 @@ enum Theme {
 }
 
 struct VoidBackground: View {
+    @Environment(\.voidPalette) private var palette
     var body: some View {
         ZStack {
-            Color.black
-            LinearGradient(colors:[Color(white:0.035),.black,.black],startPoint:.topLeading,endPoint:.bottomTrailing)
+            palette.background
+            LinearGradient(colors:[palette.panel.opacity(0.7), palette.background, palette.background],startPoint:.topLeading,endPoint:.bottomTrailing)
         }
         .ignoresSafeArea()
     }
@@ -145,6 +146,8 @@ struct Avatar: View {
 }
 
 struct PrimaryButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.voidPalette) private var palette
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 16, weight: .bold))
@@ -155,13 +158,14 @@ struct PrimaryButton: ButtonStyle {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 18)
             .padding(.vertical, 17)
-            .background(.white.opacity(configuration.isPressed ? 0.72 : 1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.975 : 1)
-            .animation(.spring(response: 0.26, dampingFraction: 0.82), value: configuration.isPressed)
+            .background(palette.accent.opacity(configuration.isPressed ? 0.78 : 1), in: Capsule())
+            .scaleEffect(reduceMotion ? 1 : (configuration.isPressed ? 0.975 : 1))
+            .animation(reduceMotion ? nil : Motion.press, value: configuration.isPressed)
     }
 }
 
 struct GhostButton: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 15, weight: .semibold))
@@ -172,17 +176,20 @@ struct GhostButton: ButtonStyle {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 16)
             .padding(.vertical, 15)
-            .background(.white.opacity(configuration.isPressed ? 0.035 : 0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.1)))
+            .background(.white.opacity(configuration.isPressed ? 0.035 : 0.06), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.1)))
+            .scaleEffect(reduceMotion ? 1 : (configuration.isPressed ? 0.975 : 1))
+            .animation(reduceMotion ? nil : Motion.press, value: configuration.isPressed)
     }
 }
 
 struct Panel: ViewModifier {
+    @Environment(\.voidPalette) private var palette
     func body(content: Content) -> some View {
         content
             .padding(18)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .background(palette.panel, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .stroke(
@@ -245,9 +252,9 @@ struct SplashView: View {
 
 struct WelcomeView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var name = ""
     @State private var privacyProfile = PrivacyProfile.everyday
-    @State private var username = ""
     @State private var relay = ""
     @State private var appeared = false
 
@@ -304,6 +311,7 @@ struct WelcomeView: View {
                     VStack(alignment:.leading,spacing:12) {
                         Picker("Режим защиты", selection:$privacyProfile) { ForEach(PrivacyProfile.allCases) { Text($0.title).tag($0) } }.tint(.white)
                         Text(privacyProfile.detail).font(.caption).foregroundStyle(Theme.secondary)
+                        PrivacyTradeoffsView(profile: privacyProfile)
                         DisclosureGroup("Расширенные настройки подключения") {
                             TextField("HTTPS или v3 onion адрес",text:$relay)
                                 .textInputAutocapitalization(.never).autocorrectionDisabled().voidField()
@@ -323,11 +331,6 @@ struct WelcomeView: View {
                                 guard !clean.isEmpty, !store.busy else { return }
                                 join(name:clean)
                             }
-                        TextField("@username для поиска · необязательно", text: $username)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled().voidField()
-                            .onChange(of: username) { _, value in username = String(value.lowercased().filter { "abcdefghijklmnopqrstuvwxyz0123456789_".contains($0) }.prefix(20)) }
-                        Text("Ник — отображаемое имя. Поиск работает по уникальному @username или короткому VO1D ID.")
-                            .font(.caption).foregroundStyle(Theme.secondary)
 
                         Button {
                             let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -379,10 +382,11 @@ struct WelcomeView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .onAppear {
-            withAnimation(.spring(response: 0.72, dampingFraction: 0.78)) {
+            withAnimation(reduceMotion ? nil : .spring(response: 0.72, dampingFraction: 0.88)) {
                 appeared = true
             }
         }
+        .animation(reduceMotion ? nil : Motion.layout, value: privacyProfile)
     }
 
     private func feature(_ icon: String, _ title: String) -> some View {
@@ -403,7 +407,7 @@ struct WelcomeView: View {
             do {
                 try store.selectPrivacyProfile(privacyProfile)
                 let selected = relay.trimmingCharacters(in:.whitespacesAndNewlines)
-                await store.configure(name:name,server:selected.isEmpty ? AppConfig.productionRelay : selected, username: username)
+                await store.configure(name:name,server:selected.isEmpty ? AppConfig.productionRelay : selected )
             } catch { store.error = error.localizedDescription }
         }
     }

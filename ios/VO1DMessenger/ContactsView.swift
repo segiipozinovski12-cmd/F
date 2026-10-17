@@ -52,7 +52,7 @@ struct ContactsView: View {
                         }.pickerStyle(.segmented)
                         NavigationLink { BotFatherView() } label: {
                             Label("@vo1d_bot_father", systemImage: "terminal").frame(maxWidth: .infinity, alignment: .leading).panel()
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink {
                             MyIdentityView()
                         } label: {
@@ -69,7 +69,7 @@ struct ContactsView: View {
                             }
                             .panel()
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MotionButtonStyle())
 
                         if contacts.isEmpty {
                             VStack(spacing: 17) {
@@ -126,12 +126,13 @@ struct ContactsView: View {
                                         }
                                         .panel()
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MotionButtonStyle())
                                 }
                             }
                         }
                     }
                     .padding(22)
+                    .softAppear()
                 }
             }
             .navigationBarHidden(true)

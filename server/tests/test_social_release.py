@@ -9,10 +9,8 @@ import unittest
 from unittest.mock import patch
 import test_relay
 from app import Relay
-import commerce
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from reset_accounts import reset
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
 class SocialReleaseTests(unittest.TestCase):
@@ -33,36 +31,23 @@ class SocialReleaseTests(unittest.TestCase):
         self.assertEqual(self.request('/v1/username/test', token=self.b)[0], 404)
         self.assertEqual(self.request('/v1/code/'+code['code'], token=self.b)[0], 404)
 
-    def test_voucher_is_signed_identity_bound_and_idempotent(self):
-        with patch.dict(os.environ, {'VO1D_COMMERCE_SIGNING_KEY': base64.b64encode(os.urandom(32)).decode()}):
-            with self.relay.db() as db:
-                code = commerce.issue(db, 'premium', owner=self.alice_card['id'])
-            self.assertEqual(self.request('/v2/commerce/redeem', 'POST', {'code': code}, self.b)[0], 404)
-            status, receipt = self.request('/v2/commerce/redeem', 'POST', {'code': code}, self.a)
-            self.assertEqual(status, 200)
-            Ed25519PublicKey.from_public_bytes(base64.b64decode(commerce.public_key())).verify(base64.b64decode(receipt['signature']), commerce.signed_bytes(receipt))
-            self.assertEqual(self.request('/v2/commerce/redeem', 'POST', {'code': code}, self.a)[1], receipt)
-            self.assertEqual(len(self.request('/v2/commerce', token=self.a)[1]['receipts']), 1)
+    def test_retired_commerce_endpoints_are_unavailable(self):
+        self.assertEqual(self.request('/v2/commerce', token=self.a)[0], 404)
+        self.assertEqual(self.request('/v2/commerce/redeem', 'POST', {'code': 'retired'}, self.a)[0], 404)
 
-    def test_unbound_voucher_concurrent_redemption_has_one_winner(self):
-        with patch.dict(os.environ, {'VO1D_COMMERCE_SIGNING_KEY': base64.b64encode(os.urandom(32)).decode()}):
-            with self.relay.db() as db: code = commerce.issue(db, 'collectible', label='VOID #1')
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                results = list(pool.map(lambda token: self.request('/v2/commerce/redeem', 'POST', {'code': code}, token), [self.a, self.b]))
-            self.assertEqual(sorted(r[0] for r in results), [200, 409])
+    def test_deletion_scrubs_legacy_entitlements_without_reactivating_feature(self):
+        with self.relay.db() as db:
+            db.execute('CREATE TABLE commerce_receipts (id TEXT, owner TEXT, body TEXT)')
+            db.execute('CREATE TABLE commerce_vouchers (owner TEXT, used_by TEXT, receipt TEXT)')
+            db.execute('INSERT INTO commerce_receipts VALUES (?,?,?)', ('old', self.alice_card['id'], '{}'))
+            db.execute('INSERT INTO commerce_vouchers VALUES (?,?,?)', (self.alice_card['id'], self.alice_card['id'], '{}'))
+        self.assertEqual(self.request('/v1/account', 'DELETE', token=self.a)[0], 200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM commerce_receipts').fetchone()[0], 0)
+            row = db.execute('SELECT * FROM commerce_vouchers').fetchone()
+            self.assertIsNone(row['owner']); self.assertEqual(row['used_by'], 'deleted'); self.assertIsNone(row['receipt'])
 
-    def test_account_deletion_scrubs_commerce_but_keeps_spent_voucher_unusable(self):
-        with patch.dict(os.environ, {'VO1D_COMMERCE_SIGNING_KEY': base64.b64encode(os.urandom(32)).decode()}):
-            with self.relay.db() as db: code = commerce.issue(db, 'premium')
-            self.assertEqual(self.request('/v2/commerce/redeem', 'POST', {'code': code}, self.a)[0], 200)
-            self.assertEqual(self.request('/v1/account', 'DELETE', token=self.a)[0], 200)
-            with self.relay.db() as db:
-                row = db.execute('SELECT * FROM commerce_vouchers').fetchone()
-                self.assertIsNone(row['owner']); self.assertEqual(row['used_by'], 'deleted'); self.assertIsNone(row['receipt'])
-                self.assertEqual(db.execute('SELECT count(*) FROM commerce_receipts').fetchone()[0], 0)
-            self.assertEqual(self.request('/v2/commerce/redeem', 'POST', {'code': code}, self.b)[0], 409)
-
-    def test_offline_reset_preserves_backup_and_first_verified_login_wins(self):
+    def test_offline_reset_preserves_backup_and_only_explicit_username_claim_wins(self):
         old_path = Path(self.relay.path)
         backup = old_path.parent / 'backup'
         reset(old_path, backup, rollout_id="test-reset")
@@ -83,10 +68,14 @@ class SocialReleaseTests(unittest.TestCase):
         # Registering a public card still cannot claim administrator authority.
         with self.relay.db() as db: self.assertEqual(db.execute('SELECT count(*) FROM permanent_admin').fetchone()[0], 0)
         token = self.login(self.bob, self.bob_card)
-        self.assertEqual(self.request('/v1/discovery', token=token)[1]['username'], 'vo1d')
-        self.assertFalse(self.request('/health')[1]['adminBootstrapPending'])
+        self.assertIsNone(self.request('/v1/discovery', token=token)[1]['username'])
+        self.assertTrue(self.request('/health')[1]['adminBootstrapPending'])
         token2 = self.login(self.alice, self.alice_card)
-        self.assertEqual(self.request('/v1/username', 'POST', {'username': 'vo1d'}, token2)[0], 409)
+        self.assertEqual(self.request('/v1/username', 'POST', {'username': 'vo1d'}, token2)[0], 200)
+        self.assertFalse(self.request('/health')[1]['adminBootstrapPending'])
+        self.assertEqual(self.request('/v1/username', 'POST', {'username': 'vo1d'}, token)[0], 409)
+        self.relay = Relay(old_path)
+        self.assertEqual(self.request('/v1/username', 'POST', {'username': 'other'}, token2)[0], 409)
 
     def test_reset_rollout_refuses_other_services_and_missing_persistent_volume(self):
         import reset_rollout

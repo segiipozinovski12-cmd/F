@@ -12,3 +12,15 @@ enum SmartQueue {
         }.prefix(max(0, limit)))
     }
 }
+
+extension ChatStore {
+    func resumeNetworkQueue(now: Date = Date()) {
+        // An actual connectivity transition can wake transient retries immediately.
+        // Permanent failures, scheduled sends and privacy batching remain fenced.
+        for id in Array(deliveryIssues.keys) {
+            guard var issue = deliveryIssues[id], issue.nextAttempt != .distantFuture else { continue }
+            issue.nextAttempt = now; deliveryIssues[id] = issue
+        }
+        persist()
+    }
+}
