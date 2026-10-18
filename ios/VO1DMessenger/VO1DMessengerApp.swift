@@ -211,6 +211,9 @@ struct RootView: View {
             Text(store.error ?? "")
         }
         .task(id: canRunForegroundSession) {
+            #if DEBUG
+            guard !Motion.testingControls else { return }
+            #endif
             guard scenePhase == .active else { return }
             await store.reloadProtectedData()
             guard !Task.isCancelled, canRunForegroundSession else { return }
