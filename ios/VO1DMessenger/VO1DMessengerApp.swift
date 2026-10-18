@@ -18,6 +18,7 @@ struct VO1DMessengerApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .modifier(CallControlTestEnvironment())
                 .environmentObject(store)
                 .environmentObject(calls)
                 .environment(\.voidPalette, store.appearance.appTheme.palette)
@@ -50,6 +51,18 @@ struct VO1DMessengerApp: App {
                     }
                 }
         }
+    }
+}
+
+private struct CallControlTestEnvironment: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--vo1d-call-controls-test") {
+            content.environment(\.accessibilityReduceMotion, true)
+        } else { content }
+        #else
+        content
+        #endif
     }
 }
 
@@ -115,7 +128,7 @@ struct RootView: View {
                     VStack(spacing: 0) {
                         CallMiniBanner(session: call)
                             .environmentObject(calls)
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 0).allowsHitTesting(false)
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(20)
@@ -129,7 +142,7 @@ struct RootView: View {
                         Text("Подключаем звонок…").font(.subheadline.weight(.semibold))
                     }.padding(18).background(.ultraThinMaterial, in: Capsule())
                     Spacer()
-                }.padding(.top, 12).transition(.move(edge: .top).combined(with: .opacity)).zIndex(15)
+                }.padding(.top, 12).allowsHitTesting(false).transition(.move(edge: .top).combined(with: .opacity)).zIndex(15)
             }
 
             if scenePhase == .background || (captured && store.preferences.protectRecording) {
@@ -181,8 +194,14 @@ struct RootView: View {
             } else { store.connection = "Нет сети · отправим автоматически" }
         }
         .onChange(of: calls.lastFailure) { _, value in if let value { store.error = value } }
+        .onChange(of: calls.session?.id) { _, id in
+            if id != nil { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+        }
         .onChange(of: store.locked) { _, locked in if locked { NearbyTransport.shared.stop() } }
         .task {
+            #if DEBUG
+            calls.installControlTestCall()
+            #endif
             try? await Task.sleep(for: .milliseconds(650))
             splash = false
         }

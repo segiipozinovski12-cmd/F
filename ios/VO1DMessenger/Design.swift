@@ -36,6 +36,7 @@ struct VoidBackground: View {
             LinearGradient(colors:[palette.panel.opacity(0.7), palette.background, palette.background],startPoint:.topLeading,endPoint:.bottomTrailing)
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 

@@ -23,113 +23,76 @@ struct VoiceCallSession: Identifiable, Equatable {
     var startedAt: Date?
 }
 
-private final class CallAudioEngine {
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
-    private let playbackFormat = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32,
-        sampleRate: 16_000,
-        channels: 1,
-        interleaved: false
-    )!
-
-    private var running = false
-    var isRunning: Bool { running && engine.isRunning }
+@MainActor
+final class CallAudioEngine {
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
+    private var configurationObserver: NSObjectProtocol?
     private var tapInstalled = false
-    private var captureConverter: AVAudioConverter?
-    private let captureFormat = AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:16_000,channels:1,interleaved:true)!
-    var muted = false
+    var configurationChanged: (() -> Void)?
+    var isRunning: Bool { engine?.isRunning == true }
     var quietSpeechBoost = false
-
-    init() {
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
-    }
 
     func prepareSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(
-            .playAndRecord,
-            mode: .voiceChat,
-            options: [.allowBluetooth]
-        )
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
+        try? session.setPreferredSampleRate(48_000)
+        try? session.setPreferredIOBufferDuration(0.02)
     }
 
     func start(onFrame: @escaping (Data) -> Void) throws {
         guard !isRunning else { return }
-        if running || tapInstalled { stop() }
-
-        let input = engine.inputNode
-        // The tap consumes the node's output format. The hardware-side input
-        // format may differ after Bluetooth or voice-chat route negotiation.
-        let format = input.outputFormat(forBus: 0)
-        guard format.channelCount > 0, format.sampleRate > 0 else {
-            throw MessengerError.invalid("Микрофон недоступен")
-        }
-
-        captureConverter = AVAudioConverter(from:format,to:captureFormat)
-        guard captureConverter != nil else { throw MessengerError.invalid("Формат микрофона не поддерживается") }
-        if !tapInstalled {
-            input.installTap(onBus: 0, bufferSize: 1920, format: format) { [weak self] buffer, _ in
-                guard let self, !self.muted else { return }
-                guard let data = self.pcm16Mono16k(buffer: buffer, format: format), !data.isEmpty else { return }
-                onFrame(data)
+        stop()
+        // Build the graph only after CallKit activates the audio session. An
+        // engine created at app launch can retain the pre-call hardware format.
+        let engine = AVAudioEngine(), player = AVAudioPlayerNode()
+        self.engine = engine; self.player = player
+        do {
+            let input = engine.inputNode
+            try input.setVoiceProcessingEnabled(true)
+            input.isVoiceProcessingAGCEnabled = true
+            let converter = try CallPCMConverter(source: input.outputFormat(forBus: 0))
+            guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: CallPCMConverter.rate,
+                                            channels: 1, interleaved: false) else {
+                throw MessengerError.invalid("Не удалось подготовить динамик")
+            }
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: format)
+            input.installTap(onBus: 0, bufferSize: 960, format: input.outputFormat(forBus: 0)) { buffer, _ in
+                if let frame = converter.convert(buffer), !frame.isEmpty { onFrame(frame) }
             }
             tapInstalled = true
-        }
-
-        try engine.start()
-        player.play()
-        running = true
+            configurationObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+            ) { [weak self, weak engine] _ in
+                Task { @MainActor in
+                    guard let self, let engine, self.engine === engine, !engine.isRunning else { return }
+                    self.configurationChanged?()
+                }
+            }
+            engine.prepare()
+            try engine.start()
+            player.play()
+        } catch { stop(); throw error }
     }
 
     func stop() {
-        if tapInstalled {
-            engine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
+        if let engine {
+            if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
+            player?.stop(); engine.stop()
         }
-        player.stop()
-        engine.stop()
-        running = false
-        captureConverter = nil
-        muted = false
+        tapInstalled = false
+        player = nil; engine = nil
     }
 
     func play(_ data: Data) {
-        guard running, data.count >= 2 else { return }
-        let frameCount = data.count / 2
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: playbackFormat,
-            frameCapacity: AVAudioFrameCount(frameCount)
-        ), let channel = buffer.floatChannelData?[0] else { return }
-
-        let bytes = [UInt8](data)
-        for index in 0..<frameCount {
-            let lo = UInt16(bytes[index * 2])
-            let hi = UInt16(bytes[index * 2 + 1]) << 8
-            let sample = Int16(bitPattern: lo | hi)
-            let normalized = Float(sample) / 32768
-            channel[index] = max(-1, min(1, normalized * (quietSpeechBoost ? 1.4 : 1)))
-        }
-        buffer.frameLength = AVAudioFrameCount(frameCount)
+        guard isRunning, let player,
+              let buffer = CallPCMConverter.playback(data, gain: quietSpeechBoost ? 1.4 : 1) else { return }
         player.scheduleBuffer(buffer, completionHandler: nil)
         if !player.isPlaying { player.play() }
     }
-
-    private func pcm16Mono16k(buffer: AVAudioPCMBuffer, format: AVAudioFormat) -> Data? {
-        guard let converter = captureConverter, buffer.frameLength > 0 else { return nil }
-        let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 16_000 / format.sampleRate) + 32)
-        guard let output = AVAudioPCMBuffer(pcmFormat:captureFormat,frameCapacity:capacity) else { return nil }
-        var supplied = false, conversionError: NSError?
-        let status = converter.convert(to:output,error:&conversionError) { _, inputStatus in
-            if supplied { inputStatus.pointee = .noDataNow; return nil }
-            supplied = true; inputStatus.pointee = .haveData; return buffer
-        }
-        guard status != .error, conversionError == nil, output.frameLength > 0,
-              let bytes = output.int16ChannelData?[0] else { return nil }
-        return Data(bytes:bytes,count:Int(output.frameLength)*2)
-    }
-
 }
 
 enum CallAudioOutput: String, CaseIterable, Identifiable {
@@ -198,6 +161,8 @@ final class CallManager: ObservableObject {
     @Published private(set) var transport = "OFFLINE"
     @Published private(set) var lastFailure: String?
     @Published private(set) var preparingCall = false
+    @Published private(set) var answeringCall = false
+    @Published private(set) var audioStatus = "ПОДКЛЮЧАЕМ ЗВУК…"
 
     private let provider: CXProvider
     private let bridge: CallKitBridge
@@ -223,10 +188,35 @@ final class CallManager: ObservableObject {
     private var heartbeatTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var mediaStartTask: Task<Void, Never>?
+    private var mediaRecoveryTask: Task<Void, Never>?
+    private var mediaHealthTask: Task<Void, Never>?
+    private var lastCaptureAt: Date?
+    private var mediaStartedAt: Date?
+    private var captureRecoveries = 0
     private var mediaGeneration = UUID()
     private var configurationID = UUID()
     private var connectionID = UUID()
     private var routeObserver: NSObjectProtocol?
+    private var hardwareRoute = ""
+    #if DEBUG
+    private var testingControls = false
+    func installControlTestCall() {
+        guard ProcessInfo.processInfo.arguments.contains("--vo1d-call-controls-test") else { return }
+        testingControls = true
+        session = VoiceCallSession(id: UUID(), callID: UUID().uuidString, peerID: "ui-test",
+            peerName: "Проверка звонка", incoming: false, createdAt: Date(), phase: .active, startedAt: Date())
+        audioStatus = "ПРОВЕРКА УПРАВЛЕНИЯ"
+        isCallScreenExpanded = true
+    }
+    #endif
+
+    private var systemControlsEnabled: Bool {
+        #if DEBUG
+        return !testingControls
+        #else
+        return true
+        #endif
+    }
 
     private init() {
         let configuration = CXProviderConfiguration(localizedName: "VO1D")
@@ -241,6 +231,7 @@ final class CallManager: ObservableObject {
 
         bridge.owner = self
         provider.setDelegate(bridge, queue: nil)
+        audio.configurationChanged = { [weak self] in self?.restartMediaForRouteChange() }
         refreshOutputAvailability()
         routeObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
@@ -269,17 +260,36 @@ final class CallManager: ObservableObject {
             speaker = false
         }
         guard reason == .newDeviceAvailable || reason == .oldDeviceUnavailable ||
-              reason == .routeConfigurationChange else { return }
+              reason == .routeConfigurationChange || reason == .override || reason == .categoryChange else { return }
+        let route = currentHardwareRoute
+        guard route != hardwareRoute || !audio.isRunning else { return }
+        hardwareRoute = route
         restartMediaForRouteChange()
     }
 
+    private var currentHardwareRoute: String {
+        let system = AVAudioSession.sharedInstance()
+        return (system.currentRoute.inputs + system.currentRoute.outputs).map { $0.uid + $0.portType.rawValue }.joined(separator: "|")
+            + "|\(system.sampleRate)|\(system.inputNumberOfChannels)|\(system.outputNumberOfChannels)"
+    }
+
     private func restartMediaForRouteChange() {
-        guard audio.isRunning else { return }
+        // A configuration notification normally arrives AFTER iOS stopped the
+        // engine. Requiring isRunning here was precisely the silent-call bug.
+        guard session?.phase == .active, audioSessionActive else { return }
         mediaGeneration = UUID()
         mediaStartTask?.cancel()
         mediaStartTask = nil
         audio.stop()
-        activateMediaIfReady()
+        audioStatus = "ВОССТАНАВЛИВАЕМ ЗВУК…"
+        mediaRecoveryTask?.cancel()
+        let callID = session?.callID
+        mediaRecoveryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
+            guard let self, self.session?.callID == callID else { return }
+            self.mediaRecoveryTask = nil
+            self.activateMediaIfReady()
+        }
     }
 
     private func applySelectedAudioOutput() throws {
@@ -425,21 +435,44 @@ final class CallManager: ObservableObject {
     }
 
     func answerFromApp() {
-        guard let session, session.incoming else { return }
+        guard let session, session.incoming, session.phase == .ringing, !answeringCall else { return }
+        answeringCall = true
         isCallScreenExpanded = true
-        controller.request(CXTransaction(action: CXAnswerCallAction(call: session.id))) { _ in }
+        controller.request(CXTransaction(action: CXAnswerCallAction(call: session.id))) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor in
+                guard let self, self.session?.id == session.id else { return }
+                self.answeringCall = false
+                self.lastFailure = "Не удалось принять звонок: \(error.localizedDescription)"
+            }
+        }
     }
 
     func endFromApp() {
         guard let session else { return }
-        controller.request(CXTransaction(action: CXEndCallAction(call: session.id))) { _ in }
+        if systemControlsEnabled { controller.request(CXTransaction(action: CXEndCallAction(call: session.id))) { [weak self] error in
+            guard error != nil else { return }
+            Task { @MainActor in self?.provider.reportCall(with: session.id, endedAt: Date(), reason: .remoteEnded) }
+        } }
+        // Local hangup and microphone release never wait for a CallKit callback.
+        sendEndSignal(session)
+        finishCurrent(status: localEndStatus(session))
     }
 
     func toggleMute() {
         guard let session else { return }
+        let desired = !muted
+        muted = desired
+        guard systemControlsEnabled else { return }
         controller.request(
-            CXTransaction(action: CXSetMutedCallAction(call: session.id, muted: !muted))
-        ) { _ in }
+            CXTransaction(action: CXSetMutedCallAction(call: session.id, muted: desired))
+        ) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor in
+                guard self?.session?.id == session.id else { return }
+                self?.lastFailure = "Микрофон переключён в VO1D; iOS не обновила кнопку: \(error.localizedDescription)"
+            }
+        }
     }
 
     func toggleSpeaker() {
@@ -455,6 +488,7 @@ final class CallManager: ObservableObject {
         let previous = audioOutput
         audioOutput = output
         do {
+            if audioSessionActive { audio.stop() }
             if audioSessionActive { try applySelectedAudioOutput() }
             speaker = output == .speaker
             audio.quietSpeechBoost = quietSpeechBoost && speaker
@@ -462,6 +496,7 @@ final class CallManager: ObservableObject {
         } catch {
             audioOutput = previous
             speaker = previous == .speaker
+            if audioSessionActive { try? applySelectedAudioOutput(); restartMediaForRouteChange() }
             lastFailure = "Не удалось переключить звук: \(error.localizedDescription)"
         }
     }
@@ -472,6 +507,7 @@ final class CallManager: ObservableObject {
     }
 
     func setCallScreenExpanded(_ expanded: Bool) {
+        if expanded { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
         isCallScreenExpanded = expanded
     }
 
@@ -504,6 +540,7 @@ final class CallManager: ObservableObject {
             return
         }
 
+        answeringCall = false
         current.phase = .connecting
         session = current
         action.fulfill()
@@ -556,8 +593,8 @@ final class CallManager: ObservableObject {
     }
 
     fileprivate func performMute(_ action: CXSetMutedCallAction) {
+        guard session?.id == action.callUUID else { action.fail(); return }
         muted = action.isMuted
-        audio.muted = action.isMuted
         action.fulfill()
     }
 
@@ -581,7 +618,9 @@ final class CallManager: ObservableObject {
         audioSessionActive = false
         mediaGeneration = UUID()
         mediaStartTask?.cancel(); mediaStartTask = nil
+        mediaRecoveryTask?.cancel(); mediaRecoveryTask = nil
         audio.stop()
+        audioStatus = "ЗВУК ПРИОСТАНОВЛЕН iOS"
     }
 
     private func authorizationDigest(_ request: URLRequest) -> Data {
@@ -877,10 +916,11 @@ final class CallManager: ObservableObject {
     }
 
     private func activateMediaIfReady() {
+        if session?.phase == .active { monitorMediaHealth() }
         guard audioSessionActive,
               let current = session,
               current.phase == .active,
-              callKey != nil, mediaStartTask == nil, !audio.isRunning else { return }
+              callKey != nil, mediaStartTask == nil, mediaRecoveryTask == nil, !audio.isRunning else { return }
         let expected = current.callID
         let captureGeneration = UUID(); mediaGeneration = captureGeneration
         mediaStartTask = Task { [weak self] in
@@ -891,15 +931,20 @@ final class CallManager: ObservableObject {
             for attempt in 0..<3 {
                 guard !Task.isCancelled, mediaGeneration == captureGeneration, session?.callID == expected, session?.phase == .active, audioSessionActive else { return }
                 do {
+                    audioStatus = "ПОДКЛЮЧАЕМ МИКРОФОН…"
                     try audio.start { [weak self] frame in
                         Task { @MainActor in
                             guard let self, self.mediaGeneration == captureGeneration, self.session?.callID == expected, self.audioSessionActive else { return }
+                            self.lastCaptureAt = Date()
+                            if self.audioStatus != "ЗАЩИЩЁННЫЙ АУДИОКАНАЛ" { self.audioStatus = "ЗАЩИЩЁННЫЙ АУДИОКАНАЛ" }
                             await self.sendAudio(frame)
                         }
                     }
-                    audio.muted = muted
+                    mediaStartedAt = Date(); lastCaptureAt = nil
+                    hardwareRoute = currentHardwareRoute
                     audio.quietSpeechBoost = quietSpeechBoost && speaker
-                    try? applySelectedAudioOutput()
+                    // Routing was applied before startup. Changing it here can
+                    // invalidate the graph we have just started.
                     return
                 } catch {
                     audio.stop()
@@ -909,6 +954,37 @@ final class CallManager: ObservableObject {
                         return
                     }
                     do { try await Task.sleep(for: .milliseconds(250 * (attempt + 1))) } catch { return }
+                }
+            }
+        }
+    }
+
+    private func monitorMediaHealth() {
+        guard mediaHealthTask == nil, let current = session else { return }
+        let expected = current.callID
+        mediaHealthTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.session?.callID == expected { self.mediaHealthTask = nil } }
+            while !Task.isCancelled, self.session?.callID == expected, self.session?.phase == .active {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard self.session?.callID == expected, self.session?.phase == .active else { return }
+                if !self.audioSessionActive {
+                    self.audioStatus = "ОЖИДАЕМ ВКЛЮЧЕНИЯ ЗВУКА iOS…"
+                    if self.mediaStartedAt == nil, Date().timeIntervalSince(current.startedAt ?? Date()) > 15 {
+                        self.lastFailure = "iOS не активировала звук звонка. Заверши другие звонки и попробуй снова."
+                        self.failCurrent(reason: .failed); return
+                    }
+                    continue
+                }
+                guard self.mediaStartTask == nil, self.mediaRecoveryTask == nil else { continue }
+                let last = self.lastCaptureAt ?? self.mediaStartedAt ?? Date()
+                if !self.audio.isRunning || Date().timeIntervalSince(last) > 4 {
+                    if self.captureRecoveries >= 2 {
+                        self.lastFailure = "Микрофон не передаёт звук. Проверь разрешение микрофона и выбранное устройство."
+                        self.failCurrent(reason: .failed); return
+                    }
+                    self.captureRecoveries += 1
+                    self.restartMediaForRouteChange()
                 }
             }
         }
@@ -1021,6 +1097,8 @@ final class CallManager: ObservableObject {
     private func cleanup() {
         mediaGeneration = UUID()
         mediaStartTask?.cancel(); mediaStartTask = nil
+        mediaRecoveryTask?.cancel(); mediaRecoveryTask = nil
+        mediaHealthTask?.cancel(); mediaHealthTask = nil
         audio.stop()
         session = nil
         peerCard = nil
@@ -1032,6 +1110,10 @@ final class CallManager: ObservableObject {
         quietSpeechBoost = false
         isCallScreenExpanded = true
         audioSessionActive = false
+        answeringCall = false
+        audioStatus = "ПОДКЛЮЧАЕМ ЗВУК…"
+        lastCaptureAt = nil; mediaStartedAt = nil; captureRecoveries = 0
+        hardwareRoute = ""
         if let pending = pendingConfiguration {
             pendingConfiguration = nil
             api = pending.0; identity = pending.1; canonicalCard = pending.2 ?? (try? pending.1.card)
@@ -1079,13 +1161,14 @@ struct CallMiniBanner: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("call.expand")
 
             HStack(spacing: 12) {
             if session.incoming && session.phase == .ringing {
                 bannerAction("phone.down.fill", fill: .white.opacity(0.13), foreground: .white, label: "Отклонить") {
                     calls.endFromApp()
                 }
-                bannerAction("phone.fill", fill: .white, foreground: .black, label: "Принять") {
+                bannerAction("phone.fill", fill: .white, foreground: .black, label: calls.answeringCall ? "Принимаем…" : "Принять") {
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.85)) {
                         calls.answerFromApp()
                     }
@@ -1164,6 +1247,7 @@ struct CallScreen: View {
                                     .background(.white.opacity(0.08), in: Capsule())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("call.collapse")
                         }
 
                         Spacer(minLength: 10)
@@ -1213,12 +1297,14 @@ struct CallScreen: View {
                             HStack(spacing: 18) {
                                 callButton(
                                     icon: "phone.down.fill",
+                                    id: "call.end",
                                     title: "Отклонить",
                                     filled: false
                                 ) { calls.endFromApp() }
                                 callButton(
                                     icon: "phone.fill",
-                                    title: "Принять",
+                                    id: "call.answer",
+                                    title: calls.answeringCall ? "Принимаем…" : "Принять",
                                     filled: true
                                 ) { calls.answerFromApp() }
                             }
@@ -1226,18 +1312,21 @@ struct CallScreen: View {
                             HStack(spacing: 12) {
                                 callButton(
                                     icon: calls.muted ? "mic.slash.fill" : "mic.fill",
+                                    id: "call.mute",
                                     title: calls.muted ? "Включить микрофон" : "Микрофон",
                                     filled: calls.muted
                                 ) { calls.toggleMute() }
 
                                 callButton(
                                     icon: calls.audioOutput == .speaker ? "speaker.wave.3.fill" : "speaker.wave.2",
+                                    id: "call.route",
                                     title: calls.audioOutput.title,
                                     filled: calls.audioOutput == .speaker
                                 ) { showSoundOptions = true }
 
                                 callButton(
                                     icon: "phone.down.fill",
+                                    id: "call.end",
                                     title: "Завершить",
                                     filled: false
                                 ) { calls.endFromApp() }
@@ -1260,6 +1349,7 @@ struct CallScreen: View {
                                 .background(.white.opacity(0.07), in: Capsule())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("call.soundOptions")
 
                             if showSoundOptions {
                                 soundOptions
@@ -1351,6 +1441,7 @@ struct CallScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("call.output." + output.rawValue)
     }
 
     private var statusText: String {
@@ -1358,7 +1449,7 @@ struct CallScreen: View {
         case .ringing: return session.incoming ? "ВХОДЯЩИЙ VO1D CALL" : "ВЫЗОВ СОБЕСЕДНИКА…"
         case .connecting: return "СОЕДИНЕНИЕ…"
         case .reconnecting: return "ВОССТАНАВЛИВАЕМ СВЯЗЬ…"
-        case .active: return "ЗАЩИЩЁННЫЙ АУДИОКАНАЛ"
+        case .active: return calls.audioStatus
         }
     }
 
@@ -1369,6 +1460,7 @@ struct CallScreen: View {
 
     private func callButton(
         icon: String,
+        id: String,
         title: String,
         filled: Bool,
         action: @escaping () -> Void
@@ -1399,5 +1491,7 @@ struct CallScreen: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(MotionButtonStyle())
+        .accessibilityIdentifier(id)
+        .accessibilityLabel(title)
     }
 }

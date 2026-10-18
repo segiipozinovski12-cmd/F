@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import SwiftUI
+import Combine
 import CoreImage.CIFilterBuiltins
 
 enum VoiceEffect: String, CaseIterable, Identifiable, Codable {
@@ -137,7 +138,18 @@ final class VoiceRecorder: ObservableObject {
     private var operation = UUID()
     private var ownsAudioSession = false
     private let permission: (() async -> Bool)?
-    init(permission: (() async -> Bool)? = nil) { self.permission = permission }
+    private var callObserver: AnyCancellable?
+    init(permission: (() async -> Bool)? = nil) {
+        self.permission = permission
+        callObserver = Publishers.CombineLatest(CallManager.shared.$session, CallManager.shared.$preparingCall)
+            .sink { [weak self] session, preparing in
+                guard session != nil || preparing, let self else { return }
+                // Stop a voice-note recording before call capture takes over,
+                // without deactivating the session that CallKit is acquiring.
+                self.ownsAudioSession = false
+                self.cancel()
+            }
+    }
     func start() async throws {
         cancel()
         let current = operation
@@ -146,7 +158,7 @@ final class VoiceRecorder: ObservableObject {
         else { allowed = await withCheckedContinuation { continuation in AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) } } }
         guard operation == current, !Task.isCancelled else { throw CancellationError() }
         guard allowed else { throw MessengerError.invalid("Разреши доступ к микрофону в настройках iOS") }
-        guard CallManager.shared.session == nil else { throw MessengerError.invalid("Запись голосового доступна после завершения звонка") }
+        guard CallManager.shared.session == nil, !CallManager.shared.preparingCall else { throw MessengerError.invalid("Запись голосового доступна после завершения звонка") }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
         try session.setActive(true)
