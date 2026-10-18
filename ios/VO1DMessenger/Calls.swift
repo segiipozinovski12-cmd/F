@@ -1373,7 +1373,7 @@ struct CallScreen: View {
             }
         }
         .onAppear {
-            guard !reduceMotion else { return }
+            guard !reduceMotion, !Motion.testingControls else { return }
             withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
                 pulse = true
             }

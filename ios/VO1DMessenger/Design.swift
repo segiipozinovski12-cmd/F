@@ -87,7 +87,7 @@ struct BrandMark: View {
         .frame(width: size, height: size)
         .shadow(color: .white.opacity(0.1), radius: size * 0.18)
         .onAppear {
-            guard !reduceMotion, !lowPower else { return }
+            guard !reduceMotion, !lowPower, !Motion.testingControls else { return }
             withAnimation(.linear(duration: 20).repeatForever(autoreverses: false)) { phase = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
@@ -243,7 +243,7 @@ struct SplashView: View {
         }
         .onAppear {
             withAnimation(.spring(response: 0.75, dampingFraction: 0.82)) { reveal = true }
-            guard !reduceMotion else { return }
+            guard !reduceMotion, !Motion.testingControls else { return }
             withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) { scan = 1.08 }
         }
     }

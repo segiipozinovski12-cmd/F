@@ -1,6 +1,13 @@
 import SwiftUI
 
 enum Motion {
+    static var testingControls: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--vo1d-call-controls-test")
+        #else
+        false
+        #endif
+    }
     static let layout = Animation.spring(response: 0.42, dampingFraction: 0.9)
     static let press = Animation.spring(response: 0.28, dampingFraction: 0.8)
     static let reveal = Animation.easeOut(duration: 0.42)

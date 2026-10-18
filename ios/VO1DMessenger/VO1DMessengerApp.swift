@@ -58,7 +58,7 @@ private struct CallControlTestEnvironment: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--vo1d-call-controls-test") {
-            content.environment(\.accessibilityReduceMotion, true)
+            content.transaction { $0.animation = nil; $0.disablesAnimations = true }
         } else { content }
         #else
         content
@@ -181,7 +181,7 @@ struct RootView: View {
         .animation(reduceMotion ? nil : Motion.layout, value: calls.preparingCall)
         .transaction { transaction in
             // Hiding sensitive content never waits for an exit animation.
-            if store.locked || !store.sessionUnlocked || reduceMotion {
+            if store.locked || !store.sessionUnlocked || reduceMotion || Motion.testingControls {
                 transaction.animation = nil
                 transaction.disablesAnimations = true
             }
