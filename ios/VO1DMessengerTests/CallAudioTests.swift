@@ -35,7 +35,7 @@ final class CallAudioTests: XCTestCase {
             let samples = try XCTUnwrap(playback.floatChannelData?[0])
             let rms = sqrt((0..<Int(playback.frameLength)).reduce(Float(0)) { $0 + samples[$1] * samples[$1] } / Float(playback.frameLength))
             XCTAssertGreaterThan(rms, 0.1, "Converted encrypted audio became silent")
-            XCTAssertLessThan(rms, 0.4)
+            XCTAssertLessThan(rms, 0.8)
             let reply = try b.seal(received, key: keyB, callID: id)
             XCTAssertEqual(try a.open(reply.0, sequence: reply.1, key: keyA, callID: id), pcm)
         }

@@ -437,7 +437,7 @@ final class CallManager: ObservableObject {
     func answerFromApp() {
         guard let session, session.incoming, session.phase == .ringing, !answeringCall else { return }
         answeringCall = true
-        isCallScreenExpanded = true
+        setCallScreenExpanded(true)
         controller.request(CXTransaction(action: CXAnswerCallAction(call: session.id))) { [weak self] error in
             guard let error else { return }
             Task { @MainActor in
@@ -609,7 +609,7 @@ final class CallManager: ObservableObject {
     fileprivate func audioActivated() {
         audioSessionActive = true
         refreshOutputAvailability()
-        do { try applySelectedAudioOutput() }
+        do { try audio.prepareSession(); try applySelectedAudioOutput() }
         catch { lastFailure = "Аудиовыход недоступен: \(error.localizedDescription)" }
         activateMediaIfReady()
     }
