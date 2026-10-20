@@ -3,6 +3,7 @@ import SwiftUI
 struct ArtifactDetailView: View {
     var initial: CollectibleArtifact
     @EnvironmentObject private var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
     @State private var current: CollectibleArtifact?
     @State private var estimate: Int?
     @State private var sheet: String?
@@ -77,7 +78,13 @@ struct ArtifactDetailView: View {
         .sheet(isPresented: Binding(get: { sheet != nil }, set: { if !$0 { sheet = nil } })) {
             NavigationStack {
                 if sheet == "upgrade" { ArtifactUpgradeView(gift: gift) { updated in current = updated; sheet = nil; Task { await refresh() } } }
-                else { ArtifactTradeView(gift: gift, transfer: sheet == "transfer") { updated in current = updated; sheet = nil; Task { await refresh() } } }
+                else {
+                    ArtifactTradeView(gift: gift, transfer: sheet == "transfer") { updated in
+                        current = updated; sheet = nil
+                        if updated.owner != store.myID { dismiss() }
+                        else { Task { await refresh() } }
+                    }
+                }
             }
         }
         .confirmationDialog("Купить \(gift.title) \(gift.number)?", isPresented: $buying, titleVisibility: .visible) {

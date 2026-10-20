@@ -154,6 +154,9 @@ def handle(relay, db, user, env, body, error):
     admin = admin_row is not None and admin_row['owner'] == user
     query = parse_qs(env.get('QUERY_STRING', ''))
     cursor = query.get('cursor', [''])[0]
+    selected_collection = query.get('collection', [''])[0]
+    if selected_collection and selected_collection not in {c[0] for c in COLLECTIONS}:
+        raise error(400, 'Коллекция не найдена')
     if len(cursor) > 80:
         raise error(400, 'Некорректная страница')
     if method == 'GET' and route == '/catalog':
@@ -177,8 +180,9 @@ def handle(relay, db, user, env, body, error):
             total, visible = db.execute('SELECT count(*),coalesce(sum(visible),0) FROM artifacts WHERE owner=?', (user,)).fetchone()
         else:
             rows = db.execute('''SELECT a.* FROM artifacts a JOIN artifact_listings l ON a.id=l.artifact
-                                  WHERE a.id>? ORDER BY a.id LIMIT 51''', (cursor,)).fetchall()
-            total = visible = db.execute('SELECT count(*) FROM artifact_listings').fetchone()[0]
+                                  WHERE a.id>? AND (?='' OR a.collection=?) ORDER BY a.id LIMIT 51''', (cursor, selected_collection, selected_collection)).fetchall()
+            total = visible = db.execute('''SELECT count(*) FROM artifact_listings l JOIN artifacts a ON l.artifact=a.id
+                                             WHERE (?='' OR a.collection=?)''', (selected_collection, selected_collection)).fetchone()[0]
         return {'artifacts': [artifact(db, r) for r in rows[:50]], 'total': total, 'visibleCount': visible,
                 'nextCursor': rows[49]['id'] if len(rows) > 50 else None}
     if method == 'GET' and route.startswith('/profile/'):
@@ -214,6 +218,8 @@ def handle(relay, db, user, env, body, error):
             raise ValueError()
     except (ValueError, AttributeError):
         raise error(400, 'Нужен уникальный requestID')
+    request_id = request_id.lower()
+    body = dict(body, requestID=request_id)
     digest = hashlib.sha256((route + '\n' + json.dumps(body, sort_keys=True, separators=(',', ':'))).encode()).hexdigest()
     old = db.execute('SELECT * FROM economy_operations WHERE owner=? AND id=?', (user, request_id)).fetchone()
     if old:

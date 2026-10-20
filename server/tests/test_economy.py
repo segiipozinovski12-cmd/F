@@ -72,6 +72,7 @@ class EconomyTests(unittest.TestCase):
         payload = {'requestID': str(uuid.uuid4()), 'collection': 'nova', 'expectedPrice': 500}
         first = self.request('/v3/economy/buy', 'POST', payload, self.a)
         self.assertEqual(self.request('/v3/economy/buy', 'POST', payload, self.a), first)
+        self.assertEqual(self.request('/v3/economy/buy', 'POST', dict(payload, requestID=payload['requestID'].upper()), self.a), first)
         gift = first[1]['artifact']
         upgrade = {'requestID': str(uuid.uuid4()), 'artifactID': gift['id'], 'expectedPrice': 100,
                    'traits': {'model': 'monochrome'}}

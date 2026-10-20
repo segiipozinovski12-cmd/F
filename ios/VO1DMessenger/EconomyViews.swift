@@ -73,6 +73,7 @@ struct ArtifactStorefrontView: View {
         }.background { VoidBackground() }
         .navigationTitle("Витрина").navigationBarTitleDisplayMode(.inline)
         .task { await load() }.refreshable { await load() }
+        .onChange(of: filter) { _, _ in Task { await loadMarket(more: false) } }
         .confirmationDialog(selected.map { "Купить \($0.title)?" } ?? "Покупка", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } }), titleVisibility: .visible) {
             if let item = selected {
                 Button("Купить за \(item.price.formatted()) VO1Dcoin") { buy(ArtifactCommand(collection: item.id, expectedPrice: item.price)) }
@@ -142,9 +143,14 @@ struct ArtifactStorefrontView: View {
     private func loadMarket(more: Bool) async {
         guard let api = store.api else { return }
         let fence = store.sessionFence
+        let selectedFilter = filter
+        var query: [URLQueryItem] = []
+        if more, let marketCursor { query.append(URLQueryItem(name: "cursor", value: marketCursor)) }
+        if selectedFilter != "all" { query.append(URLQueryItem(name: "collection", value: selectedFilter)) }
         do {
-            let page: ArtifactPage = try await api.request("v3/economy/market", query: more ? [URLQueryItem(name: "cursor", value: marketCursor)] : [])
+            let page: ArtifactPage = try await api.request("v3/economy/market", query: query)
             try store.requireCurrentSession(fence)
+            guard selectedFilter == filter else { return }
             market = more ? market + page.artifacts.filter { gift in !market.contains { $0.id == gift.id } } : page.artifacts
             marketCursor = page.nextCursor
         } catch is CancellationError { return }
