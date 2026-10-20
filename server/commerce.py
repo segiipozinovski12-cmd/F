@@ -70,6 +70,9 @@ def install(db):
     ''')
     if 'debt' not in {r[1] for r in db.execute('PRAGMA table_info(economy_wallets)')}:
         db.execute('ALTER TABLE economy_wallets ADD COLUMN debt INTEGER NOT NULL DEFAULT 0 CHECK(debt>=0)')
+    if 'last_price' not in {r[1] for r in db.execute('PRAGMA table_info(artifacts)')}:
+        db.execute('ALTER TABLE artifacts ADD COLUMN last_price INTEGER NOT NULL DEFAULT 0')
+        db.execute('UPDATE artifacts SET last_price=price_paid')
     db.executemany('''INSERT OR IGNORE INTO artifact_collections
       (id,title,description,supply,price,upgrade_price) VALUES (?,?,?,?,?,?)''', COLLECTIONS)
 
@@ -114,7 +117,7 @@ def artifact(db, row):
     name = db.execute('SELECT username FROM usernames WHERE identity=?', (row['owner'],)).fetchone()
     return {'id': row['id'], 'collection': row['collection'], 'serial': row['serial'],
             'owner': row['owner'], 'ownerUsername': name[0] if name else None,
-            'pricePaid': row['price_paid'], 'acquired': row['acquired'], 'visible': bool(row['visible']),
+            'pricePaid': row['price_paid'], 'lastPricePaid': row['last_price'], 'acquired': row['acquired'], 'visible': bool(row['visible']),
             'traits': json.loads(row['traits']) if row['traits'] else None,
             'listingID': sale['id'] if sale else None, 'salePrice': sale['price'] if sale else None}
 
@@ -171,10 +174,13 @@ def handle(relay, db, user, env, body, error):
             return {'entries': [dict(r) for r in rows[:50]], 'nextCursor': str(rows[49]['seq']) if len(rows) > 50 else None}
         if route == '/inventory':
             rows = db.execute('SELECT * FROM artifacts WHERE owner=? AND id>? ORDER BY id LIMIT 51', (user, cursor)).fetchall()
+            total, visible = db.execute('SELECT count(*),coalesce(sum(visible),0) FROM artifacts WHERE owner=?', (user,)).fetchone()
         else:
             rows = db.execute('''SELECT a.* FROM artifacts a JOIN artifact_listings l ON a.id=l.artifact
                                   WHERE a.id>? ORDER BY a.id LIMIT 51''', (cursor,)).fetchall()
-        return {'artifacts': [artifact(db, r) for r in rows[:50]], 'nextCursor': rows[49]['id'] if len(rows) > 50 else None}
+            total = visible = db.execute('SELECT count(*) FROM artifact_listings').fetchone()[0]
+        return {'artifacts': [artifact(db, r) for r in rows[:50]], 'total': total, 'visibleCount': visible,
+                'nextCursor': rows[49]['id'] if len(rows) > 50 else None}
     if method == 'GET' and route.startswith('/profile/'):
         owner = route.removeprefix('/profile/')
         if not re.fullmatch('[a-f0-9]{64}', owner):
@@ -183,6 +189,7 @@ def handle(relay, db, user, env, body, error):
             raise error(404, 'Профиль недоступен')
         rows = db.execute('SELECT * FROM artifacts WHERE owner=? AND visible=1 AND id>? ORDER BY id LIMIT 51', (owner, cursor)).fetchall()
         return {'artifacts': [artifact(db, r) for r in rows[:50]], 'nextCursor': rows[49]['id'] if len(rows) > 50 else None,
+                'total': db.execute('SELECT count(*) FROM artifacts WHERE owner=? AND visible=1', (owner,)).fetchone()[0],
                 'premium': wallet(db, owner)['premium']}
     if method == 'GET' and route.startswith('/artifact/'):
         row = db.execute('SELECT * FROM artifacts WHERE id=?', (route.removeprefix('/artifact/'),)).fetchone()
@@ -246,8 +253,8 @@ def mutate(db, user, admin, route, body, now, error):
         identifier = str(uuid.uuid4())
         change_balance(db, user, -row['price'], 'purchase', identifier, now, error)
         db.execute('UPDATE artifact_collections SET minted=minted+1 WHERE id=?', (row['id'],))
-        db.execute('''INSERT INTO artifacts(id,collection,serial,owner,price_paid,acquired)
-                      VALUES (?,?,?,?,?,?)''', (identifier, row['id'], row['minted'] + 1, user, row['price'], now))
+        db.execute('''INSERT INTO artifacts(id,collection,serial,owner,price_paid,acquired,last_price)
+                      VALUES (?,?,?,?,?,?,?)''', (identifier, row['id'], row['minted'] + 1, user, row['price'], now, row['price']))
         return {'ok': True, 'artifact': artifact(db, db.execute('SELECT * FROM artifacts WHERE id=?', (identifier,)).fetchone())}
     if route == '/market/buy':
         sale = db.execute('SELECT * FROM artifact_listings WHERE id=?', (body.get('listingID'),)).fetchone()
@@ -262,7 +269,7 @@ def mutate(db, user, admin, route, body, now, error):
             raise error(409, 'Владелец изменился')
         change_balance(db, user, -sale['price'], 'market_purchase', gift['id'], now, error)
         change_balance(db, sale['seller'], sale['price'], 'sale', gift['id'], now, error)
-        db.execute('UPDATE artifacts SET owner=?,visible=0,acquired=? WHERE id=?', (user, now, gift['id']))
+        db.execute('UPDATE artifacts SET owner=?,visible=0,acquired=?,last_price=? WHERE id=?', (user, now, sale['price'], gift['id']))
         db.execute('DELETE FROM artifact_listings WHERE id=?', (sale['id'],))
         return {'ok': True, 'artifact': artifact(db, db.execute('SELECT * FROM artifacts WHERE id=?', (gift['id'],)).fetchone())}
     gift = db.execute('SELECT * FROM artifacts WHERE id=? AND owner=?', (body.get('artifactID'), user)).fetchone()
@@ -297,7 +304,7 @@ def mutate(db, user, admin, route, body, now, error):
                 raise error(400, 'Получатель не найден или совпадает с владельцем')
             if db.execute('SELECT 1 FROM blocks WHERE (owner=? AND peer=?) OR (owner=? AND peer=?)', (user, recipient, recipient, user)).fetchone():
                 raise error(403, 'Передача этому пользователю недоступна')
-            db.execute('UPDATE artifacts SET owner=?,visible=0,acquired=? WHERE id=?', (recipient, now, gift['id']))
+            db.execute('UPDATE artifacts SET owner=?,visible=0,acquired=?,last_price=0 WHERE id=?', (recipient, now, gift['id']))
             for owner, kind in ((user, 'transfer_sent'), (recipient, 'transfer_received')):
                 db.execute('INSERT INTO economy_ledger(owner,delta,kind,reference,created) VALUES (?,0,?,?,?)', (owner, kind, gift['id'], now))
         else:

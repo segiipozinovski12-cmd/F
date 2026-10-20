@@ -40,6 +40,7 @@ struct CollectibleArtifact: Decodable, Identifiable, Hashable {
     var owner: String?
     var ownerUsername: String?
     var pricePaid: Int
+    var lastPricePaid: Int?
     var acquired: Int
     var visible: Bool
     var traits: ArtifactTraits?
@@ -52,6 +53,8 @@ struct ArtifactPage: Decodable {
     var artifacts: [CollectibleArtifact]
     var nextCursor: String?
     var premium: Bool?
+    var total: Int?
+    var visibleCount: Int?
 }
 struct EconomyCatalog: Decodable {
     var collections: [ArtifactCollection]
@@ -70,6 +73,8 @@ struct EconomyState {
     var catalog: EconomyCatalog?
     var artifacts: [CollectibleArtifact] = []
     var nextCursor: String?
+    var total = 0
+    var visibleCount = 0
 }
 struct ArtifactCommand: Encodable {
     var requestID = UUID().uuidString.lowercased()
@@ -94,7 +99,8 @@ extension ChatStore {
         let inventory: ArtifactPage = try await api.request("v3/economy/inventory")
         try requireCurrentSession(fence)
         guard !locked, sessionUnlocked else { throw CancellationError() }
-        economy = EconomyState(owner: myID, catalog: catalog, artifacts: inventory.artifacts, nextCursor: inventory.nextCursor)
+        economy = EconomyState(owner: myID, catalog: catalog, artifacts: inventory.artifacts, nextCursor: inventory.nextCursor,
+                               total: inventory.total ?? inventory.artifacts.count, visibleCount: inventory.visibleCount ?? inventory.artifacts.filter(\.visible).count)
     }
 
     func loadMoreArtifacts() async throws {

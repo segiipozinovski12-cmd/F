@@ -9,6 +9,7 @@ struct ProfileScreenView: View {
     @State private var gifts: [CollectibleArtifact] = []
     @State private var cursor: String?
     @State private var premium = false
+    @State private var total = 0
     @State private var editing = false
     @State private var composing = false
     @State private var notice: String?
@@ -80,7 +81,7 @@ struct ProfileScreenView: View {
                 if let bio = profile?.bio, !bio.isEmpty { Text(bio).font(.subheadline).lineSpacing(4).multilineTextAlignment(.center).textSelection(.enabled).padding(.top, 4) }
             }
             HStack(spacing: 34) {
-                metric("Подарки", value: ownGifts.filter(\.visible).count)
+                metric("Подарки", value: mine ? store.economy.visibleCount : total)
                 metric("Истории", value: stories.count)
             }.padding(.top, 4)
         }
@@ -111,7 +112,7 @@ struct ProfileScreenView: View {
     private var giftGrid: some View {
         VStack(spacing: 18) {
             if mine {
-                Toggle("Показать скрытые подарки", isOn: $showHidden).font(.caption).tint(.artifactHex(0xB49BDF))
+                Toggle("Показать скрытые · \(max(0, store.economy.total - store.economy.visibleCount))", isOn: $showHidden).font(.caption).tint(.artifactHex(0xB49BDF))
                 NavigationLink { ArtifactStorefrontView() } label: { Label("Найти свой артефакт", systemImage: "gift").frame(maxWidth: .infinity) }.buttonStyle(GhostButton())
             }
             if loading { ProgressView().padding(30) }
@@ -164,7 +165,7 @@ struct ProfileScreenView: View {
         do {
             let page: ArtifactPage = try await api.request("v3/economy/profile/" + owner, query: more ? [URLQueryItem(name: "cursor", value: cursor)] : [])
             try store.requireCurrentSession(fence)
-            gifts = more ? gifts + page.artifacts : page.artifacts; cursor = page.nextCursor; premium = page.premium == true
+            gifts = more ? gifts + page.artifacts : page.artifacts; cursor = page.nextCursor; premium = page.premium == true; total = page.total ?? gifts.count
         } catch is CancellationError { return }
         catch { notice = error.localizedDescription }
     }

@@ -68,7 +68,10 @@ struct ArtifactArtwork: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var floating = false
     private var metal: [Color] { ArtifactPalette.metal(traits?.model.id, collection: collection) }
-    private var background: [Color] { ArtifactPalette.backdrop(traits?.backdrop.id) }
+    private var background: [Color] {
+        let original = ["singularity": "midnight", "sovereign": "rose", "prism": "lavender", "orbit": "jade", "nova": "azure"]
+        return ArtifactPalette.backdrop(traits?.backdrop.id ?? original[collection])
+    }
 
     var body: some View {
         ZStack {
@@ -160,11 +163,25 @@ struct ArtifactArtwork: View {
             }
             context.fill(Path(ellipseIn: CGRect(x: 225, y: 102, width: 13, height: 13)), with: shading)
         default:
-            let star = starPath(center: CGPoint(x: 150, y: 148), radius: 89, points: 4, inner: 0.37)
+            let star = starPath(center: CGPoint(x: 150, y: 148), radius: 89, points: traits?.model.id == "aurora" ? 6 : 4, inner: traits?.model.id == "crimson" ? 0.22 : 0.37)
             context.drawLayer { glow in glow.addFilter(.blur(radius: 18)); glow.fill(star, with: .color(metal[1].opacity(0.6))) }
             context.fill(star, with: shading)
             context.stroke(star, with: .color(metal[0].opacity(0.9)), lineWidth: 1.3)
             context.fill(starPath(center: CGPoint(x: 150, y: 148), radius: 44, points: 4, inner: 0.35), with: .linearGradient(Gradient(colors: [metal[0], metal[2]]), startPoint: CGPoint(x: 130, y: 120), endPoint: CGPoint(x: 172, y: 180)))
+        }
+        if traits?.model.id == "gold" {
+            for index in 0..<8 {
+                let angle = Double(index) * .pi / 4
+                let center = CGPoint(x: 150 + cos(angle) * 106, y: 148 + sin(angle) * 106)
+                context.fill(starPath(center: center, radius: 4, points: 4), with: .color(metal[0].opacity(0.8)))
+            }
+        } else if traits?.model.id == "monochrome" {
+            for index in 0..<4 {
+                let center = CGPoint(x: index.isMultiple(of: 2) ? 70 : 229, y: CGFloat(85 + index * 37))
+                context.fill(starPath(center: center, radius: 11, points: 4, inner: 0.55), with: shading)
+            }
+        } else if traits?.model.id == "crimson" {
+            context.stroke(Path(ellipseIn: CGRect(x: 74, y: 68, width: 152, height: 166)), with: .color(metal[1].opacity(0.35)), lineWidth: 1)
         }
     }
 

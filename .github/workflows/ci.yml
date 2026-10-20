@@ -150,11 +150,13 @@ jobs:
           sleep 3
           mkdir -p build-evidence
           xcrun simctl io "$simulator_id" screenshot build-evidence/first-run.png
+          app_data=$(xcrun simctl get_app_container "$simulator_id" io.vo1d.messenger data)
+          find "$app_data/Documents" -name 'collection-preview-*.png' -exec cp {} build-evidence/ \;
       - name: Upload interface preview
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: VO1D-first-run-interface-${{ matrix.os }}
-          path: build-evidence/first-run.png
+          path: build-evidence/*.png
       - name: Package unsigned device build and dependency evidence
         run: |
           python3 scripts/build_manifest.py

@@ -29,7 +29,12 @@ struct ArtifactDetailView: View {
                 VStack(spacing: 16) {
                     detailRow("Владелец", value: mine ? "Ты" : gift.ownerUsername.map { "@" + $0 } ?? String((gift.owner ?? "Удалённый аккаунт").prefix(14)))
                     detailRow("Номер", value: gift.number)
-                    HStack { Text("Цена покупки").foregroundStyle(.secondary); Spacer(); CoinAmount(value: gift.pricePaid, size: 17) }.font(.subheadline)
+                    if gift.lastPricePaid == 0 { detailRow("Получение", value: "Подарен") }
+                    else { HStack { Text("Цена покупки").foregroundStyle(.secondary); Spacer(); CoinAmount(value: gift.lastPricePaid ?? gift.pricePaid, size: 17) }.font(.subheadline) }
+                    if let paid = gift.lastPricePaid, paid != gift.pricePaid {
+                        HStack { Text("Первичная цена").foregroundStyle(.secondary); Spacer(); CoinAmount(value: gift.pricePaid, size: 17) }.font(.subheadline)
+                    }
+                    detailRow("Получен", value: Date(timeIntervalSince1970: Double(gift.acquired)).formatted(date: .abbreviated, time: .omitted))
                     if let collection { detailRow("Тираж коллекции", value: collection.supply.formatted()) }
                     if let traits = gift.traits {
                         Divider().overlay(.white.opacity(0.07))
@@ -178,6 +183,7 @@ struct ArtifactTradeView: View {
             do {
                 if let updated = try await store.artifactCommand(transfer ? "transfer" : "list", pending) { command = nil; Haptics.success(); completed(updated) }
             } catch is CancellationError { return }
+            catch let error as HTTPFailure where (400..<500).contains(error.status) { command = nil; notice = error.localizedDescription }
             catch { notice = error.localizedDescription }
         }
     }

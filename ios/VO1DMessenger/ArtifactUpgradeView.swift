@@ -24,14 +24,7 @@ struct ArtifactUpgradeView: View {
             VStack(spacing: 22) {
                 Text(phase == 3 ? "Единственный. Твой." : "За гранью обычного.")
                     .font(.system(size: 30, weight: .bold, design: .rounded)).multilineTextAlignment(.center)
-                TimelineView(.animation(minimumInterval: reduceMotion ? 2 : 0.12, paused: phase == 3 || (reduceMotion && !running))) { clock in
-                    let tick = Int(clock.date.timeIntervalSince1970 * 8)
-                    let preview = previewTraits(tick)
-                    ArtifactArtwork(collection: gift.collection, traits: phase == 3 ? result?.traits : preview)
-                        .overlay {
-                            if confetti && !reduceMotion { ConfettiBurst().allowsHitTesting(false) }
-                        }
-                }
+                reel
                 HStack(spacing: 8) {
                     reelLabel("Фон", value: phase >= 1 ? result?.traits?.backdrop.title : nil)
                     reelLabel("Узор", value: phase >= 2 ? result?.traits?.pattern.title : nil)
@@ -56,6 +49,32 @@ struct ArtifactUpgradeView: View {
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { dismiss() }.disabled(busy || running) } }
         .interactiveDismissDisabled(busy || running)
         .onDisappear { rollTask?.cancel() }
+    }
+
+    private var reel: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: phase == 3 || reduceMotion)) { clock in
+            let speed = running ? 5.0 : 0.65
+            let position = clock.date.timeIntervalSince1970 * speed
+            let tick = Int(position)
+            let fraction = position - floor(position)
+            ZStack {
+                if phase == 3 || reduceMotion {
+                    ArtifactArtwork(collection: gift.collection, traits: phase == 3 ? result?.traits : previewTraits(0))
+                } else {
+                    GeometryReader { geometry in
+                        HStack(spacing: 12) {
+                            ForEach(0..<3) { index in
+                                ArtifactArtwork(collection: gift.collection, traits: previewTraits(tick + index))
+                                    .frame(width: geometry.size.width - 24)
+                            }
+                        }
+                        .offset(x: -(geometry.size.width - 12) * fraction + 12)
+                    }.aspectRatio(1, contentMode: .fit).clipped()
+                    HStack { Image(systemName: "chevron.right"); Spacer(); Image(systemName: "chevron.left") }.font(.caption.bold()).padding(.horizontal, 3)
+                }
+                if confetti && !reduceMotion { ConfettiBurst().allowsHitTesting(false) }
+            }
+        }.accessibilityLabel(running ? "Идёт раскрытие артефакта" : "Предпросмотр улучшения")
     }
 
     private var odds: some View {

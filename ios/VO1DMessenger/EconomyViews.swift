@@ -58,6 +58,9 @@ struct ArtifactStorefrontView: View {
                 }
                 Picker("Витрина", selection: $mode) { Text("Коллекции").tag(0); Text("Маркет").tag(1) }.pickerStyle(.segmented)
                 if let notice { EconomyNotice(message: notice); Button("Повторить загрузку") { Task { await load() } } }
+                if let command = pendingPurchase, !purchasing {
+                    Button("Проверить и повторить ту же покупку") { buy(command) }.buttonStyle(GhostButton())
+                }
                 if loading { ProgressView().frame(maxWidth: .infinity).padding(40) }
                 else if mode == 0 { collections }
                 else { marketplace }
@@ -70,9 +73,9 @@ struct ArtifactStorefrontView: View {
         }.background { VoidBackground() }
         .navigationTitle("Витрина").navigationBarTitleDisplayMode(.inline)
         .task { await load() }.refreshable { await load() }
-        .confirmationDialog(selected.map { "Купить \($0.title)?" } ?? "Покупка", isPresented: Binding(get: { selected != nil }, set: { if !$0 && !purchasing { selected = nil; pendingPurchase = nil } }), titleVisibility: .visible) {
+        .confirmationDialog(selected.map { "Купить \($0.title)?" } ?? "Покупка", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } }), titleVisibility: .visible) {
             if let item = selected {
-                Button("Купить за \(item.price.formatted()) VO1Dcoin") { buy(item) }
+                Button("Купить за \(item.price.formatted()) VO1Dcoin") { buy(ArtifactCommand(collection: item.id, expectedPrice: item.price)) }
             }
         } message: {
             if let item = selected { Text("Осталось \(item.remaining.formatted()) из \(item.supply.formatted()). Номер и владение закрепляются сервером после оплаты. Улучшение приобретается отдельно.") }
@@ -95,11 +98,10 @@ struct ArtifactStorefrontView: View {
                             Text("\(item.remaining.formatted()) доступно").font(.caption2).foregroundStyle(.secondary)
                             Button {
                                 selected = item
-                                pendingPurchase = ArtifactCommand(collection: item.id, expectedPrice: item.price)
                             } label: {
                                 if item.remaining == 0 { Text("Распродано").font(.caption.bold()) }
                                 else { CoinAmount(value: item.price).font(.subheadline.bold()) }
-                            }.buttonStyle(PrimaryButton()).disabled(item.remaining == 0 || purchasing)
+                            }.buttonStyle(PrimaryButton()).disabled(item.remaining == 0 || purchasing || pendingPurchase != nil)
                         }
                     }
                 }
@@ -148,8 +150,7 @@ struct ArtifactStorefrontView: View {
         } catch is CancellationError { return }
         catch { notice = error.localizedDescription }
     }
-    private func buy(_ item: ArtifactCollection) {
-        let command = pendingPurchase ?? ArtifactCommand(collection: item.id, expectedPrice: item.price)
+    private func buy(_ command: ArtifactCommand) {
         pendingPurchase = command; purchasing = true
         Task {
             defer { purchasing = false }
@@ -157,6 +158,7 @@ struct ArtifactStorefrontView: View {
                 purchased = try await store.artifactCommand("buy", command)
                 pendingPurchase = nil; selected = nil; notice = nil; Haptics.success()
             } catch is CancellationError { return }
+            catch let error as HTTPFailure where (400..<500).contains(error.status) { pendingPurchase = nil; notice = error.localizedDescription }
             catch { notice = error.localizedDescription }
         }
     }

@@ -45,9 +45,9 @@ def array(items):
 def ref_file(path, kind, root='SOURCE_ROOT'):
     return obj(path, 'PBXFileReference', f'lastKnownFileType = {kind}; path = {q(path)}; sourceTree = {q(root)};')
 
-appfiles = sorted((IOS / 'VO1DMessenger').glob('*.swift'))
-testfiles = sorted((IOS / 'VO1DMessengerTests').glob('*.swift'))
-uifiles = sorted((IOS / 'VO1DCallUITests').glob('*.swift'))
+appfiles = sorted((IOS / 'VO1DMessenger').glob('*.swift'), key=lambda path: path.as_posix())
+testfiles = sorted((IOS / 'VO1DMessengerTests').glob('*.swift'), key=lambda path: path.as_posix())
+uifiles = sorted((IOS / 'VO1DCallUITests').glob('*.swift'), key=lambda path: path.as_posix())
 apprefs, testrefs, appbuild, testbuild, uirefs, uibuild = [], [], [], [], [], []
 for files, refs, builds in [(appfiles, apprefs, appbuild), (testfiles, testrefs, testbuild), (uifiles, uirefs, uibuild)]:
     for file in files:
