@@ -1,4 +1,5 @@
 import SwiftUI
+import StoreKit
 
 @main
 struct VO1DMessengerApp: App {
@@ -236,18 +237,36 @@ struct RootView: View {
 }
 
 private struct MainShell: View {
+    @EnvironmentObject private var store: ChatStore
     @Environment(\.voidPalette) private var palette
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         TabView {
             InboxView()
                 .tabItem { Label("Чаты", systemImage: "bubble.left.and.bubble.right.fill") }
             ContactsView()
                 .tabItem { Label("Люди", systemImage: "person.2.fill") }
+            NavigationStack { ArtifactStorefrontView() }
+                .tabItem { Label("Витрина", systemImage: "gift.fill") }
+            NavigationStack { ProfileScreenView(owner: store.myID) }
+                .tabItem { Label("Профиль", systemImage: "person.crop.circle.fill") }
             SettingsView()
                 .tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }
         }
         .toolbarBackground(palette.background.opacity(0.98), for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+        .task { await store.recoverStorePurchases() }
+        .task {
+            for await update in StoreKit.Transaction.updates {
+                if Task.isCancelled { break }
+                do { try await store.acceptStoreTransaction(update) }
+                catch is CancellationError { continue }
+                catch { store.error = error.localizedDescription }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await store.recoverStorePurchases() } }
+        }
     }
 }
 

@@ -182,6 +182,7 @@ struct VoiceMessagePlayer: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
         HStack(spacing: 11) {
             Button {
                 player.toggle()
@@ -243,6 +244,8 @@ struct VoiceMessagePlayer: View {
         }
         .foregroundStyle(tint)
         .frame(minWidth: 190)
+        PremiumTranscriptView(data: attachment.data, tint: tint)
+        }
     }
 
     private func time(_ value: TimeInterval) -> String {

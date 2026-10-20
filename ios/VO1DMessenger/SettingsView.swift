@@ -31,7 +31,16 @@ struct SettingsView: View {
                         }
                         .padding(.bottom, 4)
 
-                        profileCard.softAppear(index: 0)
+                        NavigationLink { ProfileScreenView(owner: store.myID) } label: {
+                            HStack(spacing: 14) {
+                                Avatar(name: store.state.nickname, size: 58, imageData: store.state.profileAvatar)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(store.state.nickname).font(.headline)
+                                    Text("Профиль, истории и подарки").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                            }.panel()
+                        }.buttonStyle(MotionButtonStyle()).softAppear(index: 0)
                         NavigationLink { AppearanceSettingsView() } label: {
                             Label("ОФОРМЛЕНИЕ И ТЕМЫ", systemImage: "paintpalette")
                                 .frame(maxWidth: .infinity, alignment: .leading).panel()

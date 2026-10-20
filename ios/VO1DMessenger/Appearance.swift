@@ -7,7 +7,8 @@ struct VoidPalette {
 }
 
 enum MessengerTheme: String, Codable, CaseIterable, Identifiable {
-    case void, graphite, midnight, plum, forest
+    case void, graphite, midnight, plum, forest, aurora, ember, frost
+    var premium: Bool { [.aurora, .ember, .frost].contains(self) }
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -16,6 +17,9 @@ enum MessengerTheme: String, Codable, CaseIterable, Identifiable {
         case .midnight: return "Глубина"
         case .plum: return "Орбита"
         case .forest: return "Тайга"
+        case .aurora: return "Aurora"
+        case .ember: return "Ember"
+        case .frost: return "Frost"
         }
     }
     var palette: VoidPalette {
@@ -25,6 +29,9 @@ enum MessengerTheme: String, Codable, CaseIterable, Identifiable {
         case .midnight: return VoidPalette(background: Color(hex: 0x080F1C), panel: Color(hex: 0x142137), accent: Color(hex: 0xA3CDFF))
         case .plum: return VoidPalette(background: Color(hex: 0x120C1B), panel: Color(hex: 0x271C35), accent: Color(hex: 0xD8B8FF))
         case .forest: return VoidPalette(background: Color(hex: 0x091412), panel: Color(hex: 0x172C26), accent: Color(hex: 0xACDFC9))
+        case .aurora: return VoidPalette(background: Color(hex: 0x101220), panel: Color(hex: 0x21253D), accent: Color(hex: 0xC7C0FF))
+        case .ember: return VoidPalette(background: Color(hex: 0x1A100F), panel: Color(hex: 0x34221F), accent: Color(hex: 0xF5C1A2))
+        case .frost: return VoidPalette(background: Color(hex: 0x10191C), panel: Color(hex: 0x223239), accent: Color(hex: 0xC1E9EE))
         }
     }
 }
@@ -115,6 +122,7 @@ struct AppearanceSettingsView: View {
     var roomID: String? = nil
     @EnvironmentObject private var store: ChatStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var premiumPlan = false
     private var app: VoidPalette { store.appearance.appTheme.palette }
     private var selection: ChatTheme { roomID.map(store.chatTheme) ?? store.appearance.defaultChatTheme }
     private var chat: VoidPalette { selection.palette(app: app) }
@@ -125,7 +133,10 @@ struct AppearanceSettingsView: View {
                     Text("ТЕМА ПРИЛОЖЕНИЯ").font(.caption.monospaced()).foregroundStyle(Theme.secondary)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 92))], spacing: 12) {
                         ForEach(MessengerTheme.allCases) { theme in
-                            Button { choose { $0.appTheme = theme } } label: {
+                            Button {
+                                if theme.premium && !store.hasPremium { premiumPlan = true }
+                                else { choose { $0.appTheme = theme } }
+                            } label: {
                                 VStack(spacing: 10) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 18).fill(theme.palette.background)
@@ -135,7 +146,7 @@ struct AppearanceSettingsView: View {
                                             Capsule().fill(theme.palette.panel).frame(height: 14)
                                         }.padding(12)
                                     }.frame(height: 76).overlay(RoundedRectangle(cornerRadius: 18).stroke(store.appearance.appTheme == theme ? theme.palette.accent : .white.opacity(0.12), lineWidth: 2))
-                                    Text(theme.title).font(.caption.bold())
+                                    HStack(spacing: 4) { Text(theme.title); if theme.premium { Image(systemName: "sparkles").font(.caption2) } }.font(.caption.bold())
                                 }
                             }.buttonStyle(MotionButtonStyle()).accessibilityAddTraits(store.appearance.appTheme == theme ? .isSelected : [])
                         }
@@ -186,6 +197,7 @@ struct AppearanceSettingsView: View {
                 }
             }.padding(22).softAppear()
         }.background(app.background).navigationTitle(roomID == nil ? "Оформление" : "Оформление чата").navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $premiumPlan) { NavigationStack { PremiumPlanView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { premiumPlan = false } } } } }
     }
     private func choose(_ update: (inout AppearancePreferences) -> Void) {
         Haptics.light()

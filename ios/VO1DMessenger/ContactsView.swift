@@ -93,7 +93,7 @@ struct ContactsView: View {
                             VStack(spacing: 10) {
                                 ForEach(contacts) { contact in
                                     NavigationLink {
-                                        ContactDetailView(contactID: contact.id)
+                                        ProfileScreenView(owner: contact.id)
                                     } label: {
                                         HStack(spacing: 14) {
                                             Avatar(name: contact.name)

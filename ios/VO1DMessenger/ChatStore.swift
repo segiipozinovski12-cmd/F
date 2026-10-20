@@ -6,6 +6,7 @@ import CryptoKit
 @MainActor
 final class ChatStore: ObservableObject {
     @Published var state = VaultState()
+    @Published var economy = EconomyState()
     @Published var profileRegistry = ProfileRegistry()
     var profileID: String { profileRegistry.activeID }
     @Published var error: String?

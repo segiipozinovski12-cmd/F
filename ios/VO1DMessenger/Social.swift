@@ -56,6 +56,23 @@ extension ChatStore {
         return Room(id: "dm:" + [myID, contact.id].sorted().joined(separator: ":"), title: contact.name,
                     members: [ownCard, contact.card], creator: "", isGroup: false, createdAt: Date())
     }
+    func shareProfile(with audience: Set<String>) throws {
+        guard audience.count <= 50 else { throw MessengerError.invalid("Выбери не больше 50 контактов") }
+        let contacts = state.contacts.filter { audience.contains($0.id) && !$0.blocked && $0.isBot != true && !isBuiltinBot($0.id) && extended.trustedIDs.contains($0.id) }
+        guard contacts.count == audience.count else { throw MessengerError.invalid("Профиль можно отправить только доверенным контактам") }
+        let profile = ownSharedProfile
+        try profile.validate()
+        let previous = state
+        do {
+            for contact in contacts {
+                let room = try socialRoom(contact)
+                var event = ChatEvent(kind: "profile", room: room, senderName: state.nickname)
+                event.sharedProfile = profile
+                try enqueue(event, room: room, to: [contact.card])
+            }
+            try save()
+        } catch { state = previous; throw error }
+    }
     func publishStory(text: String, image: Data?, audience: Set<String>) throws {
         guard !audience.isEmpty, audience.count <= 50 else { throw MessengerError.invalid("Выбери от 1 до 50 получателей истории") }
         let now = Date(), story = PrivateStory(author: myID, text: text.trimmingCharacters(in: .whitespacesAndNewlines), image: image, createdAt: now, expiresAt: now.addingTimeInterval(86400))

@@ -84,6 +84,7 @@ extension ChatStore {
         try save()
         var registry = profileRegistry; registry.activeID = id; try registry.save()
         generation += 1
+        economy = EconomyState()
         NearbyTransport.shared.stop()
         CallManager.shared.disconnect(); api?.invalidate(); api = nil
         BackgroundCalls.clear(); MediaFiles.clear(); ResumableDownload.clear(); NotificationCoordinator.shared.clearAll()

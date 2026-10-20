@@ -54,6 +54,8 @@
 	<string>Face ID защищает доступ к личным сообщениям.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Микрофон нужен для голосовых сообщений и защищённых аудиозвонков.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>VO1D_PREMIUM распознаёт голосовые сообщения на устройстве. Аудио не отправляется на сервер VO1D.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

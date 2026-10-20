@@ -17,6 +17,7 @@ import network_privacy
 import private_blobs
 import moderation
 import bots
+import commerce
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -121,6 +122,7 @@ class Relay:
             private_blobs.install(db)
             moderation.install(db)
             bots.install(db)
+            commerce.install(db)
 
     @contextmanager
     def db(self):
@@ -182,9 +184,12 @@ class Relay:
         if method == 'GET' and path == '/v2/capabilities':
             with self.db() as db:
                 epoch = db.execute("SELECT value FROM relay_meta WHERE key='account_epoch'").fetchone()
-            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True, 'socialEvents': 1, 'accountEpoch': epoch[0] if epoch else None}
+            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True, 'socialEvents': 1, 'economy': 1, 'accountEpoch': epoch[0] if epoch else None}
         if method == 'POST' and path == '/v2/blobs/ticket':
             return private_blobs.ticket(self,body,ip_hash,APIError)
+        if method == 'POST' and path == '/v3/storekit/notifications':
+            self.rate('appstore-notification:' + ip_hash, 120)
+            return commerce.notification(self, body, APIError)
         if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
             return mailboxes.handle(self,env,body,ip_hash,APIError,b64)
         if method == 'GET' and path == '/health':
@@ -209,6 +214,11 @@ class Relay:
                 self.rate('moderator-mfa:' + user, 8, 300)
             if method == 'POST' and path in ('/v2/reports','/v2/appeals'):
                 self.rate('reports:' + user, 30, 3600)
+            if method == 'POST' and path in ('/v3/economy/payment', '/v3/economy/transcription-authorize'):
+                if env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
+                    raise APIError(403, 'Account session required')
+                self.rate('appstore:' + user, 30)
+                commerce.prepare_payment(self, user, env, body, APIError)
         with self.db() as db:
             self.clean(db)
             if not public:
@@ -216,6 +226,9 @@ class Relay:
                 # owner epoch/lease changes may have happened after auth.
                 if env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
                     user = self.user(env, db)
+                result = commerce.handle(self, db, user, env, body, APIError)
+                if result is not None:
+                    return result
                 result = bots.handle(db,user,env,body,APIError,b64)
                 if result is not None:
                     return result

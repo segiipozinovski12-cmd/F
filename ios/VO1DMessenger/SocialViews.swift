@@ -47,9 +47,12 @@ struct StoryCard: View {
 }
 struct StoryViewerView: View {
     let author: String
+    var initialStoryID: String? = nil
     @EnvironmentObject private var store: ChatStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = ""
+    @State private var progress = 0.0
+    @State private var paused = false
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { clock in
             let stories = store.social.stories.filter { $0.author == author && $0.expiresAt > clock.date }.sorted { $0.createdAt < $1.createdAt }
@@ -59,7 +62,12 @@ struct StoryViewerView: View {
                 } else {
                     HStack(spacing: 5) {
                         ForEach(stories) { story in
-                            Capsule().fill(.white.opacity(page == story.id ? 0.95 : 0.18)).frame(height: 3)
+                            GeometryReader { proxy in
+                                Capsule().fill(.white.opacity(0.18))
+                                    .overlay(alignment: .leading) {
+                                        Capsule().fill(.white.opacity(0.95)).frame(width: proxy.size.width * (page == story.id ? progress : ((stories.firstIndex(where: { $0.id == story.id }) ?? 0) < (stories.firstIndex(where: { $0.id == page }) ?? 0) ? 1 : 0)))
+                                    }
+                            }.frame(height: 3)
                         }
                     }.padding(.horizontal, 24)
                     TabView(selection: $page) {
@@ -67,16 +75,35 @@ struct StoryViewerView: View {
                             ScrollView { StoryCard(story: story).padding(22).softAppear() }.tag(story.id)
                         }
                     }.tabViewStyle(.page(indexDisplayMode: .never))
+                    HStack {
+                        Button { advance(stories, by: -1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("Предыдущая история")
+                        Spacer()
+                        Button { paused.toggle() } label: { Image(systemName: paused ? "play.fill" : "pause.fill").frame(width: 44, height: 44) }.accessibilityLabel(paused ? "Продолжить" : "Пауза")
+                        Spacer()
+                        Button { advance(stories, by: 1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.accessibilityLabel("Следующая история")
+                    }.padding(.horizontal, 24)
                     Text("Листай в стороны · копии могут быть сохранены получателями").font(.caption2).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).padding(.horizontal, 24)
                 }
             }
-            .onAppear { if page.isEmpty { page = stories.first?.id ?? "" } }
+            .onAppear { if page.isEmpty { page = stories.first(where: { $0.id == initialStoryID })?.id ?? stories.first?.id ?? "" } }
             .onChange(of: stories.map(\.id)) { _, ids in if !ids.contains(page) { page = ids.first ?? "" } }
+            .task(id: page) {
+                progress = 0
+                while !Task.isCancelled && !page.isEmpty {
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                    if !paused { progress = min(1, progress + 0.1 / 7) }
+                    if progress >= 1 { advance(stories, by: 1); return }
+                }
+            }
             .animation(reduceMotion ? nil : Motion.layout, value: stories.map(\.id))
         }
         .background { VoidBackground() }
         .navigationTitle(author == store.myID ? "Твои истории" : store.name(author))
         .navigationBarTitleDisplayMode(.inline)
+    }
+    private func advance(_ stories: [PrivateStory], by offset: Int) {
+        guard let index = stories.firstIndex(where: { $0.id == page }), stories.indices.contains(index + offset) else { paused = true; return }
+        page = stories[index + offset].id; paused = false
     }
 }
 struct StoriesStrip: View {

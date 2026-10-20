@@ -182,6 +182,9 @@ struct ChatView: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
+                        if let room, !room.isGroup, !store.isLocalUtilityRoom(roomID), let peer = room.members.first(where: { $0.id != store.myID }) {
+                            NavigationLink { ProfileScreenView(owner: peer.id) } label: { Label("Профиль собеседника", systemImage: "person.crop.circle") }
+                        }
                         Button("Отправить одноразовый текст · 30 секунд", systemImage: "eye.slash") { ghostConfirm = true }
                             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editing != nil || store.isLocalUtilityRoom(roomID))
                         Button("Фильтр по автору и дате") { filterSheet=true }
