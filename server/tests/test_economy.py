@@ -161,6 +161,16 @@ class EconomyTests(unittest.TestCase):
             self.assertEqual(self.post('payment', {'transactionID': '12345'}, self.b)[0], 409)
         self.assertEqual(self.post('payment', {'transactionID': 'not-an-apple-id', 'coins': 1000000})[0], 400)
 
+    def test_payment_finishing_after_explicit_deletion_does_not_recreate_wallet(self):
+        def apple_response(*_):
+            self.assertEqual(self.request('/v1/account', 'DELETE', token=self.a)[0], 200)
+            return {'transactionId': '12345', 'productId': 'io.vo1d.coins.500'}
+        with patch('storekit.verify_transaction', side_effect=apple_response):
+            self.assertEqual(self.post('payment', {'transactionID': '12345'})[0], 410)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM economy_wallets').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT count(*) FROM economy_payments').fetchone()[0], 0)
+
     def test_subscription_replay_never_extends_expiry_and_revocation_removes_it(self):
         payment = {'transactionId': '23456', 'productId': commerce.PREMIUM_PRODUCT, 'expiresDate': (int(time.time()) + 300) * 1000}
         with patch('storekit.verify_transaction', return_value=payment):

@@ -148,6 +148,10 @@ def handle(relay, db, user, env, body, error):
         return None
     if env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
         raise error(403, 'Для коллекции нужна сессия владельца')
+    if not db.execute('SELECT 1 FROM identities WHERE id=?', (user,)).fetchone():
+        # A payment verification can outlive explicit account deletion. Do not
+        # recreate its wallet or invite an automatic session re-registration.
+        raise error(410, 'Аккаунт удалён во время операции')
     route = path[len(PREFIX):]
     now = int(time.time())
     admin_row = moderation.owner(db)
