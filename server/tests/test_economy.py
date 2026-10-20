@@ -118,6 +118,7 @@ class EconomyTests(unittest.TestCase):
         moved = self.post('transfer', {'artifactID': gift['id'], 'recipient': self.bob_card['id']})
         self.assertEqual(moved[0], 200)
         self.assertFalse(moved[1]['artifact']['visible'])
+        self.assertEqual(moved[1]['artifact']['lastPricePaid'], 0)
         self.assertEqual(self.post('list', {'artifactID': gift['id'], 'price': 200})[0], 404)
         self.assertEqual(len(self.request('/v3/economy/inventory', token=self.b)[1]['artifacts']), 1)
 
@@ -132,6 +133,7 @@ class EconomyTests(unittest.TestCase):
         self.assertEqual(self.request('/v3/economy/catalog', token=self.a)[1]['wallet']['balance'], 100500)
         self.assertEqual(self.post('market/buy', {'listingID': sale['listingID'], 'expectedPrice': 1000})[0], 409)
         self.assertEqual(result[1]['artifact']['pricePaid'], 500)
+        self.assertEqual(result[1]['artifact']['lastPricePaid'], 1000)
 
     def test_concurrent_market_buy_has_one_winner(self):
         self.publish(); self.credit(); self.credit(self.bob_card['id']); gift = self.buy()
@@ -202,6 +204,15 @@ class EconomyTests(unittest.TestCase):
         with patch('storekit.verify_transaction', return_value=revoked):
             self.assertEqual(self.request('/v3/storekit/notifications', 'POST', notification)[0], 200)
         self.assertEqual(self.request('/v3/economy/catalog', token=self.a)[1]['wallet']['premiumUntil'], original['expiresDate'] // 1000)
+
+    def test_malformed_notification_objects_do_not_reach_payment_verification(self):
+        import base64
+        def jws(value): return 'header.' + base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b'=').decode() + '.untrusted'
+        with patch('storekit.verify_transaction') as verify:
+            for value in [[], 1, 'text', None]:
+                outer = {'signedPayload': jws({'data': {'signedTransactionInfo': jws(value)}})}
+                self.assertEqual(self.request('/v3/storekit/notifications', 'POST', outer)[0], 400)
+            verify.assert_not_called()
 
     def test_failed_market_payment_rolls_back_seller_and_owner(self):
         self.publish(); self.credit(); gift = self.buy()

@@ -285,6 +285,7 @@ struct ArtifactAdminView: View {
     @State private var selected: ArtifactCollection?
     @State private var publishUpgrades = false
     @State private var notice: String?
+    @State private var success: String?
     @State private var busy = false
     var body: some View {
         ScrollView {
@@ -292,6 +293,7 @@ struct ArtifactAdminView: View {
                 Text("Твой следующий дроп.").font(.system(size: 30, weight: .bold, design: .rounded))
                 Text("Публикация открывает покупку у всех пользователей. Улучшения выпускаются отдельно, в том числе после распродажи.").font(.callout).foregroundStyle(.secondary)
                 if let notice { EconomyNotice(message: notice) }
+                if let success { Label(success, systemImage: "checkmark.circle.fill").font(.callout).foregroundStyle(.green) }
                 ForEach(collections) { item in
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(spacing: 15) {
@@ -336,7 +338,7 @@ struct ArtifactAdminView: View {
             defer { busy = false }
             do {
                 _ = try await store.artifactCommand(route, ArtifactCommand(collection: item.id, confirmed: true))
-                notice = nil; selected = nil; Haptics.success(); await load()
+                notice = nil; success = route == "admin/upgrades" ? "Улучшения \(item.title) опубликованы" : "\(item.title) появился в витрине у всех"; selected = nil; Haptics.success(); await load()
             } catch is CancellationError { return }
             catch { notice = error.localizedDescription }
         }

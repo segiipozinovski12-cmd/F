@@ -14,13 +14,13 @@ struct ProfileScreenView: View {
     @State private var composing = false
     @State private var notice: String?
     @State private var loading = true
-    @State private var showHidden = false
+    @State private var showHidden = true
     @State private var room: Room?
     private var mine: Bool { owner == store.myID }
     private var profile: SharedProfile? { mine ? store.ownSharedProfile : store.social.profiles[owner] }
     private var name: String { profile?.name ?? store.name(owner) }
     private var stories: [PrivateStory] { store.social.stories.filter { $0.author == owner && $0.expiresAt > Date() }.sorted { $0.createdAt > $1.createdAt } }
-    private var ownGifts: [CollectibleArtifact] { mine ? store.economy.artifacts : gifts }
+    private var ownGifts: [CollectibleArtifact] { mine ? (store.economy.owner == owner ? store.economy.artifacts : []) : gifts }
     private var visibleGifts: [CollectibleArtifact] { ownGifts.filter { $0.visible || (mine && showHidden) } }
     private var featured: CollectibleArtifact? { ownGifts.first { $0.visible && $0.traits != nil } }
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]

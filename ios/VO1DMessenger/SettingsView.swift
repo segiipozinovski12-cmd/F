@@ -1,16 +1,8 @@
 import SwiftUI
-import PhotosUI
 import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var store: ChatStore
-    @State private var name = ""
-    @State private var username = ""
-    @State private var bio = ""
-    @State private var usernameStatus = ""
-    @State private var usernameAvailable: Bool?
-    @State private var avatarItem: PhotosPickerItem?
-    @State private var usernameCheckTask: Task<Void, Never>?
     @State private var setupCode = ""
     @State private var resetCode = ""
     @State private var showDelete = false
@@ -98,26 +90,7 @@ struct SettingsView: View {
             }
             .navigationBarHidden(true)
             .labelStyle(FeatureLabelStyle())
-            .onAppear {
-                name = store.state.nickname
-                username = store.state.username ?? ""
-                bio = store.state.bio ?? ""
-                if !username.isEmpty {
-                    usernameAvailable = true
-                    usernameStatus = username == "vo1d" ? "Закреплён навсегда" : "Текущий @\(username)"
-                }
-            }
             .task { await store.refreshPushStatus() }
-            .onDisappear {
-                usernameCheckTask?.cancel()
-            }
-            .onChange(of: avatarItem) { _, item in
-                guard let item else { return }
-                Task {
-                    await loadAvatar(item)
-                    avatarItem = nil
-                }
-            }
             .confirmationDialog("Удалить аккаунт?", isPresented: $showDelete, titleVisibility: .visible) {
                 Button("Удалить аккаунт и локальные ключи", role: .destructive) {
                     Task { await store.deleteAccount() }
@@ -126,172 +99,6 @@ struct SettingsView: View {
                 Text("Будет отправлен запрос на удаление серверной записи, затем локальное зашифрованное хранилище и Keychain будут очищены. Копии, сохранённые другими людьми, приложение удалить не может.")
             }
         }
-    }
-
-    private var profileCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Avatar(
-                    name: store.state.nickname,
-                    size: 70,
-                    imageData: store.state.profileAvatar
-                )
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(store.state.nickname)
-                        .font(.title3.bold())
-                    Text(store.state.username.map { "@\($0)" } ?? "Username не задан")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(Theme.secondary)
-                }
-
-                Spacer()
-
-                PhotosPicker(selection: $avatarItem, matching: .images) {
-                    Image(systemName: "camera.fill")
-                        .font(.subheadline.bold())
-                        .frame(width: 40, height: 40)
-                        .background(.white.opacity(0.08), in: Circle())
-                }
-                .buttonStyle(MotionButtonStyle())
-                .accessibilityLabel("Изменить аватар")
-            }
-
-            TextField("Отображаемое имя", text: $name)
-                .textContentType(.nickname)
-                .voidField()
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
-                    Text("@")
-                        .font(.headline.monospaced())
-                        .foregroundStyle(Theme.secondary)
-                    TextField("username", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.body.monospaced())
-                }
-                .voidField()
-                .onChange(of: username) { _, value in
-                    let clean = String(
-                        value
-                            .lowercased()
-                            .filter { $0.isLetter || $0.isNumber || $0 == "_" }
-                            .prefix(20)
-                    )
-
-                    if clean != value {
-                        username = clean
-                        return
-                    }
-
-                    usernameCheckTask?.cancel()
-                    usernameAvailable = nil
-
-                    if store.state.username == "vo1d" {
-                        usernameAvailable = true
-                        usernameStatus = "Закреплён навсегда"
-                        return
-                    }
-
-                    if clean.isEmpty {
-                        usernameStatus = "4–20 символов: a-z, 0-9, _"
-                        return
-                    }
-
-                    if clean.count < 4 {
-                        usernameStatus = "Минимум 4 символа"
-                        return
-                    }
-
-                    usernameStatus = "Проверяем…"
-                    usernameCheckTask = Task {
-                        try? await Task.sleep(for: .milliseconds(450))
-                        if Task.isCancelled { return }
-                        if let check = await store.checkUsername(clean) {
-                            if Task.isCancelled { return }
-                            await MainActor.run {
-                                usernameAvailable = check.valid && check.available
-                                usernameStatus = !check.valid
-                                    ? "Недопустимый username"
-                                    : (check.available ? "Свободен" : "Уже занят")
-                            }
-                        }
-                    }
-                }
-
-                HStack(spacing: 6) {
-                    Image(systemName: usernameAvailable == true ? "checkmark.circle.fill" : usernameAvailable == false ? "xmark.circle.fill" : "circle.dashed")
-                    Text(usernameStatus.isEmpty ? "4–20 символов: a-z, 0-9, _" : usernameStatus)
-                }
-                .font(.caption2)
-                .foregroundStyle(usernameAvailable == false ? .white.opacity(0.58) : Theme.secondary)
-            }
-            .disabled(store.state.username == "vo1d")
-            if store.state.username == "vo1d" {
-                Label("Первый зарегистрированный владелец · username изменить нельзя", systemImage: "lock.fill")
-                    .font(.caption2).foregroundStyle(Theme.secondary)
-            }
-
-            TextField("О себе", text: $bio, axis: .vertical)
-                .lineLimit(2...4)
-                .voidField()
-                .onChange(of: bio) { _, value in
-                    if value.count > 160 { bio = String(value.prefix(160)) }
-                }
-
-            HStack {
-                Text("\(bio.count)/160")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(Theme.secondary)
-                Spacer()
-
-                if store.state.profileAvatar != nil {
-                    Button("Убрать фото") {
-                        store.state.profileAvatar = nil
-                        store.persist()
-                    }
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondary)
-                }
-            }
-
-            Button {
-                let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !cleanedName.isEmpty else { return }
-                let fence = store.sessionFence
-
-                Task {
-                    if !username.isEmpty {
-                        guard username.count >= 4 else {
-                            store.error = "Username должен содержать минимум 4 символа"
-                            return
-                        }
-                        guard await store.claimUsername(username) else { return }
-                    }
-
-                    guard (try? store.requireCurrentSession(fence)) != nil else { return }
-                    store.state.nickname = String(cleanedName.prefix(40))
-                    store.state.bio = String(bio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-                    do { try store.save() } catch { store.error = error.localizedDescription }
-                    usernameAvailable = true
-                    usernameStatus = store.state.username.map { "Текущий @\($0)" } ?? ""
-                }
-            } label: {
-                HStack {
-                    Text("СОХРАНИТЬ ПРОФИЛЬ")
-                    Spacer()
-                    Image(systemName: "checkmark")
-                }
-            }
-            .buttonStyle(PrimaryButton())
-            .disabled(
-                name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                (!username.isEmpty && username.count < 4) ||
-                (usernameAvailable == false && username != store.state.username)
-            )
-        }
-        .panel()
     }
 
     private var keysCard: some View {
@@ -579,21 +386,6 @@ struct SettingsView: View {
         .panel()
     }
 
-    @MainActor
-    private func loadAvatar(_ item: PhotosPickerItem) async {
-        let fence = store.sessionFence
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self) else { return }
-            try store.requireCurrentSession(fence)
-            guard let jpeg = SocialImage.jpeg(data, maxSide: 384, limit: 160_000) else {
-                throw MessengerError.invalid("Не удалось подготовить аватар до 160 КБ")
-            }
-            store.state.profileAvatar = jpeg
-            try store.save()
-        } catch is CancellationError { return }
-        catch { store.error = error.localizedDescription }
-    }
-
     private func sectionTitle(_ title: String, icon: String) -> some View {
         HStack {
             Image(systemName: icon).symbolVariant(.fill)
@@ -743,6 +535,8 @@ struct PrivacyPolicyView: View {
                 ("5. Удаление", "Удаление аккаунта очищает локальные данные и запрашивает удаление серверной записи при доступном relay. Решения и ограниченный аудит могут сохраняться для безопасности и апелляций. Для @vo1d сохраняются публичное закрепление владельца и проверенная MFA. Копии у других пользователей не уничтожаются."),
                 ("Жалобы", "Ты сам выбираешь доказательства и даёшь согласие. Выбранный текст, комментарий и файлы шифруются для @vo1d; модератор сможет их прочитать и сохранить. Relay видит ID, причину, время и размер жалобы. Доказательства на relay хранятся до 7 дней, сведения о деле — до 90 дней. Аудит ограничен 50 000 событиями."),
                 ("Боты", "Бот является отдельным участником: его владелец и исполнитель могут читать сообщения, адресованные боту. Это не даёт им доступ к другим чатам. Relay видит регистрацию бота и связь с владельцем."),
+                ("Подарки и платежи", "Сервер хранит баланс VO1Dcoin, владение, номера и свойства артефактов, операции и идентификаторы подтверждённых покупок App Store. Подарки в профиле и объявления на маркете доступны другим пользователям вместе с ID или username владельца. При удалении аккаунта платёжные номера остаются обезличенными для защиты от повторного зачисления."),
+                ("Расшифровка голосовых", "В VO1D_PREMIUM речь распознаётся на устройстве. На сервер отправляется запрос проверки подписки без аудио и текста. При отсутствии локальной языковой модели запись не загружается в облачный сервис распознавания."),
                 ("6. Изменения", "Перед публикацией приложения владелец сервиса должен дополнить эту политику актуальными контактными данными, юрисдикцией и сроками хранения для своей инфраструктуры.")
             ]
         )
@@ -759,6 +553,8 @@ struct TermsView: View {
                 ("Доступ", "Ключ доступа и криптографические ключи необходимо хранить самостоятельно. Потеря локальных ключей может означать потерю доступа к истории."),
                 ("Без гарантий абсолютной анонимности", "Шифрование защищает содержимое, но сеть и relay всё равно обрабатывают технические метаданные. VO1D не обещает абсолютную сетевую анонимность."),
                 ("Доступность", "Связь зависит от iOS, интернет-соединения и выбранного relay. Непрерывная доступность не гарантируется."),
+                ("VO1Dcoin и подарки", "Монеты используются для покупок и улучшений внутри VO1D. Перед оплатой указана цена; списание и переход владения подтверждаются сервером. Продажа приносит VO1Dcoin. Вывод в деньги и перенос в блокчейн в этой версии не предусмотрены. Вероятности каждого свойства показаны перед улучшением; повторно изменить выпавшее сочетание нельзя. Оценка редкости не гарантирует цену продажи."),
+                ("VO1D_PREMIUM", "Месячная подписка оплачивается и автоматически продлевается через App Store. Цена показана в валюте региона магазина. Управлять продлением можно в настройках подписок Apple. Расшифровка включена без дополнительного списания монет и зависит от доступности локальной модели языка на устройстве."),
                 ("Безопасность", "Перед публичным запуском криптографический протокол и серверную инфраструктуру рекомендуется пройти независимый аудит."),
                 ("Версия документа", "Эта встроенная версия является продуктовым черновиком для приложения и должна быть дополнена юридическими реквизитами владельца перед коммерческим релизом.")
             ]

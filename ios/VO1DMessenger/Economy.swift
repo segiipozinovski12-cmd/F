@@ -96,6 +96,7 @@ extension ChatStore {
         guard let api, !locked, sessionUnlocked else { throw MessengerError.invalid("Подключись к VO1D") }
         let fence = sessionFence
         let catalog: EconomyCatalog = try await api.request("v3/economy/catalog")
+        try requireCurrentSession(fence)
         let inventory: ArtifactPage = try await api.request("v3/economy/inventory")
         try requireCurrentSession(fence)
         guard !locked, sessionUnlocked else { throw CancellationError() }
@@ -162,6 +163,10 @@ extension ChatStore {
     }
 
     func recoverStorePurchases() async {
+        guard economyRecoveryGeneration != generation else { return }
+        let recoveryGeneration = generation
+        economyRecoveryGeneration = recoveryGeneration
+        defer { if economyRecoveryGeneration == recoveryGeneration { economyRecoveryGeneration = nil } }
         let fence = sessionFence
         do {
             try await refreshEconomy()

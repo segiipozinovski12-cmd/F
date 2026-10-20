@@ -7,6 +7,7 @@ import CryptoKit
 final class ChatStore: ObservableObject {
     @Published var state = VaultState()
     @Published var economy = EconomyState()
+    var economyRecoveryGeneration: Int?
     @Published var profileRegistry = ProfileRegistry()
     var profileID: String { profileRegistry.activeID }
     @Published var error: String?
@@ -62,6 +63,7 @@ final class ChatStore: ObservableObject {
     }
 
     func loadProtectedState() throws {
+        economy = EconomyState()
         profileRegistry = try ProfileRegistry.load()
         let identity = try Keychain.load(profileID: profileID)
         let vault = try Vault(profileID: profileID)
@@ -1908,6 +1910,7 @@ final class ChatStore: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func resetLocalIdentity() throws {
+        economy = EconomyState()
         NearbyTransport.shared.stop()
         serverResetRequired = false
         CallManager.shared.disconnect()

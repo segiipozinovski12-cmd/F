@@ -47,7 +47,7 @@ final class CollectionRenderingTests: XCTestCase {
             ["id": "preview-\(id)", "collection": id, "serial": index == 0 ? 1 : 126 + index * 73,
              "owner": store.myID, "ownerUsername": "alexmorgan", "pricePaid": prices[index], "lastPricePaid": prices[index],
              "acquired": Int(Date().timeIntervalSince1970), "visible": true,
-             "traits": index == 0 ? variants : NSNull(), "listingID": NSNull(), "salePrice": NSNull()]
+             "traits": index == 0 ? variants as Any : NSNull() as Any, "listingID": NSNull(), "salePrice": NSNull()]
         }
         func bytes(_ object: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: object) }
         CollectionPreviewProtocol.routes = [

@@ -1,6 +1,6 @@
 # VO1D Messenger 2 · work branch
 
-Latest reliability/social update: [implemented changes and deployment boundaries](docs/SOCIAL-RELEASE.md).
+Latest: [profiles, collectibles, VO1Dcoin and Premium](docs/COLLECTIBLES.md). Messaging reliability: [implemented changes and deployment boundaries](docs/SOCIAL-RELEASE.md).
 
 VO1D NEXT is developed on `codex/vo1d-next`: permanent first-claim `@vo1d`, opt-in encrypted reports/MFA moderation and recovery, real `@vo1d_bot_father` bots with native/external libsignal executors, local Security Check, Private Spaces, Secure Notes, revocable private links, one-view text and scoped linked-device sending/files/history. [Implementation and remaining work](docs/VO1D-NEXT.md), [moderation](docs/MODERATION.md), [bots](docs/BOTS.md), [external executor](bot-worker/README.md), [device sync](docs/DEVICE-SYNC.md), [operator recovery](docs/OPERATIONS.md), [parser fuzzing](docs/FUZZING.md). This branch is not a completed P0–P4 release.
 

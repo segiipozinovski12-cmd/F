@@ -1,4 +1,4 @@
-# VO1D NEXT · free interface and privacy update
+# VO1D NEXT · messaging reliability and privacy update
 
 Branch: `codex/vo1d-next`. Build on a Mac with `bash scripts/open_iphone.sh`.
 The script prepares the pinned SDK and opens Xcode; choose a signing Team and an
@@ -6,11 +6,11 @@ attached iPhone, then Run. Release signing/distribution remains the owner's step
 
 ## Current interface
 
-Premium, voucher redemption, signed collectible UI, profile previews and profile
-request controls have been removed. All accounts have 30 simultaneous stories and
-60 folders. Old entitlement JSON fields are ignored when opening the vault; retired
-server records are retained and scrubbed if their owner deletes the account.
-There is no issuer, checkout, blockchain transaction or subscription endpoint.
+Profiles, collectible gifts, VO1Dcoin, the publication panel and VO1D_PREMIUM are
+implemented in the current additive release: see [COLLECTIBLES.md](COLLECTIBLES.md)
+for behavior, supplies, odds, payment configuration and validation. All accounts
+retain 30 simultaneous stories and 60 folders. Legacy voucher and v2 commerce
+endpoints remain retired; the new server-authoritative economy uses `/v3/economy`.
 
 Onboarding asks for a display name. A searchable username is optional in Settings;
 a display name is not a username. Everyday mode enables discovery without changing
@@ -18,7 +18,7 @@ an already selected Tor/SOCKS route. Both onboarding and connection settings sho
 explicit tradeoffs for private delivery/Tor, including discovery address exchange, invitation requirements in maximum mode,
 background limitations, latency and metadata exposure.
 
-Settings → Appearance offers five dark app palettes, a default chat palette,
+Settings → Appearance offers five free palettes and three Premium palettes, a default chat palette,
 per-conversation overrides, optional static texture, text size and compact rows.
 Choices live in each identity's encrypted vault and are not sent to peers.
 Actions use rounded controls, press feedback and smooth layout transitions. New

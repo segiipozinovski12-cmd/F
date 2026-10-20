@@ -370,7 +370,10 @@ def notification(relay, body, error):
         parts = value.split('.')
         if len(parts) != 3:
             raise error(400, 'Invalid notification')
-        return json.loads(base64.urlsafe_b64decode(parts[1] + '=' * (-len(parts[1]) % 4)))
+        decoded = json.loads(base64.b64decode(parts[1] + '=' * (-len(parts[1]) % 4), altchars=b'-_', validate=True))
+        if not isinstance(decoded, dict):
+            raise error(400, 'Invalid notification object')
+        return decoded
     hint = payload(payload(body.get('signedPayload'))['data']['signedTransactionInfo'])
     original = hint.get('originalTransactionId')
     if not isinstance(original, str) or not re.fullmatch('[0-9]{1,30}', original):
