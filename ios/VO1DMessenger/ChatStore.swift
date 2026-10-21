@@ -80,12 +80,16 @@ final class ChatStore: ObservableObject {
         locked = state.appLock || activeProfile?.isPrivateSpace == true
         sessionUnlocked = !state.onboarded || (!preferences.requireAccessKey && activeProfile?.isPrivateSpace != true)
 
-        var relayChanged = false
+        let savedRelay = state.server
+        state.server = AppConfig.relayAfterUpgrade(savedRelay)
+        let relayChanged = state.server != savedRelay
+        if relayChanged {
+            api?.invalidate(); api = nil
+            // A call token belongs to its issuer. Never send an old server's
+            // delegated credential to the replacement server.
+            BackgroundCalls.clear()
+        }
         if state.onboarded {
-            if state.server.isEmpty {
-                state.server = AppConfig.productionRelay
-                relayChanged = true
-            }
             do {
                 api = try APIClient(server: state.server, identity: identity, privacy: preferences)
                 connection = "Подключение…"
@@ -115,7 +119,7 @@ final class ChatStore: ObservableObject {
         do { try save() } catch { self.error = error.localizedDescription }
     }
     func onboardProduction(name: String) async {
-        await configure(name: name, server: state.server.isEmpty ? AppConfig.productionRelay : state.server)
+        await configure(name: name, server: AppConfig.relayAfterUpgrade(state.server))
     }
 
     func connectProductionRelay() async {
@@ -130,7 +134,7 @@ final class ChatStore: ObservableObject {
         defer { if connectingGeneration == expected { connectingGeneration = nil } }
         connection = "Подключение…"
         do {
-            let server=state.server.isEmpty ? AppConfig.productionRelay : state.server
+            let server = AppConfig.relayAfterUpgrade(state.server)
             try await prepareNetworkRoute()
             guard expected == generation else { return }
             let client = try APIClient(server: server, identity: identity, privacy: preferences)

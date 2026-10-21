@@ -82,6 +82,11 @@ extension ChatStore {
         var nextState = try nextVault.read(key:nextIdentity.storage)
         if nextState.extended == nil { nextState.extended = ExtendedState() }
         try save()
+        let savedRelay = nextState.server
+        nextState.server = AppConfig.relayAfterUpgrade(savedRelay)
+        if nextState.server != savedRelay {
+            try nextVault.write(nextState, key: nextIdentity.storage)
+        }
         var registry = profileRegistry; registry.activeID = id; try registry.save()
         generation += 1
         economy = EconomyState()

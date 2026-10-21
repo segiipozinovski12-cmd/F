@@ -87,6 +87,10 @@ enum BackgroundCalls {
         let query: [String:Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:"calls",kSecReturnData as String:true,kSecMatchLimit as String:kSecMatchLimitOne]
         guard SecItemCopyMatching(query as CFDictionary,&item) == errSecSuccess, let data = item as? Data else { throw MessengerError.invalid("Фоновое разрешение звонков недоступно") }
         let descriptor = try Wire.decoder.decode(Descriptor.self,from:data)
+        guard AppConfig.relayAfterUpgrade(descriptor.server) == descriptor.server else {
+            clear()
+            throw MessengerError.invalid("Фоновое разрешение нужно обновить на новом сервере")
+        }
         let delegated = try descriptor.certificate.validate(for:descriptor.card)
         guard try Curve25519.Signing.PrivateKey(rawRepresentation:descriptor.delegatedSigning).publicKey.rawRepresentation == delegated.rawRepresentation else { throw MessengerError.invalid("Ключ разрешения звонков повреждён") }
         return descriptor
