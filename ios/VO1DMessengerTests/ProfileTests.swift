@@ -24,7 +24,7 @@ final class ProfileTests: XCTestCase {
         legacy.nickname = "Existing identity"
         legacy.server = "https://f-production-bdfe.up.railway.app"
         let message = ChatMessage(id: UUID().uuidString, roomID: ChatStore.savedRoomID, sender: store.myID,
-                                  text: "Keep encrypted history", createdAt: Date(), expiresAt: nil, replyTo: nil, attachment: nil)
+                                  text: "Keep encrypted history", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)), expiresAt: nil, replyTo: nil, attachment: nil)
         legacy.messages = [message]
         var local = ExtendedState()
         local.privacy.embeddedTor = true; local.privacy.requirePrivateDelivery = true
