@@ -82,7 +82,7 @@ def verify_transaction(identifier, expected_account, error):
             raise ValueError()
         payment = json.loads(base64.urlsafe_b64decode(encoded[1] + '=' * (-len(encoded[1]) % 4)))
         if (payment.get('transactionId') != identifier or
-                payment.get('bundleId') != os.environ.get('VO1D_APPLE_BUNDLE_ID', 'io.vo1d.messenger') or
+                payment.get('bundleId') != os.environ.get('VO1D_APPLE_BUNDLE_ID', 'io.vo1d.messenger').strip() or
                 payment.get('environment') != environment or
                 str(payment.get('appAccountToken', '')).lower() != expected_account.lower() or
                 payment.get('inAppOwnershipType') != 'PURCHASED' or
