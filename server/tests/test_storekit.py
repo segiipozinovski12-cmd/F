@@ -47,6 +47,20 @@ class StoreKitVerificationTests(unittest.TestCase):
                 self.assertTrue(storekit.payments_configured())
                 client.assert_not_called()
 
+    def test_bundle_whitespace_is_normalized_only_in_server_configuration(self):
+        self.settings['VO1D_APPLE_BUNDLE_ID'] = '  io.vo1d.messenger\n'
+        with patch.dict(os.environ, self.settings, clear=True):
+            self.assertTrue(storekit.payments_configured())
+            token = storekit.api_token(APIError)
+            encoded = token.split('.')[1]
+            claims = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+            self.assertEqual(claims['bid'], 'io.vo1d.messenger')
+        self.assertEqual(self.verify(self.payment), self.payment)
+        for bundle in ['other.app', ' io.vo1d.messenger ', 'io.vo1d.messenger.attacker']:
+            with self.subTest(bundle=bundle), self.assertRaises(APIError) as caught:
+                self.verify(dict(self.payment, bundleId=bundle))
+            self.assertEqual(caught.exception.status, 403)
+
     def test_uses_only_fixed_apple_host_and_live_server_response(self):
         self.assertEqual(self.verify(self.payment), self.payment)
 
