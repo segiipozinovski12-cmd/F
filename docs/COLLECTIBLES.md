@@ -15,7 +15,7 @@ published to the commerce server. Existing story audiences and 24-hour expiratio
 remain in force. Shared stories have progress, pause and previous/next controls.
 
 The five original procedural 3D artworks are Singularity, Sovereign, Prism, Orbit and
-Nova. Cards are rendered locally at any resolution. No remote image tracking or
+Nova. Cards are rendered locally into cached 512px previews. No remote image tracking or
 emoji substitute is used. Purchased gifts start without collectible attributes.
 Their collection serial, original price in VO1Dcoin and owner are server records.
 Gifts are initially hidden; owners may display/hide them in their profile. Public

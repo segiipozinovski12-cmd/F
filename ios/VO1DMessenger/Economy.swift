@@ -149,7 +149,7 @@ extension ChatStore {
         try requireCurrentSession(fence)
         switch result {
         case .success(let verification): try await acceptStoreTransaction(verification)
-        case .pending: throw MessengerError.invalid("Покупка ожидает подтверждения App Store. Монеты поступят после оплаты.")
+        case .pending: throw MessengerError.invalid("Покупка ожидает подтверждения App Store. Она появится в VO1D после оплаты.")
         case .userCancelled: break
         @unknown default: break
         }

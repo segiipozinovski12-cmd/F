@@ -7,6 +7,7 @@ struct ArtifactSceneControls: Equatable {
     var distance: Float = 7.4
     var automatic = true
     var lighting = 0
+    var reset = 0
 }
 
 private struct ArtifactSceneSurface: UIViewRepresentable {
@@ -36,23 +37,34 @@ private struct ArtifactSceneSurface: UIViewRepresentable {
             view.pointOfView = view.scene?.rootNode.childNode(withName: "camera", recursively: false)
             context.coordinator.key = key
         }
+        view.preferredFramesPerSecond = ProcessInfo.processInfo.isLowPowerModeEnabled ? 15 : 30
         view.isUserInteractionEnabled = interactive
         let orbit = view.scene?.rootNode.childNode(withName: "orbit", recursively: false)
         let floating = orbit?.childNode(withName: "float", recursively: false)
-        if context.coordinator.applied?.yaw != controls.yaw || context.coordinator.applied?.pitch != controls.pitch {
-            orbit?.eulerAngles = SCNVector3(controls.pitch, controls.yaw, 0)
+        let previous = context.coordinator.applied
+        let turning = orbit?.action(forKey: "turn") != nil
+        let reset = previous?.reset != controls.reset
+        let changed = previous?.yaw != controls.yaw || previous?.pitch != controls.pitch
+        let adjusting = view.gestureRecognizers?.contains { $0.state == .began || $0.state == .changed } == true
+        SCNTransaction.begin(); SCNTransaction.animationDuration = motion && !adjusting && active ? 0.22 : 0
+        if reset {
+            orbit?.removeAction(forKey: "turn"); orbit?.eulerAngles = SCNVector3(controls.pitch, controls.yaw, 0)
+        } else if changed {
+            let current = orbit?.presentation.eulerAngles ?? SCNVector3Zero
+            orbit?.removeAction(forKey: "turn")
+            orbit?.eulerAngles = SCNVector3(controls.pitch, current.y + controls.yaw - (previous?.yaw ?? 0), 0)
+        } else if turning && (!active || !motion || !controls.automatic) {
+            let current = orbit?.presentation.eulerAngles ?? SCNVector3Zero
+            orbit?.removeAction(forKey: "turn"); orbit?.eulerAngles = current
         }
         view.pointOfView?.position.z = controls.distance
+        SCNTransaction.commit()
         let animate = active && motion && controls.automatic && !ProcessInfo.processInfo.isLowPowerModeEnabled
         if animate && orbit?.action(forKey: "turn") == nil {
             orbit?.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 32)), forKey: "turn")
             let up = SCNAction.moveBy(x: 0, y: 0.065, z: 0, duration: 2.4); up.timingMode = .easeInEaseOut
             floating?.runAction(.repeatForever(.sequence([up, up.reversed()])), forKey: "float")
         } else if !animate {
-            if orbit?.action(forKey: "turn") != nil, context.coordinator.applied?.yaw == controls.yaw {
-                let current = orbit?.presentation.eulerAngles ?? SCNVector3Zero
-                orbit?.removeAction(forKey: "turn"); orbit?.eulerAngles = current
-            }
             orbit?.removeAction(forKey: "turn"); floating?.removeAction(forKey: "float"); floating?.position.y = 0
         }
         for name in ["key", "fill", "rim"] {
@@ -77,7 +89,9 @@ private struct ArtifactSceneSurface: UIViewRepresentable {
         @objc func pan(_ gesture: UIPanGestureRecognizer) {
             if gesture.state == .began {
                 if let view = gesture.view as? SCNView, let orbit = view.scene?.rootNode.childNode(withName: "orbit", recursively: false) {
-                    parent.controls.yaw = orbit.presentation.eulerAngles.y
+                    let current = orbit.presentation.eulerAngles
+                    orbit.removeAction(forKey: "turn"); orbit.eulerAngles = current
+                    parent.controls.yaw = current.y; applied?.yaw = current.y
                 }
                 parent.controls.automatic = false; start = parent.controls
             }
@@ -100,15 +114,17 @@ struct ArtifactHero: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = false
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     @State private var controls = ArtifactSceneControls()
     var body: some View {
         ArtifactBackdrop(collection: collection, traits: traits)
             .overlay {
                 ArtifactSceneSurface(collection: collection, model: traits?.model.id, active: active && visible && scenePhase == .active,
-                                     interactive: false, motion: !reduceMotion, controls: $controls).allowsHitTesting(false)
+                                     interactive: false, motion: !reduceMotion && !lowPower, controls: $controls).allowsHitTesting(false)
             }
             .aspectRatio(1, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
             .onAppear { visible = true }.onDisappear { visible = false }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled }
             .accessibilityLabel("Объёмный артефакт \(ArtifactCollection.titles[collection] ?? collection), \(traits?.model.title ?? "Original")")
     }
 }
@@ -121,6 +137,7 @@ struct ArtifactInspectionView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = false
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     @State private var controls = ArtifactSceneControls()
     private let lightNames = ["Студия", "Контраст", "Мягкий"]
 
@@ -139,7 +156,7 @@ struct ArtifactInspectionView: View {
                 ZStack(alignment: .bottom) {
                     ArtifactBackdrop(collection: collection, traits: traits)
                     ArtifactSceneSurface(collection: collection, model: traits?.model.id, active: visible && scenePhase == .active,
-                                         interactive: true, motion: !reduceMotion, controls: $controls)
+                                         interactive: true, motion: !reduceMotion && !lowPower, controls: $controls)
                     HStack {
                         Text(traits?.model.title ?? "Original").font(.caption.bold())
                         Spacer()
@@ -161,15 +178,16 @@ struct ArtifactInspectionView: View {
                 }
                 HStack(spacing: 10) {
                     Button { controls.automatic.toggle() } label: { Label("Вращение", systemImage: controls.automatic && !reduceMotion ? "pause.fill" : "play.fill").font(.caption.bold()).frame(maxWidth: .infinity, minHeight: 46).background(.white.opacity(0.07), in: Capsule()) }
-                        .disabled(reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled)
+                        .disabled(reduceMotion || lowPower)
                     Button { controls.lighting = (controls.lighting + 1) % 3 } label: { Label(lightNames[controls.lighting], systemImage: "lightbulb").font(.caption.bold()).frame(maxWidth: .infinity, minHeight: 46).background(.white.opacity(0.07), in: Capsule()) }
                         .accessibilityLabel("Свет: \(lightNames[controls.lighting]). Изменить")
                 }.buttonStyle(MotionButtonStyle())
-                Button("Вернуть исходный вид") { controls = ArtifactSceneControls() }.font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
+                Button("Вернуть исходный вид") { controls = ArtifactSceneControls(reset: controls.reset + 1) }.font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
                 Spacer(minLength: 0)
             }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }.background { VoidBackground() }.preferredColorScheme(.dark)
             .onAppear { visible = true }.onDisappear { visible = false }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled }
     }
     private func control(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: icon).font(.title3).frame(maxWidth: .infinity, minHeight: 48).background(.white.opacity(0.07), in: Capsule()) }
