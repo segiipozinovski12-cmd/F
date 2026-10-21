@@ -28,7 +28,7 @@ struct PremiumPlanView: View {
                     Label("Подписка активна", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     if let until = store.coinWallet?.premiumUntil { Text("Оплачено до \(Date(timeIntervalSince1970: Double(until)).formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary) }
                     Link("Управлять подпиской", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
-                } else if let product {
+                } else if let product, store.canStartApplePayment {
                     Button("Подключить · \(product.displayPrice) / месяц") {
                         busy = true; notice = nil
                         Task {
@@ -39,7 +39,8 @@ struct PremiumPlanView: View {
                         }
                     }.buttonStyle(PrimaryButton()).disabled(busy)
                 } else if loading { ProgressView() }
-                else { Text("Подписка появится после настройки App Store.").font(.callout).foregroundStyle(.secondary) }
+                else { Text(store.canStartApplePayment ? "Подписка появится после настройки товаров App Store." : "Оплата Apple ещё не подключена администратором. Списание пока недоступно.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+                if !loading { Button("Обновить доступность") { Task { await load() } }.font(.caption).disabled(busy) }
                 Button("Восстановить подписку") {
                     busy = true
                     Task {
@@ -56,17 +57,21 @@ struct PremiumPlanView: View {
                 }.font(.caption)
             }.padding(24)
         }.background { VoidBackground() }.navigationTitle("Premium").navigationBarTitleDisplayMode(.inline)
-        .task {
-            let fence = store.sessionFence
-            do {
-                try await store.refreshEconomy()
-                let products = try await Product.products(for: [store.economy.catalog?.premiumProduct ?? "io.vo1d.premium.monthly"])
-                try store.requireCurrentSession(fence); product = products.first
-            } catch is CancellationError { return }
-            catch { notice = error.localizedDescription }
-            loading = false
-        }
+        .task { await load() }
+        .refreshable { await load() }
         .overlay { if busy { ProgressView().padding(24).background(.ultraThinMaterial, in: Circle()) } }
+    }
+    private func load() async {
+        loading = true; notice = nil; product = nil
+        defer { loading = false }
+        let fence = store.sessionFence
+        do {
+            try await store.refreshEconomy()
+            guard store.canStartApplePayment, let id = store.economy.catalog?.premiumProduct else { return }
+            let products = try await Product.products(for: [id])
+            try store.requireCurrentSession(fence); product = products.first
+        } catch is CancellationError { return }
+        catch { notice = error.localizedDescription }
     }
     private func feature(_ icon: String, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 16) {

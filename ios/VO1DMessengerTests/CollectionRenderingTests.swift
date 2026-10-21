@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import UIKit
+import SceneKit
 @testable import VO1DMessenger
 
 private final class CollectionPreviewProtocol: URLProtocol, @unchecked Sendable {
@@ -70,6 +71,55 @@ final class CollectionRenderingTests: XCTestCase {
             Spacer(minLength: 0)
         }.background(.black)
         try await capture(artwork, name: "artwork")
+        let skins = VStack(spacing: 12) {
+            Text("SINGULARITY / MATERIAL STUDIES").font(.caption2.monospaced()).tracking(2).padding(.top, 20)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                ForEach(ArtifactSceneFactory.models, id: \.self) { model in
+                    let traits = ArtifactTraits(backdrop: ArtifactTrait(id: "obsidian", title: "Obsidian", weight: 150), pattern: ArtifactTrait(id: "void", title: "Void", weight: 50), model: ArtifactTrait(id: model, title: model.capitalized, weight: 40))
+                    VStack(spacing: 5) { ArtifactArtwork(collection: "singularity", traits: traits); Text(model.capitalized).font(.caption) }
+                }
+            }.padding(16)
+            Spacer(minLength: 0)
+        }.background(.black)
+        try await capture(skins, name: "skins")
+        let monochrome = ArtifactTraits(backdrop: ArtifactTrait(id: "obsidian", title: "Obsidian", weight: 150), pattern: ArtifactTrait(id: "stars", title: "Stardust", weight: 3500), model: ArtifactTrait(id: "monochrome", title: "Monochrome", weight: 40))
+        try await capture(ArtifactInspectionView(collection: "singularity", traits: monochrome, number: "#1"), name: "inspection")
+    }
+
+    @MainActor func testEveryArtifactHasFiniteThreeDimensionalGeometryAndOpaqueRenderedPixels() throws {
+        for collection in ArtifactSceneFactory.collections {
+            for model in ArtifactSceneFactory.models {
+                let scene = ArtifactSceneFactory.scene(collection: collection, model: model)
+                let object = try XCTUnwrap(scene.rootNode.childNode(withName: "artifact", recursively: true))
+                let bounds = object.boundingBox
+                XCTAssertGreaterThan(bounds.max.x - bounds.min.x, 0.5, "\(collection)/\(model)")
+                XCTAssertGreaterThan(bounds.max.y - bounds.min.y, 0.5)
+                XCTAssertGreaterThan(bounds.max.z - bounds.min.z, 0.3)
+                object.enumerateChildNodes { node, _ in
+                    guard let geometry = node.geometry else { return }
+                    XCTAssertFalse(geometry.materials.isEmpty)
+                    for source in geometry.sources(for: .vertex) + geometry.sources(for: .normal) {
+                        guard source.bytesPerComponent == 4, source.usesFloatComponents else { continue }
+                        source.data.withUnsafeBytes { bytes in
+                            for i in 0..<source.vectorCount {
+                                for j in 0..<source.componentsPerVector {
+                                    let offset = source.dataOffset + i * source.dataStride + j * 4
+                                    XCTAssertTrue(bytes.loadUnaligned(fromByteOffset: offset, as: Float.self).isFinite)
+                                }
+                            }
+                        }
+                    }
+                }
+                let poster = ArtifactSceneFactory.poster(collection: collection, model: model)
+                let image = try XCTUnwrap(poster.cgImage)
+                var pixels = [UInt8](repeating: 0, count: 64 * 64 * 4)
+                let context = try XCTUnwrap(CGContext(data: &pixels, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+                let covered = stride(from: 3, to: pixels.count, by: 4).filter { pixels[$0] > 128 }.count
+                XCTAssertGreaterThan(covered, 100, "Blank render: \(collection)/\(model)")
+                XCTAssertLessThan(covered, 3600, "Background must remain transparent")
+            }
+        }
     }
 
     @MainActor private func capture<V: View>(_ view: V, name: String) async throws {

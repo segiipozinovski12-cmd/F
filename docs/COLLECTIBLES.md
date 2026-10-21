@@ -14,7 +14,7 @@ through the existing Signal event transport. Profile text/photos/stories are not
 published to the commerce server. Existing story audiences and 24-hour expiration
 remain in force. Shared stories have progress, pause and previous/next controls.
 
-The five original vector artworks are Singularity, Sovereign, Prism, Orbit and
+The five original procedural 3D artworks are Singularity, Sovereign, Prism, Orbit and
 Nova. Cards are rendered locally at any resolution. No remote image tracking or
 emoji substitute is used. Purchased gifts start without collectible attributes.
 Their collection serial, original price in VO1Dcoin and owner are server records.
@@ -164,3 +164,22 @@ The existing CI builds simulator/device Debug and device Release on macOS 15 and
 26, and runs existing chat, cryptography, privacy and call tests. A real Sandbox
 purchase and local Speech language availability must be verified on an iPhone
 with configured App Store products before release.
+
+## Local 3D inspection and payment readiness
+
+Each collection has its own solid geometry and six material treatments. The detail
+screen and upgrade reveal use a live studio scene; the full-screen inspector adds
+pan, pinch, accessible rotation/zoom buttons and three lighting setups. These
+controls only change the view, never the owned traits. Grids use bounded, cached
+512px renders of the same models. Scenes stop automatic motion when hidden,
+inactive, Reduce Motion is enabled, or Low Power Mode is active. Assets and
+reflection lighting are generated locally without third-party asset requests.
+
+`GET /v3/economy/catalog` exposes the non-secret `paymentsConfigured` boolean.
+It checks presence of the Apple credentials, the P-256 key and supported server
+environment. This is configuration readiness, not a live Apple authorization
+check. The client fails closed for older servers and rechecks the catalog in the
+current unlocked session before opening the Apple payment sheet. Product setup,
+Apple approval and real sandbox/production purchase testing are still required.
+Unfinished verified transactions remain recoverable until the relay acknowledges
+that exact purchase; merely enabling the readiness flag never credits a wallet.

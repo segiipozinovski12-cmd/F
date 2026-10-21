@@ -10,6 +10,7 @@ import re
 import time
 
 import httpx
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
@@ -19,22 +20,40 @@ def b64url(value):
     return base64.urlsafe_b64encode(value).rstrip(b'=').decode()
 
 
-def api_token(error):
-    issuer, key_id, key = (os.environ.get(k, '') for k in
+def payment_config():
+    issuer, key_id, key = (os.environ.get(k, '').strip() for k in
                            ('VO1D_APPLE_ISSUER_ID', 'VO1D_APPLE_KEY_ID', 'VO1D_APPLE_PRIVATE_KEY'))
-    bundle = os.environ.get('VO1D_APPLE_BUNDLE_ID', 'io.vo1d.messenger')
-    if not all((issuer, key_id, key)):
+    bundle = os.environ.get('VO1D_APPLE_BUNDLE_ID', 'io.vo1d.messenger').strip()
+    environment = os.environ.get('VO1D_APPLE_ENVIRONMENT', 'Production')
+    if not all((issuer, key_id, key, bundle)) or environment not in ('Production', 'Sandbox'):
+        raise ValueError('App Store is not configured')
+    private = serialization.load_pem_private_key(key.replace('\\n', '\n').encode(), password=None)
+    if not isinstance(private, ec.EllipticCurvePrivateKey) or not isinstance(private.curve, ec.SECP256R1):
+        raise ValueError()
+    return issuer, key_id, bundle, private
+
+
+def payments_configured():
+    """Non-secret configuration check, not a claim that Apple accepted the key."""
+    try:
+        payment_config()
+        return True
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return False
+
+
+def api_token(error):
+    try:
+        issuer, key_id, bundle, private = payment_config()
+    except (ValueError, TypeError, UnsupportedAlgorithm):
         raise error(503, 'Покупки ещё не настроены администратором')
     now = int(time.time())
     header = b64url(json.dumps({'alg': 'ES256', 'kid': key_id, 'typ': 'JWT'}).encode())
     claims = b64url(json.dumps({'iss': issuer, 'iat': now, 'exp': now + 120,
                                 'aud': 'appstoreconnect-v1', 'bid': bundle}).encode())
     try:
-        private = serialization.load_pem_private_key(key.replace('\\n', '\n').encode(), password=None)
-        if not isinstance(private, ec.EllipticCurvePrivateKey) or not isinstance(private.curve, ec.SECP256R1):
-            raise ValueError()
         r, s = decode_dss_signature(private.sign((header + '.' + claims).encode(), ec.ECDSA(hashes.SHA256())))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, UnsupportedAlgorithm):
         raise error(503, 'Проверка App Store временно недоступна')
     return header + '.' + claims + '.' + b64url(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))
 

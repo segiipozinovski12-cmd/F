@@ -10,6 +10,7 @@ struct ArtifactDetailView: View {
     @State private var notice: String?
     @State private var busy = false
     @State private var buying = false
+    @State private var inspecting = false
     @State private var pendingBuy: ArtifactCommand?
     private var gift: CollectibleArtifact { current ?? initial }
     private var mine: Bool { gift.owner == store.myID }
@@ -18,7 +19,10 @@ struct ArtifactDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
-                ArtifactArtwork(collection: gift.collection, traits: gift.traits, animated: true)
+                Button { inspecting = true } label: {
+                    ArtifactHero(collection: gift.collection, traits: gift.traits, active: !inspecting)
+                        .overlay(alignment: .bottomTrailing) { Label("Осмотреть", systemImage: "view.3d").font(.caption.bold()).padding(12).background(.black.opacity(0.3), in: Capsule()).padding(16) }
+                }.buttonStyle(MotionButtonStyle()).accessibilityLabel("Осмотреть артефакт в 3D")
                     .overlay(alignment: .topLeading) {
                         Text(gift.traits == nil ? "ORIGINAL GIFT" : "COLLECTIBLE").font(.caption2.monospaced().bold()).tracking(2).padding(12).background(.black.opacity(0.22), in: Capsule()).padding(16)
                     }
@@ -73,6 +77,7 @@ struct ArtifactDetailView: View {
                 }
             }
         }
+        .fullScreenCover(isPresented: $inspecting) { ArtifactInspectionView(collection: gift.collection, traits: gift.traits, number: gift.number) }
         .task { await refresh() }
         .refreshable { await refresh() }
         .sheet(isPresented: Binding(get: { sheet != nil }, set: { if !$0 { sheet = nil } })) {

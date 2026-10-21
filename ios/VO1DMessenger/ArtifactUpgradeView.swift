@@ -5,6 +5,8 @@ struct ArtifactUpgradeView: View {
     var completed: (CollectibleArtifact) -> Void
     @EnvironmentObject private var store: ChatStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var visible = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var result: CollectibleArtifact?
     @State private var phase = 0
@@ -48,18 +50,21 @@ struct ArtifactUpgradeView: View {
         }.background { VoidBackground() }.navigationTitle("Улучшение").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { dismiss() }.disabled(busy || running) } }
         .interactiveDismissDisabled(busy || running)
-        .onDisappear { rollTask?.cancel() }
+        .onAppear { visible = true }
+        .onDisappear { visible = false; rollTask?.cancel() }
     }
 
     private var reel: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: phase == 3 || reduceMotion)) { clock in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: phase == 3 || reduceMotion || !visible || scenePhase != .active || ProcessInfo.processInfo.isLowPowerModeEnabled)) { clock in
             let speed = running ? 5.0 : 0.65
             let position = clock.date.timeIntervalSince1970 * speed
             let tick = Int(position)
             let fraction = position - floor(position)
             ZStack {
-                if phase == 3 || reduceMotion {
-                    ArtifactArtwork(collection: gift.collection, traits: phase == 3 ? result?.traits : previewTraits(0))
+                if phase == 3 {
+                    ArtifactHero(collection: gift.collection, traits: result?.traits)
+                } else if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+                    ArtifactArtwork(collection: gift.collection, traits: previewTraits(0))
                 } else {
                     GeometryReader { geometry in
                         HStack(spacing: 12) {

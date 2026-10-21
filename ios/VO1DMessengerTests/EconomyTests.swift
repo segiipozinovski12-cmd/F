@@ -38,6 +38,23 @@ final class EconomyTests: XCTestCase {
         XCTAssertEqual(store.economy.owner, "new-profile")
         XCTAssertNil(store.coinWallet)
     }
+    @MainActor func testApplePaymentFailsClosedForLegacyCatalogLockedSessionOrOtherProfile() throws {
+        let store = ChatStore(), original = store.economy
+        let locked = store.locked, unlocked = store.sessionUnlocked
+        defer { store.economy = original; store.locked = locked; store.sessionUnlocked = unlocked }
+        let data = Data("""
+        {"collections":[],"wallet":{"balance":0,"refundDebt":0,"premiumUntil":0,"premium":false,"appAccountToken":"token"},"admin":false,"products":[],"premiumProduct":"premium"}
+        """.utf8)
+        let catalog = try Wire.decoder.decode(EconomyCatalog.self, from: data)
+        store.economy = EconomyState(owner: store.myID, catalog: catalog)
+        store.locked = false; store.sessionUnlocked = true
+        XCTAssertFalse(store.canStartApplePayment)
+        store.economy.catalog?.paymentsConfigured = true
+        XCTAssertTrue(store.canStartApplePayment)
+        store.locked = true; XCTAssertFalse(store.canStartApplePayment)
+        store.locked = false; store.sessionUnlocked = false; XCTAssertFalse(store.canStartApplePayment)
+        store.sessionUnlocked = true; store.economy.owner = "other-profile"; XCTAssertFalse(store.canStartApplePayment)
+    }
     func testPremiumRequiresBothServerEntitlementAndUnexpiredDate() throws {
         let future = Int(Date().timeIntervalSince1970) + 600
         let expired = CoinWallet(balance: 0, refundDebt: 0, premiumUntil: 1, premium: true, appAccountToken: UUID().uuidString)

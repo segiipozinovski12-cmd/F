@@ -13,6 +13,7 @@ import uuid
 from urllib.parse import parse_qs
 
 import moderation
+import storekit
 
 PREFIX = '/v3/economy'
 COLLECTIONS = [
@@ -166,7 +167,8 @@ def handle(relay, db, user, env, body, error):
     if method == 'GET' and route == '/catalog':
         rows = db.execute('SELECT * FROM artifact_collections WHERE published=1 ORDER BY supply').fetchall()
         return {'collections': [collection(r) for r in rows], 'wallet': wallet(db, user), 'admin': admin,
-                'products': list(PRODUCTS), 'premiumProduct': PREMIUM_PRODUCT}
+                'products': list(PRODUCTS), 'premiumProduct': PREMIUM_PRODUCT,
+                'paymentsConfigured': storekit.payments_configured()}
     if method == 'GET' and route == '/admin':
         if not admin:
             raise error(403, 'Только закреплённый администратор')

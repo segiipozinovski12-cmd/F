@@ -45,6 +45,15 @@ class EconomyTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT count(*) FROM identities').fetchone()[0], 2)
         self.assertEqual(self.request('/v2/commerce', token=self.a)[0], 404)
 
+    def test_catalog_reports_payment_configuration_without_exposing_credentials_or_crediting(self):
+        for ready in [False, True]:
+            with patch('storekit.payments_configured', return_value=ready):
+                status, catalog = self.request('/v3/economy/catalog', token=self.a)
+            self.assertEqual(status, 200)
+            self.assertIs(catalog['paymentsConfigured'], ready)
+            self.assertEqual(catalog['wallet']['balance'], 0)
+            self.assertEqual(set(catalog), {'collections', 'wallet', 'admin', 'products', 'premiumProduct', 'paymentsConfigured'})
+
     def test_admin_authority_confirmation_and_release_gate(self):
         self.assertEqual(self.post('admin/publish', {'collection': 'nova', 'confirmed': True}, self.b)[0], 403)
         self.request('/v1/username', 'POST', {'username': 'vo1d'}, self.a)

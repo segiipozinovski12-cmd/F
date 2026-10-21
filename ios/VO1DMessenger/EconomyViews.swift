@@ -35,6 +35,7 @@ struct ArtifactStorefrontView: View {
     @State private var market = [CollectibleArtifact]()
     @State private var marketCursor: String?
     @State private var selected: ArtifactCollection?
+    @State private var inspecting: ArtifactCollection?
     @State private var notice: String?
     @State private var loading = true
     @State private var pendingPurchase: ArtifactCommand?
@@ -81,6 +82,7 @@ struct ArtifactStorefrontView: View {
         } message: {
             if let item = selected { Text("Осталось \(item.remaining.formatted()) из \(item.supply.formatted()). Номер и владение закрепляются сервером после оплаты. Улучшение приобретается отдельно.") }
         }
+        .fullScreenCover(item: $inspecting) { item in ArtifactInspectionView(collection: item.id) }
         .sheet(item: $purchased) { gift in NavigationStack { ArtifactDetailView(initial: gift) } }
         .overlay { if purchasing { ProgressView("Покупка…").padding(24).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24)) } }
     }
@@ -91,8 +93,11 @@ struct ArtifactStorefrontView: View {
                 LazyVGrid(columns: columns, spacing: 24) {
                     ForEach(items) { item in
                         VStack(alignment: .leading, spacing: 10) {
-                            ArtifactArtwork(collection: item.id)
-                                .overlay(alignment: .topLeading) { Text("\(item.supply.formatted()) всего").font(.system(size: 9, weight: .bold)).padding(7).background(.black.opacity(0.22), in: Capsule()).padding(10) }
+                            Button { inspecting = item } label: {
+                                ArtifactArtwork(collection: item.id)
+                                    .overlay(alignment: .topLeading) { Text("\(item.supply.formatted()) всего").font(.system(size: 9, weight: .bold)).padding(7).background(.black.opacity(0.22), in: Capsule()).padding(10) }
+                                    .overlay(alignment: .bottomTrailing) { Image(systemName: "view.3d").font(.caption).padding(9).background(.black.opacity(0.25), in: Circle()).padding(9) }
+                            }.buttonStyle(MotionButtonStyle()).accessibilityLabel("Осмотреть \(item.title) в 3D")
                             Text(item.title).font(.headline)
                             Text(item.description).font(.caption).foregroundStyle(.secondary).lineLimit(3).frame(minHeight: 46, alignment: .top)
                             ProgressView(value: Double(item.minted), total: Double(item.supply)).tint(.white.opacity(0.55))
@@ -199,9 +204,12 @@ struct CoinWalletView: View {
                             Spacer()
                             Text(product.displayPrice).font(.subheadline.bold()).padding(.horizontal, 16).padding(.vertical, 10).background(.white.opacity(0.08), in: Capsule())
                         }.padding(17).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 22))
-                    }.buttonStyle(MotionButtonStyle()).disabled(busy)
+                    }.buttonStyle(MotionButtonStyle()).disabled(busy || !store.canStartApplePayment)
                 }
-                if !loading && products.isEmpty { Text("Покупки появятся после настройки продуктов в App Store Connect.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+                if !loading && !store.canStartApplePayment {
+                    Text("Оплата Apple ещё не подключена администратором. Списание недоступно до настройки проверки покупок.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("Проверить доступность") { Task { await load() } }.buttonStyle(GhostButton()).disabled(busy)
+                } else if !loading && products.isEmpty { Text("Покупки появятся после настройки продуктов в App Store Connect.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                 NavigationLink { PremiumPlanView() } label: { Label("Открыть VO1D_PREMIUM", systemImage: "sparkles").frame(maxWidth: .infinity) }.buttonStyle(GhostButton())
                 Button("Восстановить покупки") {
                     busy = true
@@ -234,7 +242,7 @@ struct CoinWalletView: View {
         let fence = store.sessionFence
         do {
             try await store.refreshEconomy()
-            let fetched = try await Product.products(for: store.economy.catalog?.products ?? [])
+            let fetched = try await Product.products(for: store.canStartApplePayment ? (store.economy.catalog?.products ?? []) : [])
             try store.requireCurrentSession(fence)
             products = fetched.sorted { $0.price < $1.price }
             await loadHistory(more: false)

@@ -60,51 +60,47 @@ enum ArtifactPalette {
     }
 }
 
-/// Resolution-independent original artwork. No emoji stand-ins or remote assets.
+/// Cached posters come from the same geometry used by the interactive viewer.
 struct ArtifactArtwork: View {
     var collection: String
     var traits: ArtifactTraits? = nil
-    var animated = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var floating = false
-    private var metal: [Color] { ArtifactPalette.metal(traits?.model.id, collection: collection) }
+    @State private var poster: UIImage?
+    var body: some View {
+        ArtifactBackdrop(collection: collection, traits: traits)
+            .overlay {
+                if let poster { Image(uiImage: poster).resizable().scaledToFit().accessibilityHidden(true) }
+                else { ProgressView().tint(.white.opacity(0.4)) }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .task(id: collection + ":" + (traits?.model.id ?? "original")) {
+                poster = ArtifactSceneFactory.poster(collection: collection, model: traits?.model.id)
+            }
+            .accessibilityLabel("\(ArtifactCollection.titles[collection] ?? collection), \(traits?.model.title ?? "Original"), фон \(traits?.backdrop.title ?? "Original")")
+    }
+}
+
+struct ArtifactBackdrop: View {
+    var collection: String
+    var traits: ArtifactTraits?
     private var background: [Color] {
         let original = ["singularity": "midnight", "sovereign": "rose", "prism": "lavender", "orbit": "jade", "nova": "azure"]
         return ArtifactPalette.backdrop(traits?.backdrop.id ?? original[collection])
     }
-
     var body: some View {
         ZStack {
             LinearGradient(colors: background, startPoint: .topLeading, endPoint: .bottomTrailing)
-            RadialGradient(colors: [metal[1].opacity(0.22), .clear], center: .init(x: 0.5, y: 0.38), startRadius: 0, endRadius: 180)
+            RadialGradient(colors: [.white.opacity(0.15), .clear], center: .init(x: 0.4, y: 0.3), startRadius: 0, endRadius: 220)
             Canvas { context, size in
                 context.scaleBy(x: size.width / 300, y: size.height / 300)
                 drawPattern(&context)
-                let ground = Path(ellipseIn: CGRect(x: 92, y: 244, width: 116, height: 12))
                 context.drawLayer { layer in
                     layer.addFilter(.blur(radius: 9))
-                    layer.fill(ground, with: .color(.black.opacity(0.34)))
+                    layer.fill(Path(ellipseIn: CGRect(x: 92, y: 245, width: 116, height: 10)), with: .color(.black.opacity(0.3)))
                 }
-                var object = context
-                drawObject(&object)
-                for (x, y, r) in [(74.0, 84.0, 2.0), (232, 120, 1.5), (214, 219, 2.2)] {
-                    let star = starPath(center: CGPoint(x: x, y: y), radius: r * 2.5, points: 4)
-                    context.fill(star, with: .color(metal[0].opacity(0.8)))
-                }
-            }.offset(y: floating && animated && !reduceMotion ? -4 : 0)
-            LinearGradient(colors: [.white.opacity(0.08), .clear, .black.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing).allowsHitTesting(false)
+            }.allowsHitTesting(false)
         }
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 28).strokeBorder(.white.opacity(0.12)))
-        .onAppear {
-            if animated && !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled {
-                withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) { floating = true }
-            }
-        }
-        .accessibilityLabel("\(ArtifactCollection.titles[collection] ?? collection), \(traits?.model.title ?? "Original"), фон \(traits?.backdrop.title ?? "Lavender")")
     }
-
     private func drawPattern(_ context: inout GraphicsContext) {
         guard traits?.pattern.id != "void" else { return }
         for row in 0..<6 {
@@ -121,67 +117,6 @@ struct ArtifactArtwork: View {
                 }
                 context.stroke(path, with: .color(.white.opacity(0.10)), lineWidth: 1)
             }
-        }
-    }
-
-    private func drawObject(_ context: inout GraphicsContext) {
-        let shading = GraphicsContext.Shading.linearGradient(Gradient(colors: metal), startPoint: CGPoint(x: 95, y: 65), endPoint: CGPoint(x: 210, y: 235))
-        context.addFilter(.shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 14))
-        switch collection {
-        case "singularity":
-            let ring = Path(ellipseIn: CGRect(x: 52, y: 115, width: 196, height: 64))
-            context.drawLayer { glow in
-                glow.addFilter(.blur(radius: 12)); glow.stroke(ring, with: .color(metal[1].opacity(0.9)), lineWidth: 14)
-            }
-            context.fill(Path(ellipseIn: CGRect(x: 97, y: 91, width: 106, height: 116)), with: .color(.black))
-            context.stroke(Path(ellipseIn: CGRect(x: 94, y: 88, width: 112, height: 122)), with: shading, lineWidth: 5)
-            context.stroke(ring, with: shading, lineWidth: 7)
-            context.stroke(Path(ellipseIn: CGRect(x: 47, y: 109, width: 206, height: 76)), with: .color(metal[0].opacity(0.6)), lineWidth: 1)
-            context.fill(Path(ellipseIn: CGRect(x: 111, y: 104, width: 78, height: 88)), with: .color(.black))
-        case "sovereign":
-            var crown = Path()
-            crown.move(to: CGPoint(x: 83, y: 196))
-            for point in [CGPoint(x: 66, y: 113), CGPoint(x: 111, y: 148), CGPoint(x: 150, y: 78), CGPoint(x: 189, y: 148), CGPoint(x: 234, y: 113), CGPoint(x: 217, y: 196)] { crown.addLine(to: point) }
-            crown.closeSubpath(); context.fill(crown, with: shading)
-            context.stroke(crown, with: .color(metal[0].opacity(0.8)), lineWidth: 1.5)
-            context.fill(Path(roundedRect: CGRect(x: 81, y: 200, width: 138, height: 14), cornerRadius: 6), with: shading)
-            context.fill(starPath(center: CGPoint(x: 150, y: 169), radius: 19, points: 4, inner: 0.55), with: .color(metal[2]))
-            for x in [105.0, 195] { context.fill(Path(ellipseIn: CGRect(x: x - 5, y: 175, width: 10, height: 10)), with: .color(metal[0])) }
-        case "prism":
-            let points = [CGPoint(x: 150, y: 63), CGPoint(x: 218, y: 119), CGPoint(x: 199, y: 205), CGPoint(x: 150, y: 238), CGPoint(x: 97, y: 205), CGPoint(x: 81, y: 119)]
-            for i in 0..<points.count {
-                var facet = Path(); facet.move(to: CGPoint(x: 150, y: 145)); facet.addLine(to: points[i]); facet.addLine(to: points[(i + 1) % points.count]); facet.closeSubpath()
-                context.fill(facet, with: .linearGradient(Gradient(colors: [metal[i % 4], metal[(i + 1) % 4]]), startPoint: points[i], endPoint: CGPoint(x: 150, y: 166)))
-                context.stroke(facet, with: .color(.white.opacity(0.3)), lineWidth: 0.8)
-            }
-        case "orbit":
-            let planet = Path(ellipseIn: CGRect(x: 100, y: 95, width: 103, height: 111))
-            context.fill(planet, with: .radialGradient(Gradient(colors: [metal[0], metal[1], metal[2]]), center: CGPoint(x: 125, y: 120), startRadius: 0, endRadius: 100))
-            for index in 0..<3 {
-                let inset = CGFloat(index) * 7
-                context.stroke(Path(ellipseIn: CGRect(x: 55 - inset, y: 125 - inset / 2, width: 190 + inset * 2, height: 57 + inset)), with: shading, lineWidth: index == 0 ? 8 : 1.5)
-            }
-            context.fill(Path(ellipseIn: CGRect(x: 225, y: 102, width: 13, height: 13)), with: shading)
-        default:
-            let star = starPath(center: CGPoint(x: 150, y: 148), radius: 89, points: traits?.model.id == "aurora" ? 6 : 4, inner: traits?.model.id == "crimson" ? 0.22 : 0.37)
-            context.drawLayer { glow in glow.addFilter(.blur(radius: 18)); glow.fill(star, with: .color(metal[1].opacity(0.6))) }
-            context.fill(star, with: shading)
-            context.stroke(star, with: .color(metal[0].opacity(0.9)), lineWidth: 1.3)
-            context.fill(starPath(center: CGPoint(x: 150, y: 148), radius: 44, points: 4, inner: 0.35), with: .linearGradient(Gradient(colors: [metal[0], metal[2]]), startPoint: CGPoint(x: 130, y: 120), endPoint: CGPoint(x: 172, y: 180)))
-        }
-        if traits?.model.id == "gold" {
-            for index in 0..<8 {
-                let angle = Double(index) * .pi / 4
-                let center = CGPoint(x: 150 + cos(angle) * 106, y: 148 + sin(angle) * 106)
-                context.fill(starPath(center: center, radius: 4, points: 4), with: .color(metal[0].opacity(0.8)))
-            }
-        } else if traits?.model.id == "monochrome" {
-            for index in 0..<4 {
-                let center = CGPoint(x: index.isMultiple(of: 2) ? 70 : 229, y: CGFloat(85 + index * 37))
-                context.fill(starPath(center: center, radius: 11, points: 4, inner: 0.55), with: shading)
-            }
-        } else if traits?.model.id == "crimson" {
-            context.stroke(Path(ellipseIn: CGRect(x: 74, y: 68, width: 152, height: 166)), with: .color(metal[1].opacity(0.35)), lineWidth: 1)
         }
     }
 

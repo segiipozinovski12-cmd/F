@@ -32,6 +32,21 @@ class StoreKitVerificationTests(unittest.TestCase):
             self.assertEqual(client.return_value.__enter__.return_value.get.call_args.args[0], 'https://api.storekit.apple.com/inApps/v1/transactions/12345')
             return result
 
+    def test_payment_readiness_rejects_absent_partial_invalid_and_wrong_curve_keys(self):
+        for overrides in [{}, {'VO1D_APPLE_ISSUER_ID': ' '}, {'VO1D_APPLE_KEY_ID': ''},
+                          {'VO1D_APPLE_PRIVATE_KEY': 'not-a-key'}, {'VO1D_APPLE_ENVIRONMENT': 'Xcode'},
+                          {'VO1D_APPLE_BUNDLE_ID': ''}]:
+            settings = dict(self.settings, **overrides) if overrides else {}
+            with self.subTest(overrides=list(overrides)), patch.dict(os.environ, settings, clear=True):
+                self.assertFalse(storekit.payments_configured())
+        other = ec.generate_private_key(ec.SECP384R1()).private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+        with patch.dict(os.environ, dict(self.settings, VO1D_APPLE_PRIVATE_KEY=other), clear=True):
+            self.assertFalse(storekit.payments_configured())
+        for environment in ['Production', 'Sandbox']:
+            with patch.dict(os.environ, dict(self.settings, VO1D_APPLE_ENVIRONMENT=environment), clear=True), patch('storekit.httpx.Client') as client:
+                self.assertTrue(storekit.payments_configured())
+                client.assert_not_called()
+
     def test_uses_only_fixed_apple_host_and_live_server_response(self):
         self.assertEqual(self.verify(self.payment), self.payment)
 

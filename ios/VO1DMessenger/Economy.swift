@@ -62,6 +62,7 @@ struct EconomyCatalog: Decodable {
     var admin: Bool
     var products: [String]
     var premiumProduct: String
+    var paymentsConfigured: Bool? = nil
 }
 struct EconomyMutation: Decodable {
     var ok: Bool
@@ -91,6 +92,7 @@ struct ArtifactCommand: Encodable {
 extension ChatStore {
     var coinWallet: CoinWallet? { economy.owner == myID ? economy.catalog?.wallet : nil }
     var hasPremium: Bool { coinWallet?.isPremium == true }
+    var canStartApplePayment: Bool { economy.owner == myID && economy.catalog?.paymentsConfigured == true && !locked && sessionUnlocked }
 
     func refreshEconomy() async throws {
         guard let api, !locked, sessionUnlocked else { throw MessengerError.invalid("Подключись к VO1D") }
@@ -133,11 +135,16 @@ extension ChatStore {
     }
 
     func buyStoreProduct(_ product: Product) async throws {
-        if coinWallet == nil { try await refreshEconomy() }
+        let fence = sessionFence
+        try await refreshEconomy()
+        try requireCurrentSession(fence)
+        guard canStartApplePayment else { throw MessengerError.invalid("Покупки Apple ещё не настроены на сервере. Оплата не начата.") }
+        guard let catalog = economy.catalog, catalog.products.contains(product.id) || catalog.premiumProduct == product.id else {
+            throw MessengerError.invalid("Этот товар недоступен в VO1D")
+        }
         guard let token = coinWallet?.appAccountToken, let account = UUID(uuidString: token) else {
             throw MessengerError.invalid("Не удалось получить платёжный аккаунт")
         }
-        let fence = sessionFence
         let result = try await product.purchase(options: [.appAccountToken(account)])
         try requireCurrentSession(fence)
         switch result {
