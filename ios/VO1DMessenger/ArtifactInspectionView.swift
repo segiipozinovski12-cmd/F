@@ -141,6 +141,11 @@ struct ArtifactInspectionView: View {
     @State private var controls = ArtifactSceneControls()
     private let lightNames = ["Студия", "Контраст", "Мягкий"]
 
+    init(collection: String, traits: ArtifactTraits? = nil, number: String? = nil, snapshotControls: ArtifactSceneControls? = nil) {
+        self.collection = collection; self.traits = traits; self.number = number
+        _controls = State(initialValue: snapshotControls ?? ArtifactSceneControls())
+    }
+
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 18) {

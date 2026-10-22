@@ -1,6 +1,7 @@
 name: VO1D · Build and tests
 on:
   push:
+    branches-ignore: [codex/vo1d-gallery]
   pull_request:
   workflow_dispatch:
 permissions:

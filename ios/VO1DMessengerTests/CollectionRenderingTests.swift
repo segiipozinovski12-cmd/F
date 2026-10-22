@@ -74,6 +74,10 @@ final class CollectionRenderingTests: XCTestCase {
             "/v3/economy/inventory": try bytes(["artifacts": gifts, "nextCursor": NSNull(), "total": 5, "visibleCount": 5]),
             "/v3/economy/market": try bytes(["artifacts": [], "nextCursor": NSNull()])
         ]
+        CollectionPreviewProtocol.routes["/v3/economy/history"] = try bytes(["entries": [], "nextCursor": NSNull()])
+        for gift in gifts {
+            CollectionPreviewProtocol.routes["/v3/economy/artifact/" + (gift["id"] as! String)] = try bytes(["artifact": gift, "estimatedValue": 28500])
+        }
         try await store.refreshEconomy()
         XCTAssertEqual(store.economy.artifacts.count, 5)
         XCTAssertTrue(store.hasPremium)
@@ -105,6 +109,65 @@ final class CollectionRenderingTests: XCTestCase {
         try await capture(skins, name: "skins")
         let monochrome = ArtifactTraits(backdrop: ArtifactTrait(id: "obsidian", title: "Obsidian", weight: 150), pattern: ArtifactTrait(id: "stars", title: "Stardust", weight: 3500), model: ArtifactTrait(id: "monochrome", title: "Monochrome", weight: 40))
         try await capture(ArtifactInspectionView(collection: "singularity", traits: monochrome, number: "#1"), name: "inspection")
+
+        // Gallery-only fixture: every image uses the production SwiftUI views or
+        // the exact SceneKit meshes/materials shipped in the application.
+        let angles: [(String, Float, Float, Float)] = [
+            ("front", 0, 0, 7.4), ("right", .pi / 2, 0, 7.4),
+            ("back", .pi, 0, 7.4), ("left", -.pi / 2, 0, 7.4),
+            ("above", 0.45, 0.65, 7.4), ("close", -0.25, 0.08, 5.8)
+        ]
+        for id in identifiers {
+            for (angle, yaw, pitch, distance) in angles {
+                try autoreleasepool {
+                    let scene = ArtifactSceneFactory.scene(collection: id, model: "original")
+                    scene.background.contents = UIColor.black
+                    scene.rootNode.childNode(withName: "orbit", recursively: false)?.eulerAngles = SCNVector3(pitch, yaw, 0)
+                    let camera = scene.rootNode.childNode(withName: "camera", recursively: false)
+                    camera?.position.z = distance
+                    let renderer = SCNRenderer(device: nil, options: nil)
+                    renderer.scene = scene; renderer.pointOfView = camera
+                    let image = renderer.snapshot(atTime: 0, with: CGSize(width: 1600, height: 1600), antialiasingMode: .multisampling4X)
+                    let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("collection-preview-photo-\(id)-\(angle).png")
+                    try XCTUnwrap(image.pngData()).write(to: url)
+                }
+            }
+            for lighting in 0...2 {
+                let controls = ArtifactSceneControls(yaw: 0, pitch: 0, distance: 7.4, automatic: false, lighting: lighting, reset: 1)
+                try await capture(ArtifactInspectionView(collection: id, number: "#\(id == "singularity" ? 1 : 200)", snapshotControls: controls), name: "inspect-\(id)-light-\(lighting)")
+            }
+            let gift = try XCTUnwrap(store.economy.artifacts.first { $0.collection == id })
+            try await capture(NavigationStack { ArtifactDetailView(initial: gift) }.environmentObject(store), name: "detail-\(id)")
+        }
+        for (index, cover) in ProfileDecoration.covers.enumerated() {
+            var social = store.social
+            social.decoration = ProfileDecoration(cover: cover, symbol: ProfileDecoration.symbols[index % ProfileDecoration.symbols.count], statusUntil: Date().addingTimeInterval(3600))
+            social.featuredGiftID = store.economy.artifacts[index % identifiers.count].id
+            store.state.social = social
+            try await capture(NavigationStack { ProfileScreenView(owner: store.myID) }.environmentObject(store), name: "profile-cover-\(cover)")
+        }
+        let peerCard = try LocalIdentity.create().card
+        store.state.contacts.append(Contact(card: peerCard, name: "Ника", verified: true))
+        let room = Room(id: "gallery-room", title: "Ника", members: [try XCTUnwrap(store.identity).card, peerCard], creator: store.myID, isGroup: false, createdAt: Date().addingTimeInterval(-3600))
+        store.state.rooms.append(room)
+        let conversation = ["Смотри, какую коллекцию собрала ✨", "Этот кристалл выглядит как кусочек льда", "А мне нравится Cute Ghost 👻", "Он теперь живёт у меня в профиле", "Завтра отправлю тебе один 🎁", "Договорились. До завтра 🌙"]
+        for (index, text) in conversation.enumerated() {
+            store.state.messages.append(ChatMessage(id: "gallery-message-\(index)", roomID: room.id, sender: index % 2 == 0 ? peerCard.id : store.myID, text: text, createdAt: Date().addingTimeInterval(Double(index - 6) * 90), expiresAt: nil, replyTo: nil, attachment: nil, state: "sent", readBy: [peerCard.id], deliveredTo: [peerCard.id]))
+        }
+        for theme in [MessengerTheme.void, .aurora, .ember, .frost, .rose, .cobalt, .gold] {
+            var appearance = store.appearance; appearance.appTheme = theme
+            appearance.wallpaper = theme == .gold ? .grid : .dots
+            store.state.appearance = appearance
+            try await capture(NavigationStack { ChatView(roomID: room.id) }.environmentObject(store), name: "chat-theme-\(theme.rawValue)")
+        }
+        store.state.appearance = AppearancePreferences()
+        store.state.secureNotes = [SecureNote(title: "Идеи на завтра", text: "Собрать коллекцию. Выбрать подарок. Встретиться с друзьями."), SecureNote(title: "Мои любимые места", text: "Кофейня у парка · вечерняя прогулка · новые маршруты")]
+        try await capture(NavigationStack { SettingsView() }.environmentObject(store), name: "settings")
+        try await capture(NavigationStack { ToolsCenterView() }.environmentObject(store), name: "tools")
+        try await capture(NavigationStack { CoinWalletView() }.environmentObject(store), name: "wallet")
+        try await capture(NavigationStack { SecureNotesView() }.environmentObject(store), name: "secure-notes")
+        try await capture(NavigationStack { FolderCenterView() }.environmentObject(store), name: "folders")
+        try await capture(NavigationStack { PrivacyView() }.environmentObject(store), name: "privacy")
     }
 
     @MainActor func testEveryArtifactHasFiniteThreeDimensionalGeometryAndOpaqueRenderedPixels() throws {
