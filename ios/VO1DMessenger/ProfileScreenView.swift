@@ -43,13 +43,13 @@ struct ProfileScreenView: View {
                         NavigationLink { ContactDetailView(contactID: owner) } label: { Image(systemName: "ellipsis").font(.title3).padding(15) }.buttonStyle(RoundedActionStyle())
                     }
                 }
-                Picker("Профиль", selection: $tab) { Text("Подарки").tag(0); Text("Истории").tag(1); Text("О себе").tag(2); if !mine, sharedRoomID != nil { Text("Медиа").tag(3) } }.pickerStyle(.segmented)
+                Picker("Профиль", selection: $tab) { Text("Подарки").tag(0); Text("Истории").tag(1); Text("О себе").tag(2); if mine { Text("Ещё").tag(3) } else if sharedRoomID != nil { Text("Медиа").tag(3) } }.pickerStyle(.segmented)
                 if tab == 0 { giftGrid }
                 else if tab == 1 { storyGrid }
+                else if tab == 3, mine { personalHub }
                 else if tab == 3, let sharedRoomID {
                     NavigationLink { SharedMediaView(roomID: sharedRoomID) } label: { Label("Фото, голосовые и файлы", systemImage: "photo.on.rectangle.angled").frame(maxWidth: .infinity) }.buttonStyle(GhostButton())
                 } else { about }
-                if mine { personalHub }
             }.padding(.horizontal, 20).padding(.bottom, 32)
         }.background { VoidBackground() }
         .navigationTitle(mine ? "Мой профиль" : name).navigationBarTitleDisplayMode(.inline)

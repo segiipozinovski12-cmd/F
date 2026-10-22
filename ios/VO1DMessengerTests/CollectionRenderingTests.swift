@@ -95,9 +95,13 @@ final class CollectionRenderingTests: XCTestCase {
             for model in ArtifactSceneFactory.models {
                 let scene = ArtifactSceneFactory.scene(collection: collection, model: model)
                 let object = try XCTUnwrap(scene.rootNode.childNode(withName: "artifact", recursively: true))
-                XCTAssertNotNil(object.userData?["source"], "Must load the supplied mesh, not a placeholder")
                 let asset = try XCTUnwrap(ArtifactModelAssets.catalog?.collections[collection])
                 XCTAssertEqual(object.childNodes.count, asset.meshes.count)
+                for (mesh, node) in zip(asset.meshes, object.childNodes) {
+                    let geometry = try XCTUnwrap(node.geometry)
+                    XCTAssertEqual(geometry.sources(for: .vertex).first?.vectorCount, mesh.vertices)
+                    XCTAssertEqual(geometry.elements.first?.primitiveCount, mesh.indices / 3)
+                }
                 let bounds = object.boundingBox
                 XCTAssertGreaterThan(bounds.max.x - bounds.min.x, 0.5, "\(collection)/\(model)")
                 XCTAssertGreaterThan(bounds.max.y - bounds.min.y, 0.5)

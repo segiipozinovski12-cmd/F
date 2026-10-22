@@ -98,7 +98,7 @@ import UIKit
             material.emission.intensity = spec.emission == nil ? 0 : 0.22
             return material
         }
-        let root = SCNNode(); root.userData = ["source": asset.source, "assetVersion": 1]
+        let root = SCNNode()
         for mesh in asset.meshes {
             guard (3...200_000).contains(mesh.vertices), (3...1_000_000).contains(mesh.indices), mesh.indices.isMultiple(of: 3),
                   materials.indices.contains(mesh.material) else { throw AssetError.invalidMesh }
