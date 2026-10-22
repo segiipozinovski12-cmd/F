@@ -20,7 +20,7 @@ struct ArtifactCollection: Decodable, Identifiable {
     var published: Bool
     var upgrades: Bool
     var remaining: Int { max(0, supply - minted) }
-    static let titles = ["singularity": "Singularity", "sovereign": "Sovereign", "prism": "Prism", "orbit": "Orbit", "nova": "Nova"]
+    static let titles = ["singularity": "Chrome Unicorn", "sovereign": "Cyber Skull", "prism": "Crystal", "orbit": "Chromed Crown", "nova": "Cute Ghost"]
 }
 struct ArtifactTrait: Decodable, Hashable {
     var id: String

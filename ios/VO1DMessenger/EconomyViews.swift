@@ -80,7 +80,7 @@ struct ArtifactStorefrontView: View {
                 Button("Купить за \(item.price.formatted()) VO1Dcoin") { buy(ArtifactCommand(collection: item.id, expectedPrice: item.price)) }
             }
         } message: {
-            if let item = selected { Text("Осталось \(item.remaining.formatted()) из \(item.supply.formatted()). Номер и владение закрепляются сервером после оплаты. Улучшение приобретается отдельно.") }
+            if let item = selected { Text("Осталось \(item.remaining.formatted()) из \(item.supply.formatted()). Номер и владение закрепляются сервером после оплаты.") }
         }
         .fullScreenCover(item: $inspecting) { item in ArtifactInspectionView(collection: item.id) }
         .sheet(item: $purchased) { gift in NavigationStack { ArtifactDetailView(initial: gift) } }
@@ -297,7 +297,6 @@ struct ArtifactAdminView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var collections: [ArtifactCollection] = []
     @State private var selected: ArtifactCollection?
-    @State private var publishUpgrades = false
     @State private var notice: String?
     @State private var success: String?
     @State private var busy = false
@@ -305,7 +304,7 @@ struct ArtifactAdminView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 Text("Твой следующий дроп.").font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("Публикация открывает покупку у всех пользователей. Улучшения выпускаются отдельно, в том числе после распродажи.").font(.callout).foregroundStyle(.secondary)
+                Text("Проверь тираж и опубликуй подарок. После подтверждения он появится в витрине у всех пользователей.").font(.callout).foregroundStyle(.secondary)
                 if let notice { EconomyNotice(message: notice) }
                 if let success { Label(success, systemImage: "checkmark.circle.fill").font(.callout).foregroundStyle(.green) }
                 ForEach(collections) { item in
@@ -316,23 +315,21 @@ struct ArtifactAdminView: View {
                                 Text(item.title).font(.headline)
                                 Text("\(item.minted.formatted()) / \(item.supply.formatted()) куплено").font(.caption).foregroundStyle(.secondary)
                                 CoinAmount(value: item.price, size: 16).font(.caption.bold())
-                                Text(item.published ? (item.upgrades ? "Улучшения доступны" : "В витрине") : "Черновик").font(.caption2).foregroundStyle(item.published ? .green : .secondary)
+                                Text(item.published ? "В витрине" : "Черновик").font(.caption2).foregroundStyle(item.published ? .green : .secondary)
                             }
                         }
                         if !item.published {
-                            Button("Выложить подарок") { publishUpgrades = false; selected = item }.buttonStyle(PrimaryButton()).disabled(busy)
-                        } else if !item.upgrades {
-                            Button("Выложить улучшение") { publishUpgrades = true; selected = item }.buttonStyle(GhostButton()).disabled(busy)
+                            Button("Выложить подарок") { selected = item }.buttonStyle(PrimaryButton()).disabled(busy)
                         }
                     }.panel()
                 }
             }.padding(22)
         }.background { VoidBackground() }.navigationTitle("Публикации").navigationBarTitleDisplayMode(.inline)
         .task { await load() }.refreshable { await load() }
-        .confirmationDialog(publishUpgrades ? "Выпустить улучшения?" : "Выложить подарок в витрину?", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } }), titleVisibility: .visible) {
+        .confirmationDialog("Выложить подарок в витрину?", isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } }), titleVisibility: .visible) {
             if let selected { Button("Да, опубликовать") { publish(selected) } }
         } message: {
-            if let selected { Text("\(selected.title) · тираж \(selected.supply.formatted()). \(publishUpgrades ? "Улучшения станут доступны всем владельцам." : "Покупки станут доступны всем пользователям.")") }
+            if let selected { Text("\(selected.title) · тираж \(selected.supply.formatted()). Покупки станут доступны всем пользователям.") }
         }
     }
     private func load() async {
@@ -346,13 +343,13 @@ struct ArtifactAdminView: View {
         catch { notice = error.localizedDescription }
     }
     private func publish(_ item: ArtifactCollection) {
-        let route = publishUpgrades ? "admin/upgrades" : "admin/publish"
+        let route = "admin/publish"
         busy = true
         Task {
             defer { busy = false }
             do {
                 _ = try await store.artifactCommand(route, ArtifactCommand(collection: item.id, confirmed: true))
-                notice = nil; success = route == "admin/upgrades" ? "Улучшения \(item.title) опубликованы" : "\(item.title) появился в витрине у всех"; selected = nil; Haptics.success(); await load()
+                notice = nil; success = "\(item.title) появился в витрине у всех"; selected = nil; Haptics.success(); await load()
             } catch is CancellationError { return }
             catch { notice = error.localizedDescription }
         }

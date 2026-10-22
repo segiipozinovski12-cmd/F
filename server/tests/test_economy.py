@@ -41,9 +41,35 @@ class EconomyTests(unittest.TestCase):
         self.assertEqual(len(self.request('/v1/inbox', token=self.b)[1]['envelopes']), 1)
         self.assertEqual(self.request('/v3/economy/catalog', token=self.a)[1]['collections'], [])
         with self.relay.db() as db:
-            self.assertEqual([r[0] for r in db.execute('SELECT supply FROM artifact_collections ORDER BY supply')], [2000, 5000, 10000, 35000, 55000])
+            self.assertEqual([r[0] for r in db.execute('SELECT supply FROM artifact_collections ORDER BY supply')], [5000, 7500, 15000, 20000, 55000])
             self.assertEqual(db.execute('SELECT count(*) FROM identities').fetchone()[0], 2)
         self.assertEqual(self.request('/v2/commerce', token=self.a)[0], 404)
+
+    def test_model_replacement_keeps_owners_serials_traits_wallets_listings_and_retries(self):
+        self.publish(); self.credit()
+        payload = {'requestID': str(uuid.uuid4()), 'collection': 'nova', 'expectedPrice': 500}
+        receipt = self.request('/v3/economy/buy', 'POST', payload, self.a)
+        gift = receipt[1]['artifact']
+        self.post('upgrade', {'artifactID': gift['id'], 'expectedPrice': 100})
+        self.post('visibility', {'artifactID': gift['id'], 'visible': True})
+        self.post('list', {'artifactID': gift['id'], 'price': 850})
+        with self.relay.db() as db:
+            # Simulate the previous published catalog, including an already-issued
+            # count above Crown's new cap. Those serials must never disappear.
+            db.execute("UPDATE artifact_collections SET title='Nova' WHERE id='nova'")
+            db.execute("UPDATE artifact_collections SET title='Orbit', supply=35000, minted=16000 WHERE id='orbit'")
+            db.execute("UPDATE artifact_collections SET price=777, upgrade_price=123 WHERE id='prism'")
+            tables = ['artifacts', 'artifact_listings', 'economy_wallets', 'economy_ledger', 'economy_operations', 'economy_admin_audit']
+            snapshot = {table: [tuple(r) for r in db.execute('SELECT * FROM ' + table)] for table in tables}
+        self.relay = Relay(self.relay.path)
+        self.relay = Relay(self.relay.path)  # Repeated startup must also be harmless.
+        with self.relay.db() as db:
+            self.assertEqual(snapshot, {table: [tuple(r) for r in db.execute('SELECT * FROM ' + table)] for table in tables})
+            nova = db.execute("SELECT * FROM artifact_collections WHERE id='nova'").fetchone()
+            self.assertEqual((nova['title'], nova['minted'], nova['published'], nova['upgrades']), ('Cute Ghost', 1, 1, 1))
+            self.assertEqual(db.execute("SELECT supply FROM artifact_collections WHERE id='orbit'").fetchone()[0], 16000)
+            self.assertEqual(tuple(db.execute("SELECT price,upgrade_price FROM artifact_collections WHERE id='prism'").fetchone()), (777, 123))
+        self.assertEqual(self.request('/v3/economy/buy', 'POST', payload, self.a), receipt)
 
     def test_catalog_reports_payment_configuration_without_exposing_credentials_or_crediting(self):
         for ready in [False, True]:

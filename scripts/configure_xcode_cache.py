@@ -28,12 +28,12 @@ def configure(project: Path, derived_data: Path, username: str = None) -> Path:
     settings.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=settings.parent, delete=False) as output:
         temporary = Path(output.name)
-        try:
-            plistlib.dump(values, output)
-            output.flush()
-            temporary.replace(settings)
-        finally:
-            temporary.unlink(missing_ok=True)
+        plistlib.dump(values, output)
+        output.flush()
+    try:
+        temporary.replace(settings)
+    finally:
+        temporary.unlink(missing_ok=True)
     return settings
 
 

@@ -162,7 +162,7 @@ struct ChatView: View {
     }
 
     private var styledContent: some View {
-        conversationContent.background { ChatBackdrop(palette: chatPalette, texture: store.appearance.chatTexture) }
+        conversationContent.background { ChatBackdrop(palette: chatPalette, texture: store.appearance.chatTexture, wallpaper: store.chatWallpaper(roomID)) }
             .animation(reduceMotion ? nil : Motion.layout, value: selectionMode)
             .animation(reduceMotion ? nil : Motion.layout, value: reply?.id)
             .animation(reduceMotion ? nil : Motion.layout, value: editing?.id)

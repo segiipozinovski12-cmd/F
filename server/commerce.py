@@ -16,12 +16,13 @@ import moderation
 import storekit
 
 PREFIX = '/v3/economy'
+# IDs remain stable so issued serials, ownership and retry receipts survive artwork replacement.
 COLLECTIONS = [
-    ('singularity', 'Singularity', 'Первая точка вселенной. Абсолютная редкость.', 2000, 25000, 500),
-    ('sovereign', 'Sovereign', 'Корона из света для тех, кто выбирает своё.', 5000, 10000, 350),
-    ('prism', 'Prism', 'Осколок света с бесконечностью внутри.', 10000, 4000, 250),
-    ('orbit', 'Orbit', 'Маленькая вселенная на собственной орбите.', 35000, 1500, 150),
-    ('nova', 'Nova', 'Вспышка, с которой начинается твоя коллекция.', 55000, 500, 100),
+    ('singularity', 'Chrome Unicorn', 'РҐСЂРѕРјРёСЂРѕРІР°РЅРЅС‹Р№ РµРґРёРЅРѕСЂРѕРі: РјСЏРіРєР°СЏ С„РѕСЂРјР°, Р·РµСЂРєР°Р»СЊРЅС‹Р№ С…Р°СЂР°РєС‚РµСЂ.', 5000, 25000, 500),
+    ('sovereign', 'Cyber Skull', 'РљРёР±РµСЂРЅРµС‚РёС‡РµСЃРєРёР№ С‡РµСЂРµРї СЃ РјРµС…Р°РЅРёС‡РµСЃРєРёРјРё СЂРѕРіР°РјРё Рё СЃРІРµС‚СЏС‰РёРјРёСЃСЏ РґРµС‚Р°Р»СЏРјРё.', 7500, 10000, 350),
+    ('prism', 'Crystal', 'РћР±СЉС‘РјРЅС‹Р№ РєСЂРёСЃС‚Р°Р»Р»: РіСЂР°РЅРё, СЌРЅРµСЂРіРёСЏ Рё СЃРІРµС‚ РёР·РЅСѓС‚СЂРё.', 20000, 4000, 250),
+    ('orbit', 'Chromed Crown', 'РђР¶СѓСЂРЅР°СЏ С…СЂРѕРјРёСЂРѕРІР°РЅРЅР°СЏ РєРѕСЂРѕРЅР° РІ СЃС‚РёР»Рµ cyber sigilism.', 15000, 1500, 150),
+    ('nova', 'Cute Ghost', 'РњР°Р»РµРЅСЊРєРѕРµ РїСЂРёРІРёРґРµРЅРёРµ СЃ Р±РѕР»СЊС€РёРј С…Р°СЂР°РєС‚РµСЂРѕРј.', 55000, 500, 100),
 ]
 # Each category rolls independently, with exact disclosed weights / 10,000.
 TRAITS = {
@@ -74,8 +75,10 @@ def install(db):
     if 'last_price' not in {r[1] for r in db.execute('PRAGMA table_info(artifacts)')}:
         db.execute('ALTER TABLE artifacts ADD COLUMN last_price INTEGER NOT NULL DEFAULT 0')
         db.execute('UPDATE artifacts SET last_price=price_paid')
-    db.executemany('''INSERT OR IGNORE INTO artifact_collections
-      (id,title,description,supply,price,upgrade_price) VALUES (?,?,?,?,?,?)''', COLLECTIONS)
+    db.executemany('''INSERT INTO artifact_collections
+      (id,title,description,supply,price,upgrade_price) VALUES (?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description,
+        supply=max(excluded.supply,artifact_collections.minted)''', COLLECTIONS)
 
 
 def account_token(owner):

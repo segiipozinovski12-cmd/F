@@ -33,10 +33,11 @@ final class CollectionRenderingTests: XCTestCase {
         store.state.nickname = "Alex Morgan"; store.state.username = "alexmorgan"
         store.state.bio = "Собираю редкие моменты. И немного звёзд."
         var social = SocialState(); social.status = "На своей орбите"
+        social.decoration = ProfileDecoration(cover: "aurora", symbol: "moon.stars.fill", statusUntil: Date().addingTimeInterval(3600))
         social.stories = [PrivateStory(author: store.myID, text: "Маленькие открытия каждый день.", createdAt: Date(), expiresAt: Date().addingTimeInterval(3600))]
         store.state.social = social
         let identifiers = ["singularity", "sovereign", "prism", "orbit", "nova"]
-        let supplies = [2000, 5000, 10000, 35000, 55000], prices = [25000, 10000, 4000, 1500, 500]
+        let supplies = [5000, 7500, 20000, 15000, 55000], prices = [25000, 10000, 4000, 1500, 500]
         let collections: [[String: Any]] = identifiers.enumerated().map { index, id in
             ["id": id, "title": ArtifactCollection.titles[id]!, "description": "Маленькая вселенная с характером.",
              "supply": supplies[index], "minted": supplies[index] / 3, "price": prices[index], "upgradePrice": 100, "published": true, "upgrades": true]
@@ -61,6 +62,9 @@ final class CollectionRenderingTests: XCTestCase {
         XCTAssertTrue(store.hasPremium)
         try await capture(NavigationStack { ProfileScreenView(owner: store.myID) }.environmentObject(store), name: "profile")
         try await capture(NavigationStack { ArtifactStorefrontView() }.environmentObject(store), name: "storefront")
+        try await capture(NavigationStack { ProfileEditorView() }.environmentObject(store), name: "profile-editor")
+        try await capture(NavigationStack { PremiumPlanView() }.environmentObject(store), name: "premium")
+        try await capture(NavigationStack { AppearanceSettingsView() }.environmentObject(store), name: "appearance")
         let artwork = VStack(spacing: 14) {
             Text("THE VO1D COLLECTION").font(.caption.monospaced()).tracking(3).padding(.top, 18)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
@@ -72,7 +76,7 @@ final class CollectionRenderingTests: XCTestCase {
         }.background(.black)
         try await capture(artwork, name: "artwork")
         let skins = VStack(spacing: 12) {
-            Text("SINGULARITY / MATERIAL STUDIES").font(.caption2.monospaced()).tracking(2).padding(.top, 20)
+            Text("CHROME UNICORN / MATERIAL STUDIES").font(.caption2.monospaced()).tracking(2).padding(.top, 20)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(ArtifactSceneFactory.models, id: \.self) { model in
                     let traits = ArtifactTraits(backdrop: ArtifactTrait(id: "obsidian", title: "Obsidian", weight: 150), pattern: ArtifactTrait(id: "void", title: "Void", weight: 50), model: ArtifactTrait(id: model, title: model.capitalized, weight: 40))
@@ -91,6 +95,9 @@ final class CollectionRenderingTests: XCTestCase {
             for model in ArtifactSceneFactory.models {
                 let scene = ArtifactSceneFactory.scene(collection: collection, model: model)
                 let object = try XCTUnwrap(scene.rootNode.childNode(withName: "artifact", recursively: true))
+                XCTAssertNotNil(object.userData?["source"], "Must load the supplied mesh, not a placeholder")
+                let asset = try XCTUnwrap(ArtifactModelAssets.catalog?.collections[collection])
+                XCTAssertEqual(object.childNodes.count, asset.meshes.count)
                 let bounds = object.boundingBox
                 XCTAssertGreaterThan(bounds.max.x - bounds.min.x, 0.5, "\(collection)/\(model)")
                 XCTAssertGreaterThan(bounds.max.y - bounds.min.y, 0.5)

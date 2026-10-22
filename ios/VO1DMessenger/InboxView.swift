@@ -221,7 +221,7 @@ struct InboxView: View {
     private var filters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы"] + store.extended.folders.map(\.id), id: \.self) { item in
+                ForEach(["Все", "Непрочитанные", "Личные", "Группы", "Каналы", "Сохранённые"] + store.extended.folders.map(\.id), id: \.self) { item in
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { filter = item }
                     } label: {

@@ -22,7 +22,13 @@ struct ProfileScreenView: View {
     private var stories: [PrivateStory] { store.social.stories.filter { $0.author == owner && $0.expiresAt > Date() }.sorted { $0.createdAt > $1.createdAt } }
     private var ownGifts: [CollectibleArtifact] { mine ? (store.economy.owner == owner ? store.economy.artifacts : []) : gifts }
     private var visibleGifts: [CollectibleArtifact] { ownGifts.filter { $0.visible || (mine && showHidden) } }
-    private var featured: CollectibleArtifact? { ownGifts.first { $0.visible && $0.traits != nil } }
+    private var featured: CollectibleArtifact? {
+        ownGifts.first { $0.visible && mine && $0.id == store.social.featuredGiftID } ?? ownGifts.first { $0.visible }
+    }
+    private var decoration: ProfileDecoration { (profile?.decoration ?? ProfileDecoration()).allowed(premium: mine ? store.hasPremium : premium) }
+    private var sharedRoomID: String? {
+        store.state.rooms.first { !$0.isGroup && !store.extended.hiddenRooms.contains($0.id) && $0.members.contains { $0.id == owner } && !store.isLocalUtilityRoom($0.id) }?.id
+    }
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
     var body: some View {
@@ -37,10 +43,13 @@ struct ProfileScreenView: View {
                         NavigationLink { ContactDetailView(contactID: owner) } label: { Image(systemName: "ellipsis").font(.title3).padding(15) }.buttonStyle(RoundedActionStyle())
                     }
                 }
-                Picker("Профиль", selection: $tab) { Text("Подарки").tag(0); Text("Истории").tag(1); Text("О себе").tag(2) }.pickerStyle(.segmented)
+                Picker("Профиль", selection: $tab) { Text("Подарки").tag(0); Text("Истории").tag(1); Text("О себе").tag(2); if !mine, sharedRoomID != nil { Text("Медиа").tag(3) } }.pickerStyle(.segmented)
                 if tab == 0 { giftGrid }
                 else if tab == 1 { storyGrid }
-                else { about }
+                else if tab == 3, let sharedRoomID {
+                    NavigationLink { SharedMediaView(roomID: sharedRoomID) } label: { Label("Фото, голосовые и файлы", systemImage: "photo.on.rectangle.angled").frame(maxWidth: .infinity) }.buttonStyle(GhostButton())
+                } else { about }
+                if mine { personalHub }
             }.padding(.horizontal, 20).padding(.bottom, 32)
         }.background { VoidBackground() }
         .navigationTitle(mine ? "Мой профиль" : name).navigationBarTitleDisplayMode(.inline)
@@ -58,11 +67,16 @@ struct ProfileScreenView: View {
     private var hero: some View {
         VStack(spacing: 14) {
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 30)
-                    .fill(LinearGradient(colors: ArtifactPalette.backdrop(featured?.traits?.backdrop.id).map { $0.opacity(0.7) } + [.black.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(height: 164)
+                ProfileCover(decoration: decoration)
+                    .frame(height: 180)
+                    .overlay(alignment: .topLeading) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("VO1D").font(.caption.monospaced().bold()).tracking(4)
+                            Text((mine ? store.hasPremium : premium) ? "PREMIUM MEMBER" : "YOUR OWN ORBIT").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.8).opacity(0.6)
+                        }.padding(22).foregroundStyle(.white.opacity(0.9))
+                    }
                     .overlay(alignment: .topTrailing) {
-                        if let featured { ArtifactArtwork(collection: featured.collection, traits: featured.traits).frame(width: 108).rotationEffect(.degrees(14)).opacity(0.5).padding(12).accessibilityHidden(true) }
+                        if let featured { ArtifactArtwork(collection: featured.collection, traits: featured.traits).frame(width: 132).rotationEffect(.degrees(12)).opacity(0.85).padding(10).accessibilityHidden(true) }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 30))
                 Group {
@@ -77,7 +91,12 @@ struct ProfileScreenView: View {
                     if mine ? store.hasPremium : premium { Image(systemName: "seal.fill").font(.title3).foregroundStyle(Color.artifactHex(0xC7ACF0)).accessibilityLabel("VO1D_PREMIUM") }
                 }.multilineTextAlignment(.center)
                 if mine, let username = store.state.username { Text("@" + username).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled) }
-                if let status = profile?.status, !status.isEmpty { Text(status).font(.caption.weight(.medium)).padding(.horizontal, 14).padding(.vertical, 7).background(.white.opacity(0.07), in: Capsule()) }
+                TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                    HStack(spacing: 6) {
+                        if let symbol = decoration.symbol(at: timeline.date) { Image(systemName: symbol).foregroundStyle(decoration.colors.first ?? .white) }
+                        if let status = profile?.status, !status.isEmpty { Text(status) }
+                    }.font(.caption.weight(.medium)).padding(.horizontal, 14).padding(.vertical, 7).background(.white.opacity(0.06), in: Capsule())
+                }
                 if let bio = profile?.bio, !bio.isEmpty { Text(bio).font(.subheadline).lineSpacing(4).multilineTextAlignment(.center).textSelection(.enabled).padding(.top, 4) }
             }
             HStack(spacing: 34) {
@@ -94,6 +113,23 @@ struct ProfileScreenView: View {
     }
     private func metric(_ title: String, value: Int) -> some View {
         VStack(spacing: 4) { Text(value.formatted()).font(.title3.bold().monospacedDigit()); Text(title).font(.caption).foregroundStyle(.secondary) }
+    }
+    private var personalHub: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack { Text("Твоё пространство").font(.headline); Spacer(); Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary) }
+            Button { do { room = try store.savedRoom() } catch { notice = error.localizedDescription } } label: { hubLabel("Избранное", subtitle: "Сохрани важное для себя", icon: "bookmark.fill") }.buttonStyle(MotionButtonStyle())
+            NavigationLink { FolderCenterView() } label: { hubLabel("Папки чатов", subtitle: "Свои, работа, всё остальное", icon: "folder.fill") }.buttonStyle(MotionButtonStyle())
+            NavigationLink { MessageLibraryView(mode: "scheduled") } label: { hubLabel("Отложенные сообщения", subtitle: "Отправить в нужный момент", icon: "clock.fill") }.buttonStyle(MotionButtonStyle())
+            NavigationLink { SnippetsView() } label: { hubLabel("Быстрые ответы", subtitle: "Твои готовые фразы", icon: "text.bubble.fill") }.buttonStyle(MotionButtonStyle())
+            NavigationLink { DeviceLinksView() } label: { hubLabel("Мои устройства", subtitle: "Подключения и контроль", icon: "laptopcomputer.and.iphone") }.buttonStyle(MotionButtonStyle())
+        }.panel()
+    }
+    private func hubLabel(_ title: String, subtitle: String, icon: String) -> some View {
+        HStack(spacing: 13) {
+            Image(systemName: icon).font(.system(size: 17)).foregroundStyle(Color.artifactHex(0xC7B4E9)).frame(width: 40, height: 40).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 13))
+            VStack(alignment: .leading, spacing: 4) { Text(title).font(.subheadline.weight(.medium)); Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+            Spacer(); Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+        }.foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
     }
     private var shortcuts: some View {
         HStack(spacing: 10) {
@@ -183,6 +219,9 @@ struct ProfileEditorView: View {
     @State private var busy = false
     @State private var notice: String?
     @State private var audience = Set<String>()
+    @State private var decoration = ProfileDecoration()
+    @State private var duration = 0
+    @State private var premiumPlan = false
     var body: some View {
         Form {
             Section {
@@ -194,6 +233,40 @@ struct ProfileEditorView: View {
             }
             Section("О себе · \(bio.count)/160") {
                 TextField("Пара слов о тебе", text: $bio, axis: .vertical).lineLimit(3...6).onChange(of: bio) { _, value in bio = String(value.prefix(160)) }
+            }
+            Section("Обложка профиля") {
+                ProfileCover(decoration: decoration).frame(height: 110).clipShape(RoundedRectangle(cornerRadius: 20)).listRowBackground(Color.clear)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(ProfileDecoration.covers, id: \.self) { cover in
+                            let option = ProfileDecoration(cover: cover)
+                            Button {
+                                if option.premium && !store.hasPremium { premiumPlan = true }
+                                else { decoration.cover = cover; Haptics.light() }
+                            } label: {
+                                VStack(spacing: 6) {
+                                    ProfileCover(decoration: option).frame(width: 74, height: 48).clipShape(RoundedRectangle(cornerRadius: 12)).overlay { if decoration.cover == cover { Image(systemName: "checkmark.circle.fill").foregroundStyle(.white) } }
+                                    HStack(spacing: 3) { Text(option.title); if option.premium { Image(systemName: "sparkles") } }.font(.caption2)
+                                }
+                            }.buttonStyle(MotionButtonStyle()).accessibilityLabel(option.title).accessibilityAddTraits(decoration.cover == cover ? .isSelected : [])
+                        }
+                    }.padding(.vertical, 5)
+                }
+            }
+            Section("Статус Premium") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        Button { decoration.symbol = nil } label: { Image(systemName: "xmark").frame(width: 36, height: 36) }.accessibilityLabel("Без значка")
+                        ForEach(ProfileDecoration.symbols, id: \.self) { symbol in
+                            Button {
+                                if store.hasPremium { decoration.symbol = symbol }
+                                else { premiumPlan = true }
+                            } label: { Image(systemName: symbol).frame(width: 36, height: 36).background(.white.opacity(decoration.symbol == symbol ? 0.18 : 0.04), in: Circle()) }.accessibilityLabel(symbol).accessibilityAddTraits(decoration.symbol == symbol ? .isSelected : [])
+                        }
+                    }
+                }
+                Picker("Убрать значок", selection: $duration) { Text("Не менять срок").tag(0); Text("Через час").tag(3600); Text("Через 8 часов").tag(28800); Text("Через сутки").tag(86400); Text("Никогда").tag(-1) }
+                Text("Значок виден рядом со статусом. Обложка и статус передаются выбранным контактам вместе с профилем.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Поделиться профилем") {
                 ForEach(store.state.contacts.filter { !$0.blocked && $0.isBot != true && !store.isBuiltinBot($0.id) && store.extended.trustedIDs.contains($0.id) }) { contact in
@@ -207,7 +280,8 @@ struct ProfileEditorView: View {
             ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() }.disabled(busy) }
             ToolbarItem(placement: .confirmationAction) { Button("Готово") { save() }.bold().disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
         }.interactiveDismissDisabled(busy)
-        .onAppear { name = store.state.nickname; username = store.state.username ?? ""; bio = store.state.bio ?? ""; status = store.social.status; avatar = store.state.profileAvatar }
+        .onAppear { name = store.state.nickname; username = store.state.username ?? ""; bio = store.state.bio ?? ""; status = store.social.status; avatar = store.state.profileAvatar; decoration = (store.social.decoration ?? ProfileDecoration()).allowed(premium: store.hasPremium) }
+        .sheet(isPresented: $premiumPlan) { NavigationStack { PremiumPlanView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { premiumPlan = false } } } } }
         .onChange(of: photo) { _, item in
             guard let item else { return }
             let fence = store.sessionFence; busy = true
@@ -238,7 +312,11 @@ struct ProfileEditorView: View {
                 do {
                     store.state.nickname = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     store.state.bio = bio; store.state.profileAvatar = avatar
-                    var social = store.social; social.status = status; store.state.social = social
+                    var social = store.social; social.status = status
+                    var style = decoration.allowed(premium: store.hasPremium)
+                    if duration > 0 { style.statusUntil = Date().addingTimeInterval(Double(duration)) }
+                    else if duration == -1 { style.statusUntil = nil }
+                    try style.validate(); social.decoration = style; store.state.social = social
                     try store.shareProfile(with: audience)
                     try store.save()
                 } catch { store.state = previous; throw error }

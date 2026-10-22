@@ -56,4 +56,7 @@ def validate(app: Path) -> None:
 
 
 if __name__ == '__main__':
-    validate(Path(sys.argv[1]))
+    from validate_artifact_assets import validate as validate_artifacts
+    app = Path(sys.argv[1])
+    validate_artifacts(app / 'ArtifactModels')
+    validate(app)

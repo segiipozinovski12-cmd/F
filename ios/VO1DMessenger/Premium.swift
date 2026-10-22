@@ -21,10 +21,17 @@ struct PremiumPlanView: View {
                 if let notice { EconomyNotice(message: notice) }
                 VStack(spacing: 24) {
                     feature("waveform", title: "Голос в текст", detail: "Бесплатная расшифровка голосовых прямо в чате. Аудио обрабатывается на устройстве и не загружается на сервер.")
-                    feature("paintpalette", title: "Особенные темы", detail: "Aurora, Ember и Frost — три дополнительные палитры для твоего пространства.")
+                    feature("paintpalette", title: "Особенные темы", detail: "Шесть палитр: Aurora, Ember, Frost, Rose, Cobalt и Gold.")
+                    feature("person.crop.rectangle", title: "Обложки профиля", detail: "Шесть дополнительных обложек с мягкими градиентами и орбитами.")
+                    feature("moon.stars", title: "Статус с характером", detail: "Восемь значков настроения. Оставь навсегда или выбери, когда он исчезнет.")
+                    feature("square.grid.3x3", title: "Обои для каждой беседы", detail: "Сетка, орбиты и кристаллы. Общий фон или отдельный рисунок для каждого чата.")
                     feature("seal", title: "Знак Premium", detail: "Аккуратный значок подписчика в твоём профиле.")
                 }.panel()
                 if store.hasPremium {
+                    HStack(spacing: 12) {
+                        NavigationLink { ProfileEditorView() } label: { Label("Мой стиль", systemImage: "person.crop.circle") }.buttonStyle(GhostButton())
+                        NavigationLink { AppearanceSettingsView() } label: { Label("Темы", systemImage: "paintpalette") }.buttonStyle(GhostButton())
+                    }
                     Label("Подписка активна", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     if let until = store.coinWallet?.premiumUntil { Text("Оплачено до \(Date(timeIntervalSince1970: Double(until)).formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary) }
                     Link("Управлять подпиской", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)

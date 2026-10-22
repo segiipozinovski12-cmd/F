@@ -71,7 +71,7 @@ final class EconomyTests: XCTestCase {
         """.utf8)
         let gift = try Wire.decoder.decode(CollectibleArtifact.self, from: data)
         XCTAssertEqual(gift.number, "#34,628")
-        XCTAssertEqual(gift.title, "Nova")
+        XCTAssertEqual(gift.title, "Cute Ghost")
         XCTAssertNil(gift.traits)
         XCTAssertFalse(gift.visible)
     }

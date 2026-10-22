@@ -69,6 +69,9 @@ for file in sorted((IOS / 'VO1DMessenger' / 'Resources').glob('*.txt')):
     path = file.relative_to(IOS).as_posix()
     ref = ref_file(path, 'text')
     resource_builds.append(obj(path + ':resource', 'PBXBuildFile', f'fileRef = {ref};'))
+model_folder = 'VO1DMessenger/Resources/ArtifactModels'
+model_ref = ref_file(model_folder, 'folder')
+resource_builds.append(obj(model_folder + ':resource', 'PBXBuildFile', f'fileRef = {model_ref};'))
 appsrc = obj('app-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(appbuild)}; runOnlyForDeploymentPostprocessing = 0;')
 testsrc = obj('test-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(testbuild)}; runOnlyForDeploymentPostprocessing = 0;')
 uisrc = obj('ui-sources','PBXSourcesBuildPhase',f'buildActionMask = 2147483647; files = {array(uibuild)}; runOnlyForDeploymentPostprocessing = 0;')

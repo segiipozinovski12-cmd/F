@@ -1,7 +1,7 @@
 # VO1D profiles, collectibles and Premium
 
 This release extends the existing iOS messenger and relay. The migration only
-creates tables and inserts missing collection definitions. It does not reset
+creates tables and refreshes artwork metadata while preserving issued ownership. It does not reset
 accounts, usernames, keys, mailboxes, messages, call authority or the account
 epoch. Do not arm `VO1D_REQUESTED_RESET` to deploy this release.
 
@@ -14,8 +14,8 @@ through the existing Signal event transport. Profile text/photos/stories are not
 published to the commerce server. Existing story audiences and 24-hour expiration
 remain in force. Shared stories have progress, pause and previous/next controls.
 
-The five original procedural 3D artworks are Singularity, Sovereign, Prism, Orbit and
-Nova. Cards are rendered locally into cached 512px previews. No remote image tracking or
+The five supplied 3D models are Chrome Unicorn, Cyber Skull, Crystal, Chromed Crown
+and Cute Ghost. Cards are rendered locally into cached 512px previews. No remote image tracking or
 emoji substitute is used. Purchased gifts start without collectible attributes.
 Their collection serial, original price in VO1Dcoin and owner are server records.
 Gifts are initially hidden; owners may display/hide them in their profile. Public
@@ -24,22 +24,23 @@ and traits. A marketplace listing is public even when hidden from the profile.
 
 | Collection | Maximum supply | Gift price, VO1Dcoin | Upgrade, VO1Dcoin |
 | --- | ---: | ---: | ---: |
-| Singularity | 2,000 | 25,000 | 500 |
-| Sovereign | 5,000 | 10,000 | 350 |
-| Prism | 10,000 | 4,000 | 250 |
-| Orbit | 35,000 | 1,500 | 150 |
-| Nova | 55,000 | 500 | 100 |
+| Chrome Unicorn | 5,000 | 25,000 | 500 |
+| Cyber Skull | 7,500 | 10,000 | 350 |
+| Crystal | 20,000 | 4,000 | 250 |
+| Chromed Crown | 15,000 | 1,500 | 150 |
+| Cute Ghost | 55,000 | 500 | 100 |
 
-Total maximum issuance: **107,000**. The relay assigns serials from 1 within each
+Total maximum issuance: **102,500**. The relay assigns serials from 1 within each
 collection; transfers and secondary sales keep the original number and traits.
 Deleting an account through the pre-existing account deletion policy retires its
 owned artifacts without recycling numbers or decreasing issued supply.
 
 The existing permanently pinned administrator (`moderation.owner`, not a client
 username comparison) sees publication controls inside Showcase. Each collection
-starts as a draft. Publishing a gift and releasing its upgrade are separate,
-confirmed actions with server audit records. A sold-out collection can still
-receive an upgrade release. Deployment never publishes automatically.
+starts as a draft. Gift publication requires confirmation and creates a server audit
+record. The current client has no upgrade purchase or release buttons. Existing
+traits, legacy endpoints and operation receipts remain compatible with older clients.
+Deployment never publishes automatically.
 
 ## Ownership, settlement and retries
 
@@ -183,3 +184,34 @@ current unlocked session before opening the Apple payment sheet. Product setup,
 Apple approval and real sandbox/production purchase testing are still required.
 Unfinished verified transactions remain recoverable until the relay acknowledges
 that exact purchase; merely enabling the readiness flag never credits a wallet.
+
+
+## Model replacement and personalization (October 22, 2026)
+
+Stable IDs map singularity to Chrome Unicorn, sovereign to Cyber Skull, prism to
+Crystal, orbit to Chromed Crown and nova to Cute Ghost. Startup updates titles,
+descriptions and target supplies. Wallets, ownership, serials, traits, prices,
+listings, publication flags and cached retry receipts stay intact. Supply never
+falls below the issued count. Update both the relay and iOS client to see the new
+catalog. The source archive contains a unicorn, not a dog.
+
+ArtifactModels/catalog.json lists the local PBR materials and SHA-256 verified
+meshes. Each .vmesh contains Float32 position/normal/UV at a 32-byte stride,
+followed by UInt32 triangle indices. Reproduce with prepare_artifact_models.py
+using safely extracted supplied ZIPs; authoring dependencies are documented in
+that script. App builds use committed assets and need no conversion packages.
+validate_artifact_assets.py and installed bundle validation verify the resources.
+
+Profiles now include selectable covers, a chosen visible gift on the cover,
+expiring status symbols and direct access to saved messages, folders, scheduled
+messages, quick replies and linked devices. Contact profiles link to existing
+shared media without revealing hidden chats. Cover and status decorations travel
+only in existing encrypted events to explicitly selected trusted contacts.
+New optional fields preserve decoding of existing vaults and shared profiles.
+
+VO1D_PREMIUM offers six extra app themes (Aurora, Ember, Frost, Rose, Cobalt,
+Gold), six extra covers, eight status symbols and three extra chat wallpaper
+patterns. Wallpapers can be global or per conversation; each conversation can
+return to the global setting. Expired Premium falls back to basic wallpaper and
+profile decoration without erasing saved preferences. StoreKit purchase and
+server entitlement checks are unchanged. Voice transcription stays on device.

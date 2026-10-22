@@ -28,7 +28,7 @@ struct ArtifactDetailView: View {
                     }
                 VStack(spacing: 7) {
                     HStack(spacing: 8) { Text(gift.title).font(.system(size: 32, weight: .bold, design: .rounded)); Text(gift.number).font(.title3.monospaced()).foregroundStyle(.secondary) }.minimumScaleFactor(0.6).lineLimit(1)
-                    Text(gift.traits == nil ? "Ещё не улучшен. История начинается здесь." : "Твоё единственное сочетание.").font(.subheadline).foregroundStyle(.secondary)
+                    Text(gift.traits == nil ? "Оригинальная модель. Твой номер в коллекции." : "Твоё единственное сочетание.").font(.subheadline).foregroundStyle(.secondary)
                 }
                 if let notice { EconomyNotice(message: notice) }
                 VStack(spacing: 16) {
@@ -69,6 +69,11 @@ struct ArtifactDetailView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button(gift.visible ? "Скрыть из профиля" : "Добавить в профиль", systemImage: gift.visible ? "eye.slash" : "person.crop.circle.badge.plus") { visibility() }
+                        if gift.visible {
+                            Button("На обложку профиля", systemImage: "star.circle") {
+                                var social = store.social; social.featuredGiftID = gift.id; store.state.social = social; store.persist(); Haptics.success()
+                            }
+                        }
                         if gift.listingID == nil {
                             Button("Передать", systemImage: "gift") { sheet = "transfer" }
                             Button("Продать", systemImage: "tag") { sheet = "list" }
@@ -82,14 +87,11 @@ struct ArtifactDetailView: View {
         .refreshable { await refresh() }
         .sheet(isPresented: Binding(get: { sheet != nil }, set: { if !$0 { sheet = nil } })) {
             NavigationStack {
-                if sheet == "upgrade" { ArtifactUpgradeView(gift: gift) { updated in current = updated; sheet = nil; Task { await refresh() } } }
-                else {
                     ArtifactTradeView(gift: gift, transfer: sheet == "transfer") { updated in
                         current = updated; sheet = nil
                         if updated.owner != store.myID { dismiss() }
                         else { Task { await refresh() } }
                     }
-                }
             }
         }
         .confirmationDialog("Купить \(gift.title) \(gift.number)?", isPresented: $buying, titleVisibility: .visible) {
@@ -109,11 +111,6 @@ struct ArtifactDetailView: View {
                     Button { sheet = "transfer" } label: { Label("Передать", systemImage: "gift") }.buttonStyle(GhostButton())
                     Button { sheet = "list" } label: { Label("Продать", systemImage: "tag") }.buttonStyle(GhostButton())
                 }.disabled(busy)
-                if gift.traits == nil {
-                    if collection?.upgrades == true {
-                        Button { sheet = "upgrade" } label: { HStack { Label("Улучшить", systemImage: "sparkles"); Spacer(); CoinAmount(value: collection?.upgradePrice ?? 0) } }.buttonStyle(PrimaryButton()).disabled(busy)
-                    } else { Text("Улучшение появится, когда администратор выпустит его для этой коллекции.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center) }
-                }
             }
         }
     }

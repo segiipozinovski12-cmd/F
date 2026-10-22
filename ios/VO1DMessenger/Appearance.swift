@@ -7,8 +7,8 @@ struct VoidPalette {
 }
 
 enum MessengerTheme: String, Codable, CaseIterable, Identifiable {
-    case void, graphite, midnight, plum, forest, aurora, ember, frost
-    var premium: Bool { [.aurora, .ember, .frost].contains(self) }
+    case void, graphite, midnight, plum, forest, aurora, ember, frost, rose, cobalt, gold
+    var premium: Bool { [.aurora, .ember, .frost, .rose, .cobalt, .gold].contains(self) }
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -20,6 +20,9 @@ enum MessengerTheme: String, Codable, CaseIterable, Identifiable {
         case .aurora: return "Aurora"
         case .ember: return "Ember"
         case .frost: return "Frost"
+        case .rose: return "Rose"
+        case .cobalt: return "Cobalt"
+        case .gold: return "Gold"
         }
     }
     var palette: VoidPalette {
@@ -31,6 +34,9 @@ enum MessengerTheme: String, Codable, CaseIterable, Identifiable {
         case .forest: return VoidPalette(background: Color(hex: 0x091412), panel: Color(hex: 0x172C26), accent: Color(hex: 0xACDFC9))
         case .aurora: return VoidPalette(background: Color(hex: 0x101220), panel: Color(hex: 0x21253D), accent: Color(hex: 0xC7C0FF))
         case .ember: return VoidPalette(background: Color(hex: 0x1A100F), panel: Color(hex: 0x34221F), accent: Color(hex: 0xF5C1A2))
+        case .rose: return VoidPalette(background: Color(hex: 0x1A111A), panel: Color(hex: 0x332131), accent: Color(hex: 0xEEB5CF))
+        case .cobalt: return VoidPalette(background: Color(hex: 0x0D1426), panel: Color(hex: 0x1D2B47), accent: Color(hex: 0xAEC3FF))
+        case .gold: return VoidPalette(background: Color(hex: 0x18150F), panel: Color(hex: 0x30291E), accent: Color(hex: 0xE8CE9C))
         case .frost: return VoidPalette(background: Color(hex: 0x10191C), panel: Color(hex: 0x223239), accent: Color(hex: 0xC1E9EE))
         }
     }
@@ -67,14 +73,18 @@ struct AppearancePreferences: Codable {
     var defaultChatTheme = ChatTheme.follow
     var roomThemes: [String: ChatTheme] = [:]
     var chatTexture = true
+    var wallpaper = ChatWallpaper.dots
+    var roomWallpapers: [String: ChatWallpaper] = [:]
     init() {}
-    enum CodingKeys: String, CodingKey { case appTheme, defaultChatTheme, roomThemes, chatTexture }
+    enum CodingKeys: String, CodingKey { case appTheme, defaultChatTheme, roomThemes, chatTexture, wallpaper, roomWallpapers }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         appTheme = MessengerTheme(rawValue: try values.decodeIfPresent(String.self, forKey: .appTheme) ?? "") ?? .void
         defaultChatTheme = ChatTheme(rawValue: try values.decodeIfPresent(String.self, forKey: .defaultChatTheme) ?? "") ?? .follow
         roomThemes = (try values.decodeIfPresent([String: String].self, forKey: .roomThemes) ?? [:]).compactMapValues(ChatTheme.init(rawValue:))
         chatTexture = try values.decodeIfPresent(Bool.self, forKey: .chatTexture) ?? true
+        wallpaper = ChatWallpaper(rawValue: try values.decodeIfPresent(String.self, forKey: .wallpaper) ?? "") ?? .dots
+        roomWallpapers = (try values.decodeIfPresent([String: String].self, forKey: .roomWallpapers) ?? [:]).compactMapValues(ChatWallpaper.init(rawValue:))
     }
 }
 
@@ -93,26 +103,22 @@ extension ChatStore {
     func changeAppearance(_ update: (inout AppearancePreferences) -> Void) {
         var value = appearance; update(&value); state.appearance = value; persist()
     }
+    func chatWallpaper(_ roomID: String?) -> ChatWallpaper {
+        let chosen = roomID.flatMap { appearance.roomWallpapers[$0] } ?? appearance.wallpaper
+        return chosen.premium && !hasPremium ? .dots : chosen
+    }
     func chatTheme(_ roomID: String) -> ChatTheme { appearance.roomThemes[roomID] ?? appearance.defaultChatTheme }
 }
 
 struct ChatBackdrop: View {
     var palette: VoidPalette
     var texture: Bool
+    var wallpaper = ChatWallpaper.dots
     var body: some View {
         ZStack {
             palette.background
             if texture {
-                // Static geometry has no timer, network assets or per-frame work.
-                Canvas { context, size in
-                    for row in 0..<Int(size.height / 38) {
-                        for column in 0..<Int(size.width / 38) {
-                            let x = CGFloat(column) * 38 + (row.isMultiple(of: 2) ? 12 : 28)
-                            let y = CGFloat(row) * 38 + 18
-                            context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1.6, height: 1.6)), with: .color(palette.accent.opacity(0.07)))
-                        }
-                    }
-                }.accessibilityHidden(true).allowsHitTesting(false)
+                WallpaperPattern(style: wallpaper, color: palette.accent)
             }
         }.ignoresSafeArea()
     }
@@ -164,7 +170,7 @@ struct AppearanceSettingsView: View {
                         Text("И со своим настроением ✨").foregroundStyle(.black).padding(13).background(selection.outgoing(app: app), in: RoundedRectangle(cornerRadius: 21))
                     }
                     HStack { Text("Сообщение").foregroundStyle(.secondary); Spacer(); Image(systemName: "arrow.up.circle.fill").foregroundStyle(chat.accent) }.padding(12).background(chat.panel, in: Capsule())
-                }.padding(18).background { ChatBackdrop(palette: chat, texture: store.appearance.chatTexture) }.clipShape(RoundedRectangle(cornerRadius: 28)).overlay(RoundedRectangle(cornerRadius: 28).stroke(.white.opacity(0.1)))
+                }.padding(18).background { ChatBackdrop(palette: chat, texture: store.appearance.chatTexture, wallpaper: store.chatWallpaper(roomID)) }.clipShape(RoundedRectangle(cornerRadius: 28)).overlay(RoundedRectangle(cornerRadius: 28).stroke(.white.opacity(0.1)))
                 VStack(alignment: .leading, spacing: 14) {
                     Text(roomID == nil ? "Цвет всех чатов" : "Цвет этого чата").font(.headline)
                     ForEach(ChatTheme.allCases) { theme in
@@ -184,6 +190,28 @@ struct AppearanceSettingsView: View {
                     }
                     if let roomID, store.appearance.roomThemes[roomID] != nil {
                         Button("Использовать общую тему чатов") { choose { $0.roomThemes[roomID] = nil } }.buttonStyle(GhostButton())
+                    }
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack { Text("Обои чата").font(.headline); Spacer(); Text("PREMIUM").font(.caption2.monospaced()).foregroundStyle(.secondary) }
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        ForEach(ChatWallpaper.allCases) { style in
+                            Button {
+                                if style.premium && !store.hasPremium { premiumPlan = true }
+                                else { choose { value in
+                                    if let roomID { value.roomWallpapers[roomID] = style }
+                                    else { value.wallpaper = style }
+                                } }
+                            } label: {
+                                VStack(spacing: 8) {
+                                    WallpaperPattern(style: style, color: chat.accent).frame(height: 70).background(chat.panel, in: RoundedRectangle(cornerRadius: 16))
+                                    HStack(spacing: 5) { Text(style.title); if style.premium { Image(systemName: "sparkles") }; if store.chatWallpaper(roomID) == style { Image(systemName: "checkmark") } }.font(.caption)
+                                }.padding(10).background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 22))
+                            }.buttonStyle(MotionButtonStyle()).accessibilityAddTraits(store.chatWallpaper(roomID) == style ? .isSelected : [])
+                        }
+                    }
+                    if let roomID, store.appearance.roomWallpapers[roomID] != nil {
+                        Button("Использовать общие обои") { choose { $0.roomWallpapers[roomID] = nil } }.buttonStyle(GhostButton())
                     }
                 }
                 if roomID == nil {

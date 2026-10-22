@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "collections": {
+    "singularity": {
+      "title": "Chrome Unicorn",
+      "source": "chrome-unicorn-balloon-sculpture",
+      "meshes": [
+        {
+          "name": "meshes[0]",
+          "file": "mesh-0.vmesh",
+          "vertices": 13671,
+          "indices": 59292,
+          "material": 0,
+          "sha256": "75079b157bff9c757ff6f1211a4ed92f4ad02169512610ca9cd6bde396794ad3"
+        }
+      ],
+      "materials": [
+        {
+          "name": "Chrome",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m0-color.jpg",
+          "normal": "m0-normal.png",
+          "metallic": "m0-metallic.png",
+          "rough": "m0-rough.png"
+        }
+      ]
+    },
+    "sovereign": {
+      "title": "Cyber Skull",
+      "source": "cyber-skull",
+      "meshes": [
+        {
+          "name": "meshId8",
+          "file": "mesh-0.vmesh",
+          "vertices": 6425,
+          "indices": 18939,
+          "material": 0,
+          "sha256": "723d7fbf95c773d2bfdcb292ebc26e41693f4037a858c2d68a0399b78a32ff37"
+        },
+        {
+          "name": "meshId0",
+          "file": "mesh-1.vmesh",
+          "vertices": 2598,
+          "indices": 9546,
+          "material": 1,
+          "sha256": "9a0c013ce300167df35983fe2619b3f5fe1b9caf0149c8e242a7f6a7c660daca"
+        },
+        {
+          "name": "meshId3",
+          "file": "mesh-2.vmesh",
+          "vertices": 8224,
+          "indices": 30588,
+          "material": 2,
+          "sha256": "975e4f53ab8b5801f3466c2a4420ecd13e6ca0fb437d83afb2af1be287de8ad7"
+        },
+        {
+          "name": "meshId2",
+          "file": "mesh-3.vmesh",
+          "vertices": 6212,
+          "indices": 22206,
+          "material": 3,
+          "sha256": "2078872a4917daa905d5bfff07e29732242cd8086e9e3246ba2aa1b8b38bbb1d"
+        },
+        {
+          "name": "meshId5",
+          "file": "mesh-4.vmesh",
+          "vertices": 8954,
+          "indices": 27132,
+          "material": 4,
+          "sha256": "7664db02997ab3e584ad8f3d76de3693f4d25329189c6f460e633d4468229bd5"
+        },
+        {
+          "name": "meshId4",
+          "file": "mesh-5.vmesh",
+          "vertices": 9141,
+          "indices": 47256,
+          "material": 5,
+          "sha256": "cd4967af36ae9638643363a870243df6d0cad1a3a904fceb1d840188b9df5ca1"
+        },
+        {
+          "name": "meshId6",
+          "file": "mesh-6.vmesh",
+          "vertices": 13254,
+          "indices": 77214,
+          "material": 6,
+          "sha256": "9b1350389df22de1b16e88146d4c3a1cdc7da41a455a75f6dea960fe958ba7c2"
+        },
+        {
+          "name": "meshId7",
+          "file": "mesh-7.vmesh",
+          "vertices": 3999,
+          "indices": 13500,
+          "material": 7,
+          "sha256": "5e48c6011616e80c8e2cdbb0320a89603ef5f0e433812bd240803b2ee0d3e24a"
+        },
+        {
+          "name": "meshId9",
+          "file": "mesh-8.vmesh",
+          "vertices": 48610,
+          "indices": 150174,
+          "material": 8,
+          "sha256": "52107c41e44c511aa652242d85c76c60014591943de516c859a2b8cd19ad0a64"
+        },
+        {
+          "name": "meshId1",
+          "file": "mesh-9.vmesh",
+          "vertices": 1206,
+          "indices": 3504,
+          "material": 9,
+          "sha256": "c3dde8bde05b37a9f93f73f28e3d149d2a35d7904824e8f5a90aa2b1a9ffc660"
+        },
+        {
+          "name": "meshId10",
+          "file": "mesh-10.vmesh",
+          "vertices": 14584,
+          "indices": 76992,
+          "material": 10,
+          "sha256": "c9e866c970b0194ba593110470926500f612426b95bce512a87d2d63e21a5212"
+        }
+      ],
+      "materials": [
+        {
+          "name": "BackPlatePieces_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m0-diffuse.jpg",
+          "normal": "m0-normal.png",
+          "metallic": "m0-metallic.png",
+          "rough": "m0-rough.png",
+          "ao": "m0-ao.png",
+          "emission": "m0-emission.jpg"
+        },
+        {
+          "name": "BackPlate_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m1-diffuse.jpg",
+          "normal": "m1-normal.png",
+          "metallic": "m1-metallic.png",
+          "rough": "m1-rough.png",
+          "ao": "m1-ao.png",
+          "emission": "m1-emission.jpg"
+        },
+        {
+          "name": "CapAndBackTrack_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m2-diffuse.jpg",
+          "normal": "m2-normal.png",
+          "metallic": "m2-metallic.png",
+          "rough": "m2-rough.png",
+          "ao": "m2-ao.png",
+          "emission": "m2-emission.jpg"
+        },
+        {
+          "name": "CapPlates_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m3-diffuse.jpg",
+          "normal": "m3-normal.png",
+          "metallic": "m3-metallic.png",
+          "rough": "m3-rough.png",
+          "ao": "m3-ao.png",
+          "emission": "m3-emission.jpg"
+        },
+        {
+          "name": "FixturesAndPlugs_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m4-diffuse.jpg",
+          "normal": "m4-normal.png",
+          "metallic": "m4-metallic.png",
+          "rough": "m4-rough.png",
+          "ao": "m4-ao.png"
+        },
+        {
+          "name": "Horns_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m5-diffuse.jpg",
+          "normal": "m5-normal.png",
+          "metallic": "m5-metallic.png",
+          "rough": "m5-rough.png",
+          "ao": "m5-ao.png"
+        },
+        {
+          "name": "Skull1_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m6-diffuse.jpg",
+          "normal": "m6-normal.png",
+          "metallic": "m6-metallic.png",
+          "rough": "m6-rough.png",
+          "ao": "m6-ao.png",
+          "emission": "m6-emission.jpg"
+        },
+        {
+          "name": "TempleCircut_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m7-diffuse.jpg",
+          "normal": "m7-normal.png",
+          "metallic": "m7-metallic.png",
+          "rough": "m7-rough.png",
+          "ao": "m7-ao.png",
+          "emission": "m7-emission.jpg"
+        },
+        {
+          "name": "Tracks_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m8-diffuse.jpg",
+          "normal": "m8-normal.png",
+          "metallic": "m8-metallic.png",
+          "rough": "m8-rough.png",
+          "ao": "m8-ao.png",
+          "emission": "m8-emission.jpg"
+        },
+        {
+          "name": "Vents_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m9-diffuse.jpg",
+          "normal": "m9-normal.png",
+          "metallic": "m9-metallic.png",
+          "rough": "m9-rough.png",
+          "ao": "m9-ao.png"
+        },
+        {
+          "name": "Wires_Mat",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m10-diffuse.jpg",
+          "normal": "m10-normal.png",
+          "metallic": "m10-metallic.png",
+          "rough": "m10-rough.png",
+          "ao": "m10-ao.png",
+          "emission": "m10-emission.jpg"
+        }
+      ]
+    },
+    "prism": {
+      "title": "Crystal",
+      "source": "crystal",
+      "meshes": [
+        {
+          "name": "pPlatonic1",
+          "file": "mesh-0.vmesh",
+          "vertices": 2088,
+          "indices": 5400,
+          "material": 0,
+          "sha256": "38e46b51c56eb42a411be6e17d01293644dff81839854ea9c13cb74a477b83fd"
+        }
+      ],
+      "materials": [
+        {
+          "name": "lambert1",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22,
+          "diffuse": "m0-diffuse.jpg",
+          "normal": "m0-normal.png",
+          "emission": "m0-emission.jpg",
+          "metallic": "m0-metallic.png",
+          "rough": "m0-rough.png"
+        }
+      ]
+    },
+    "orbit": {
+      "title": "Chromed Crown",
+      "source": "cyber-sigilism-chromed-crown",
+      "meshes": [
+        {
+          "name": "Cube.012",
+          "file": "mesh-0.vmesh",
+          "vertices": 25126,
+          "indices": 134520,
+          "material": 0,
+          "sha256": "def3abb3b0ca61dd1370a4756ac0a0032071e777806686b57d2bb9c52c9d106a"
+        }
+      ],
+      "materials": [
+        {
+          "name": "Material.001",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0.95,
+          "roughness": 0.22
+        }
+      ]
+    },
+    "nova": {
+      "title": "Cute Ghost",
+      "source": "cute-ghost",
+      "meshes": [
+        {
+          "name": "Cube.002",
+          "file": "mesh-0.vmesh",
+          "vertices": 3635,
+          "indices": 18330,
+          "material": 0,
+          "sha256": "cfa9842c295dc1ffb652954a0ad0e3c48c25bcd9f6583c4dd607c22be952a140"
+        }
+      ],
+      "materials": [
+        {
+          "name": "M_Ghost",
+          "color": [
+            0.82,
+            0.85,
+            0.92
+          ],
+          "metalness": 0,
+          "roughness": 0.7,
+          "diffuse": "m1-color.jpg"
+        }
+      ]
+    }
+  }
+}
