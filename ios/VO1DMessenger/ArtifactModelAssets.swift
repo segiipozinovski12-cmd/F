@@ -93,6 +93,11 @@ import UIKit
                 guard let name else { continue }
                 guard let image = UIImage(contentsOfFile: try file(name, in: folder).path) else { throw AssetError.missingTexture }
                 property.contents = image; property.wrapS = .repeat; property.wrapT = .repeat
+                // Imported UVs use a bottom-left origin; UIImage-backed SceneKit maps use top-left.
+                // Apply the same conversion to every PBR channel, keeping their atlases aligned.
+                var bitmapCoordinates = SCNMatrix4Identity
+                bitmapCoordinates.m22 = -1; bitmapCoordinates.m42 = 1
+                property.contentsTransform = bitmapCoordinates
                 property.magnificationFilter = .linear; property.minificationFilter = .linear; property.mipFilter = .linear
             }
             material.emission.intensity = spec.emission == nil ? 0 : 0.22

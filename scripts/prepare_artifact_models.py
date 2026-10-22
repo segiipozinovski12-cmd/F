@@ -105,7 +105,7 @@ def convert(root):
             normal = (np.asarray(mesh.normals).reshape(-1, 3) @ rotation.T).astype('<f4')
             normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-8)
             uv = np.asarray(mesh.texcoords[0]).reshape(-1, 2).copy() if mesh.texcoords else np.zeros((len(position), 2))
-            # Assimp normalizes glTF image coordinates to bottom-left, like FBX/Collada.
+            # Retain Assimp's bottom-left UVs. ArtifactModelAssets flips all UIImage PBR maps at binding time.
             interleaved = np.concatenate((position, normal, uv), axis=1).astype('<f4')
             indices = np.asarray(mesh.indices, dtype='<u4').reshape(-1)
             assert len(indices) % 3 == 0 and indices.max() < len(position)

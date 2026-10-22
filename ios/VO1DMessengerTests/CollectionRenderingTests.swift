@@ -21,6 +21,21 @@ private final class CollectionPreviewProtocol: URLProtocol, @unchecked Sendable 
 }
 
 final class CollectionRenderingTests: XCTestCase {
+    @MainActor func testGhostFaceRemainsVisibleAfterTextureAtlasConversion() throws {
+        let image = try XCTUnwrap(ArtifactSceneFactory.poster(collection: "nova", model: "original").cgImage)
+        var pixels = [UInt8](repeating: 0, count: 128 * 128 * 4)
+        let context = try XCTUnwrap(CGContext(data: &pixels, width: 128, height: 128, bitsPerComponent: 8, bytesPerRow: 512, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 128, height: 128))
+        var facialPixels = 0
+        for y in 44..<84 {
+            for x in 43..<84 {
+                let i = (y * 128 + x) * 4
+                if pixels[i + 3] > 200 && pixels[i] < 60 && pixels[i + 1] < 60 && pixels[i + 2] < 60 { facialPixels += 1 }
+            }
+        }
+        XCTAssertGreaterThan(facialPixels, 8, "Eyes and mouth must be on the front of the ghost, not on the back or pumpkin atlas.")
+    }
+
     @MainActor func testRenderActualProfileStorefrontAndArtwork() async throws {
         let store = ChatStore(), original = store.state, oldAPI = store.api
         APIClient.testingProtocolClasses = [CollectionPreviewProtocol.self]

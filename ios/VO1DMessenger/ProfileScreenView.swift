@@ -68,7 +68,7 @@ struct ProfileScreenView: View {
         VStack(spacing: 14) {
             ZStack(alignment: .bottom) {
                 ProfileCover(decoration: decoration)
-                    .frame(height: 180)
+                    .frame(height: 164)
                     .overlay(alignment: .topLeading) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("VO1D").font(.caption.monospaced().bold()).tracking(4)
@@ -114,7 +114,7 @@ struct ProfileScreenView: View {
             .accessibilityLabel(stories.isEmpty ? "Фото профиля" : "Открыть истории")
     }
     private func metric(_ title: String, value: Int) -> some View {
-        VStack(spacing: 4) { Text(value.formatted()).font(.title3.bold().monospacedDigit()); Text(title).font(.caption).foregroundStyle(.secondary) }
+        HStack(spacing: 6) { Text(title).font(.caption).foregroundStyle(.secondary); Text(value.formatted()).font(.subheadline.bold().monospacedDigit()) }
     }
     private var personalHub: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -150,8 +150,14 @@ struct ProfileScreenView: View {
     private var giftGrid: some View {
         VStack(spacing: 18) {
             if mine {
-                Toggle("Показать скрытые · \(max(0, store.economy.total - store.economy.visibleCount))", isOn: $showHidden).font(.caption).tint(.artifactHex(0xB49BDF))
-                NavigationLink { ArtifactStorefrontView() } label: { Label("Найти свой артефакт", systemImage: "gift").frame(maxWidth: .infinity) }.buttonStyle(GhostButton())
+                HStack {
+                    Text("Коллекция").font(.headline)
+                    Spacer()
+                    NavigationLink { ArtifactStorefrontView() } label: { Label("В витрину", systemImage: "plus.circle").font(.subheadline.weight(.medium)) }.buttonStyle(MotionButtonStyle())
+                }
+                if store.economy.total > store.economy.visibleCount {
+                    Toggle("Показать скрытые · \(store.economy.total - store.economy.visibleCount)", isOn: $showHidden).font(.caption).tint(.artifactHex(0xB49BDF))
+                }
             }
             if loading { ProgressView().padding(30) }
             else if visibleGifts.isEmpty {
@@ -263,7 +269,7 @@ struct ProfileEditorView: View {
                             Button {
                                 if store.hasPremium { decoration.symbol = symbol; decoration.statusUntil = nil; if duration == 0 { duration = -1 } }
                                 else { premiumPlan = true }
-                            } label: { Image(systemName: symbol).frame(width: 36, height: 36).background(.white.opacity(decoration.symbol == symbol ? 0.18 : 0.04), in: Circle()) }.accessibilityLabel(symbol).accessibilityAddTraits(decoration.symbol == symbol ? .isSelected : [])
+                            } label: { Image(systemName: symbol).frame(width: 36, height: 36).background(.white.opacity(decoration.symbol == symbol ? 0.18 : 0.04), in: Circle()) }.accessibilityLabel(ProfileDecoration.symbolTitle(symbol)).accessibilityAddTraits(decoration.symbol == symbol ? .isSelected : [])
                         }
                     }
                 }

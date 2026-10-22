@@ -7,6 +7,9 @@ struct ProfileDecoration: Codable, Hashable {
     var statusUntil: Date?
     static let covers = ["void", "graphite", "aurora", "ember", "frost", "rose", "cobalt", "gold"]
     static let symbols = ["moon.stars.fill", "sparkles", "bolt.fill", "heart.fill", "headphones", "airplane", "gamecontroller.fill", "cup.and.saucer.fill"]
+    static func symbolTitle(_ symbol: String) -> String {
+        ["moon.stars.fill": "Ночной режим", "sparkles": "Вдохновение", "bolt.fill": "Полон энергии", "heart.fill": "Любовь", "headphones": "Слушаю музыку", "airplane": "В дороге", "gamecontroller.fill": "Играю", "cup.and.saucer.fill": "Перерыв на кофе"][symbol] ?? "Статус"
+    }
     var premium: Bool { !["void", "graphite"].contains(cover) || symbol != nil }
     var activeSymbol: String? { symbol(at: Date()) }
     func symbol(at date: Date) -> String? { statusUntil.map { $0 <= date } == true ? nil : symbol }
