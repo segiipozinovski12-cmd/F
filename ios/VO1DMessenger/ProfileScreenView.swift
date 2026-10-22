@@ -92,10 +92,12 @@ struct ProfileScreenView: View {
                 }.multilineTextAlignment(.center)
                 if mine, let username = store.state.username { Text("@" + username).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled) }
                 TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                    if decoration.symbol(at: timeline.date) != nil || profile?.status.isEmpty == false {
                     HStack(spacing: 6) {
                         if let symbol = decoration.symbol(at: timeline.date) { Image(systemName: symbol).foregroundStyle(decoration.colors.first ?? .white) }
                         if let status = profile?.status, !status.isEmpty { Text(status) }
                     }.font(.caption.weight(.medium)).padding(.horizontal, 14).padding(.vertical, 7).background(.white.opacity(0.06), in: Capsule())
+                    }
                 }
                 if let bio = profile?.bio, !bio.isEmpty { Text(bio).font(.subheadline).lineSpacing(4).multilineTextAlignment(.center).textSelection(.enabled).padding(.top, 4) }
             }
@@ -259,7 +261,7 @@ struct ProfileEditorView: View {
                         Button { decoration.symbol = nil } label: { Image(systemName: "xmark").frame(width: 36, height: 36) }.accessibilityLabel("Без значка")
                         ForEach(ProfileDecoration.symbols, id: \.self) { symbol in
                             Button {
-                                if store.hasPremium { decoration.symbol = symbol }
+                                if store.hasPremium { decoration.symbol = symbol; decoration.statusUntil = nil; if duration == 0 { duration = -1 } }
                                 else { premiumPlan = true }
                             } label: { Image(systemName: symbol).frame(width: 36, height: 36).background(.white.opacity(decoration.symbol == symbol ? 0.18 : 0.04), in: Circle()) }.accessibilityLabel(symbol).accessibilityAddTraits(decoration.symbol == symbol ? .isSelected : [])
                         }

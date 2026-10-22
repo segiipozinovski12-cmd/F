@@ -20,7 +20,7 @@ struct PremiumPlanView: View {
                 }
                 if let notice { EconomyNotice(message: notice) }
                 VStack(spacing: 24) {
-                    feature("waveform", title: "Голос в текст", detail: "Бесплатная расшифровка голосовых прямо в чате. Аудио обрабатывается на устройстве и не загружается на сервер.")
+                    feature("waveform", title: "Голос в текст", detail: "Расшифровка голосовых прямо в чате без отдельной оплаты. Аудио обрабатывается на устройстве и не загружается на сервер.")
                     feature("paintpalette", title: "Особенные темы", detail: "Шесть палитр: Aurora, Ember, Frost, Rose, Cobalt и Gold.")
                     feature("person.crop.rectangle", title: "Обложки профиля", detail: "Шесть дополнительных обложек с мягкими градиентами и орбитами.")
                     feature("moon.stars", title: "Статус с характером", detail: "Восемь значков настроения. Оставь навсегда или выбери, когда он исчезнет.")
