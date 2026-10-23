@@ -56,6 +56,11 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         clearDelivered()
     }
 
+    func cancelReminders(_ ids: [String]) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
+    }
+
     func clearDelivered() {
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
     }

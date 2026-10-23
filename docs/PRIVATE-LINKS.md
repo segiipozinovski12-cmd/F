@@ -1,0 +1,11 @@
+# Private links and retry safety
+
+An invitation contains a contact card, private mailbox write capability and a validated libsignal prekey bundle. AES-GCM encrypts it with a random key kept in the link; associated data binds the random retrieval token. The relay sees an opaque invitation token, mailbox, ciphertext size and expiry. Possession of the complete link authorizes its one-time retrieval; share it through a trusted channel.
+
+Relay publication now records a retained token digest/state until expiry. Exact retries acknowledge the existing intent without inserting another redeemable invitation after consumption or revocation. Changed ciphertext, mailbox or expiry conflicts. `DELETE /v2/mailboxes/{id}/invites/{token}` requires that mailbox's read capability, is repeatable and leaves sibling links alone. A foreign mailbox or write capability cannot revoke it. Deleting the entire mailbox invalidates its invitations. The migration preserves outstanding older links; previously consumed tokens absent from an old database cannot be reconstructed.
+
+iOS persists a fixed token, ciphertext, key, mailbox and one-hour deadline in its encrypted vault **before** publication, then retries the same bytes. Revocation is first persisted locally, hides the link immediately and is sent when the app can reach the relay. Until confirmation or expiry, an offline revocation cannot prevent a remote recipient redeeming it. The Private Links screen shows queued/published/revoking state. Backups omit these live capabilities.
+
+BotFather provides the same screen for each bot, using that bot's separate Keychain/vault and its libsignal prekeys. Bot and account credentials never substitute for mailbox capabilities. Creating links serializes against the native worker to avoid two writers advancing its session/key state. The worker remains a foreground executor.
+
+Revoking the retrieval token does not recall a mailbox capability already redeemed by a recipient, erase saved plaintext or revoke a different device's independent identity. Revoke the corresponding contact's private addresses separately. This version does not delegate invitation administration across linked devices. A first-claim @vo1d operator must still retain the persistent relay database.

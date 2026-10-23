@@ -50,6 +50,9 @@ struct ContactsView: View {
                         Picker("Контакты",selection:$contactFilter) {
                             ForEach(["Все","Избранные","Проверенные","Блокировки"],id:\.self) { Text($0).tag($0) }
                         }.pickerStyle(.segmented)
+                        NavigationLink { BotFatherView() } label: {
+                            Label("@vo1d_bot_father", systemImage: "terminal").frame(maxWidth: .infinity, alignment: .leading).panel()
+                        }.buttonStyle(MotionButtonStyle())
                         NavigationLink {
                             MyIdentityView()
                         } label: {
@@ -66,7 +69,7 @@ struct ContactsView: View {
                             }
                             .panel()
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(MotionButtonStyle())
 
                         if contacts.isEmpty {
                             VStack(spacing: 17) {
@@ -90,7 +93,7 @@ struct ContactsView: View {
                             VStack(spacing: 10) {
                                 ForEach(contacts) { contact in
                                     NavigationLink {
-                                        ContactDetailView(contactID: contact.id)
+                                        ProfileScreenView(owner: contact.id)
                                     } label: {
                                         HStack(spacing: 14) {
                                             Avatar(name: contact.name)
@@ -123,12 +126,13 @@ struct ContactsView: View {
                                         }
                                         .panel()
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MotionButtonStyle())
                                 }
                             }
                         }
                     }
                     .padding(22)
+                    .softAppear()
                 }
             }
             .navigationBarHidden(true)
@@ -144,6 +148,7 @@ struct AddContactView: View {
     var initialValue = ""
     @State private var value = ""
     @State private var scanning = false
+    @State private var botFather = false
     @State private var busy = false
     @State private var failure: String?
 
@@ -167,17 +172,12 @@ struct AddContactView: View {
                             .lineSpacing(4)
                     }
 
-                    TextField("Например 7KQ2 или XROSB", text: $value)
-                        .textInputAutocapitalization(.characters)
+                    TextField("@username, 7KQ2 или QR-приглашение", text: $value)
+                        .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.system(size: 20, weight: .bold, design: .monospaced))
                         .tracking(value.count <= 4 ? 4 : 0)
                         .voidField()
-                        .onChange(of: value) { _, input in
-                            if !input.hasPrefix("vo1d://") && input.count <= 8 {
-                                value = input.uppercased().filter { $0.isLetter || $0.isNumber }
-                            }
-                        }
 
                     Button("СКАНИРОВАТЬ QR", systemImage: "qrcode.viewfinder") { scanning = true }
                         .buttonStyle(GhostButton())
@@ -190,6 +190,7 @@ struct AddContactView: View {
                     }
 
                     Button(busy ? "ИЩЕМ…" : "ДОБАВИТЬ") {
+                        if value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "@")) == "vo1d_bot_father" { botFather = true; return }
                         busy = true
                         Task {
                             do {
@@ -223,6 +224,7 @@ struct AddContactView: View {
                         .padding()
                 }
             }
+            .sheet(isPresented: $botFather) { NavigationStack { BotFatherView() } }
         }
         .preferredColorScheme(.dark)
     }
@@ -263,6 +265,7 @@ struct MyIdentityView: View {
                     Button("СОЗДАТЬ ПРИВАТНОЕ ПРИГЛАШЕНИЕ") {
                         Task { do { try await store.preparePrivateInvite() } catch { store.error = error.localizedDescription } }
                     }.buttonStyle(.bordered)
+                    NavigationLink("УПРАВЛЯТЬ ПРИВАТНЫМИ ССЫЛКАМИ") { PrivateLinksView() }
                     Text("Приватное приглашение действует час и используется один раз. Оно содержит адрес доставки и одноразовые ключи, зашифрованные ключом из ссылки.")
                         .font(.caption).foregroundStyle(Theme.secondary)
 
@@ -289,6 +292,7 @@ struct ContactDetailView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var room: Room?
     @State private var alias = ""
+    @State private var reporting = false
 
     private var contact: Contact? { store.state.contacts.first { $0.id == contactID } }
 
@@ -302,7 +306,7 @@ struct ContactDetailView: View {
                             Avatar(name: contact.name, size: 82)
                             HStack(spacing: 8) {
                                 Text(contact.name).font(.title2.bold())
-                                if store.isBuiltinBot(contact.id) {
+                                if store.isBuiltinBot(contact.id) || contact.isBot == true {
                                     Text("BOT")
                                         .font(.system(size: 9, weight: .black, design: .monospaced))
                                         .tracking(1)
@@ -320,6 +324,10 @@ struct ContactDetailView: View {
                         .padding(.vertical, 12)
 
                         if !store.isBuiltinBot(contactID) {
+                            if contact.isBot == true {
+                                Text("Это бот. Его владелец и исполнитель могут читать сообщения, которые ты отправишь этому боту. Остальные чаты ему недоступны.")
+                                    .font(.callout).foregroundStyle(Theme.secondary).panel()
+                            }
                             NavigationLink("ПРИВАТНОСТЬ И ПРОВЕРКА QR") { ContactPrivacyView(contactID:contactID) }
                         }
                         Button("НАПИСАТЬ СООБЩЕНИЕ", systemImage: "bubble.left.fill") {
@@ -375,6 +383,8 @@ struct ContactDetailView: View {
                                 Task { await store.toggleBlock(contact) }
                             }
                             .buttonStyle(GhostButton())
+                            Button("ПОЖАЛОВАТЬСЯ", systemImage: "flag") { reporting = true }
+                                .buttonStyle(GhostButton())
                         } else {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("СИСТЕМНЫЙ КОНТАКТ")
@@ -395,6 +405,7 @@ struct ContactDetailView: View {
             }
         }
         .navigationTitle("Контакт")
+        .sheet(isPresented: $reporting) { ReportComposerView(target: ReportTarget(subject: contactID, source: "profile")) }
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { alias = contact?.name ?? "" }
         .navigationDestination(item: $room) { ChatView(roomID: $0.id) }

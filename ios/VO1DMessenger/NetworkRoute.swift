@@ -21,14 +21,18 @@ extension ChatStore {
         var local = extended
         switch profile {
         case .everyday:
+            local.privacy.discoverable = true; local.privacy.requirePrivateDelivery = false
+            local.privacy.allowDiscoveryRequests = true
             local.privacy.requireRequests = true; local.privacy.typingSignals = false; local.privacy.notificationPreview = false
         case .privateDelivery:
-            local.privacy.requirePrivateDelivery = true; local.privacy.discoverable = false
+            local.privacy.requirePrivateDelivery = true; local.privacy.discoverable = true
+            local.privacy.allowDiscoveryRequests = true
             local.privacy.requireRequests = true; local.privacy.typingSignals = false
             local.privacy.deliveryReceipts = false; local.privacy.notificationPreview = false
         case .tor:
             local.privacy.embeddedTor = true; local.privacy.requirePrivateDelivery = true
             local.privacy.discoverable = false; local.privacy.requireRequests = true
+            local.privacy.allowDiscoveryRequests = false
             local.privacy.typingSignals = false; local.privacy.deliveryReceipts = false
             local.privacy.lowData = true; local.privacy.backgroundCalls = false
             state.notificationsEnabled = false
@@ -49,8 +53,46 @@ enum PrivacyProfile: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .everyday: return "Сохраняет выбранный маршрут. Новые сообщения используют libsignal; для первого контакта можно использовать код."
-        case .privateDelivery: return "Требует приватного приглашения. Скрывает отправителя в очереди; relay продолжает видеть сетевые соединения и время."
-        case .tor: return "Включает встроенный Tor, приватные адреса и работу без APNs. Подключение медленнее, расход батареи выше; фоновые вызовы выключены."
+        case .privateDelivery: return "Знакомство по коду или username через одобрение. После обмена адресами переписка использует приватную очередь."
+        case .tor: return "Встроенный Tor и приватные приглашения без публичного поиска и APNs. Подключение медленнее, расход батареи выше; фоновые вызовы выключены."
+        }
+    }
+    var tradeoffs: [String] {
+        switch self {
+        case .everyday: return []
+        case .privateDelivery: return [
+            "По ID или @username можно прислать запрос на знакомство. Первая зашифрованная передача адреса раскрывает узлу ID участников; текст сообщений туда не включается.",
+            "До одобрения получателя переписка ждёт приватного адреса. QR и приватная ссылка позволяют обойти публичный поиск.",
+            "Отметки доставки и индикатор набора выключены. Если push не включён отдельно, новые сообщения приходят при открытом VO1D.",
+            "Этот режим сам по себе не скрывает IP: при прямом подключении узел видит адрес и время соединений. Tor выбирается отдельно."
+        ]
+        case .tor: return [
+            "Поиск по ID и @username отключён. Обменивайся QR или приватными ссылками.",
+            "Подключение и передача файлов могут идти дольше; возможны блокировки сети и больший расход батареи. При сбое Tor прямое подключение не включится.",
+            "Push и фоновые звонки выключены. Для переписки и звонков держи VO1D открытым; звонкам через Tor может мешать задержка.",
+            "Отметки доставки и набор выключены; очередь ждёт приватного адреса получателя. Включён экономный опрос раз в 8 секунд.",
+            "Tor не защищает разблокированный телефон и не исключает анализ времени трафика. Внешние ссылки открываются отдельным браузером с его сетевыми настройками."
+        ]
+        }
+    }
+}
+
+struct PrivacyTradeoffsView: View {
+    let profile: PrivacyProfile
+    var body: some View {
+        if !profile.tradeoffs.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Что изменится", systemImage: "info.circle.fill").font(.subheadline.bold())
+                ForEach(profile.tradeoffs, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 9) {
+                        Circle().fill(.white.opacity(0.5)).frame(width: 4, height: 4).padding(.top, 6)
+                        Text(item).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .foregroundStyle(Theme.secondary)
+            .padding(14).background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 20))
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 }
@@ -80,7 +122,7 @@ struct NetworkRouteView: View {
             }
             Section("Профили") {
                 ForEach(PrivacyProfile.allCases) { profile in
-                    Button { apply(profile) } label: { VStack(alignment:.leading,spacing:5) { Text(profile.title); Text(profile.detail).font(.caption).foregroundStyle(.secondary) } }.disabled(applying)
+                    Button { apply(profile) } label: { VStack(alignment:.leading,spacing:5) { Text(profile.title); Text(profile.detail).font(.caption).foregroundStyle(.secondary); PrivacyTradeoffsView(profile: profile) } }.disabled(applying)
                 }
             }
             Section {

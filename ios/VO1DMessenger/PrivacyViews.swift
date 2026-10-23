@@ -15,6 +15,7 @@ struct PrivacyCenterView: View {
                 Toggle("Запросы от незнакомцев",isOn:store.preferenceBinding(\.requireRequests))
                 Toggle("Принимать группы без приглашения",isOn:store.preferenceBinding(\.allowGroupInvites))
                 Toggle("Находить меня по нику и коду",isOn:store.preferenceBinding(\.discoverable))
+                Toggle("Знакомство по коду через одобрение",isOn:store.preferenceBinding(\.allowDiscoveryRequests))
                 Toggle("Показывать, что я печатаю",isOn:store.preferenceBinding(\.typingSignals))
                 Toggle("Отправлять доставку",isOn:store.preferenceBinding(\.deliveryReceipts))
                 Toggle("Звонки на заблокированном iPhone",isOn:store.preferenceBinding(\.backgroundCalls))
@@ -47,6 +48,9 @@ struct PrivacyCenterView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Сроки") {
+                Picker("Автоудаление неактивных чатов",selection:store.preferenceBinding(\.autoDeleteChatsSeconds)) {
+                    Text("Выключено").tag(0); Text("1 час").tag(3600); Text("24 часа").tag(86400); Text("7 дней").tag(604800); Text("30 дней").tag(2592000)
+                }
                 Picker("Удалять локальную историю",selection:store.preferenceBinding(\.localRetentionDays)) {
                     Text("Не удалять").tag(0); Text("Через 7 дней").tag(7); Text("Через 30 дней").tag(30); Text("Через 90 дней").tag(90)
                 }

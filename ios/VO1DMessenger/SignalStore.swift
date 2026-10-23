@@ -32,6 +32,7 @@ extension ChatStore {
     }
 
     func prepareSignalDelivery(_ pending: PendingDelivery, api: APIClient, identity: LocalIdentity, generation expected: Int) async throws -> Envelope {
+        guard state.outbox.contains(where: { $0.id == pending.id }) else { throw CancellationError() }
         guard let clear = pending.envelope.deferredEvent else { return pending.envelope }
         var event = try Wire.decoder.decode(ChatEvent.self, from: clear)
         let target = state.contacts.first(where: { $0.id == pending.envelope.recipient })?.card
@@ -53,11 +54,15 @@ extension ChatStore {
         let result = try SignalProtocol.encrypt(Wire.encoder.encode(event), to: target, identity: identity, state: current, bundle: bundle)
         let envelope: Envelope
         if let route = privateRoute(peerID:target.id,roomID:event.room.id) {
-            let opaque = try PrivateMailboxCrypto.seal(result.1, from: identity, to: target, route: route, id: pending.envelope.id, expiry: event.message?.expiresAt)
+            let opaque = try PrivateMailboxCrypto.seal(result.1, from: identity, to: target, route: route, id: pending.envelope.id, expiry: event.contentExpiry)
             envelope = Envelope(id: opaque.id, sender: try identity.card.id, recipient: target.id, ephemeralKey: "", salt: "", expiresAt: opaque.expiresAt, ciphertext: "", signature: "", opaque: opaque)
         } else {
-            guard !preferences.requirePrivateDelivery else { throw MessengerError.invalid("Нужен приватный адрес контакта") }
-            envelope = try Crypto.sealPayload(result.1, from: identity, to: target, expiry: event.message?.expiresAt, id: pending.envelope.id)
+            // The user explicitly initiated this empty introduction. Only its
+            // signed address exchange may use discovery delivery; never messages,
+            // attachments, receipts or other deferred events in private mode.
+            let introduction = preferences.permitsDiscoveryIntroduction(event)
+            guard !preferences.requirePrivateDelivery || introduction else { throw MessengerError.invalid("Ожидаем одобрения и приватного адреса контакта") }
+            envelope = try Crypto.sealPayload(result.1, from: identity, to: target, expiry: event.contentExpiry, id: pending.envelope.id)
         }
         let previous = state
         var local = extended; local.signal = result.0; local.invitationBundles[target.id] = nil; state.extended = local
@@ -76,10 +81,8 @@ extension ChatStore {
             try acceptReplyMailbox(event.replyMailbox, sender: sender,roomID:event.room.id)
             return event
         }
-        if extended.signal?.trusted["\(sender.id):1"] != nil {
-            throw MessengerError.invalid("Понижение защиты: контакт уже использует v2")
-        }
-        // Legacy history and incoming migration messages remain readable; no new v1 sends.
-        return try Wire.decoder.decode(ChatEvent.self, from: payload)
+        // Old history remains readable in the encrypted vault. A live packet
+        // must always use Signal, including the first packet from a new contact.
+        throw MessengerError.invalid("Собеседнику нужна версия VO1D с Signal v2; слабый сетевой формат отклонён")
     }
 }

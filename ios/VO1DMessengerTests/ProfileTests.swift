@@ -2,6 +2,80 @@ import XCTest
 @testable import VO1DMessenger
 
 final class ProfileTests: XCTestCase {
+    func testProductionRelayUpgradeKeepsCustomRoutesAndRejectsLookalikes() {
+        for saved in ["", "https://f-production-bdfe.up.railway.app", "https://F-PRODUCTION-BDFE.UP.RAILWAY.APP:443/",
+                      "https://f-production-5715.up.railway.app", "https://F-PRODUCTION-5715.UP.RAILWAY.APP:443/"] {
+            XCTAssertEqual(AppConfig.relayAfterUpgrade(saved), AppConfig.productionRelay)
+        }
+        for saved in [AppConfig.productionRelay, "https://my-relay.example", "http://" + String(repeating: "a", count: 56) + ".onion",
+                      "https://f-production-bdfe.up.railway.app.example", "https://f-production-bdfe.up.railway.app:8443",
+                      "https://f-production-bdfe.up.railway.app/custom", "https://f-production-bdfe.up.railway.app?route=private",
+                      "https://user@f-production-bdfe.up.railway.app", "https://f-production-bdfe.up.railway.app#custom",
+                      "https://f-production-5715.up.railway.app.example", "https://f-production-5715.up.railway.app:8443",
+                      "https://f-production-5715.up.railway.app/custom", "https://f-production-5715.up.railway.app?route=private",
+                      "https://user@f-production-5715.up.railway.app", "https://f-production-5715.up.railway.app#custom", "not a relay URL"] {
+            XCTAssertEqual(AppConfig.relayAfterUpgrade(saved), saved)
+        }
+    }
+
+    @MainActor func testSavedRelayUpgradePreservesKeysHistoryAndTorPolicy() throws {
+        let store = ChatStore(), vault = try XCTUnwrap(store.vault), identity = try XCTUnwrap(store.identity)
+        try store.save()
+        let original = try Data(contentsOf: vault.url)
+        defer { try? original.write(to: vault.url, options: [.atomic, .completeFileProtection]) }
+        var legacy = VaultState()
+        legacy.onboarded = true; legacy.appLock = true
+        legacy.nickname = "Existing identity"
+        legacy.server = "https://f-production-5715.up.railway.app"
+        let message = ChatMessage(id: UUID().uuidString, roomID: ChatStore.savedRoomID, sender: store.myID,
+                                  text: "Keep encrypted history", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)), expiresAt: nil, replyTo: nil, attachment: nil)
+        legacy.messages = [message]
+        var local = ExtendedState()
+        local.privacy.embeddedTor = true; local.privacy.requirePrivateDelivery = true
+        local.privacy.discoverable = false; local.privacy.streamIsolation = "keep-this-isolation"
+        local.signal = try SignalSnapshot.create()
+        legacy.extended = local
+        try vault.write(legacy, key: identity.storage)
+
+        let reopened = ChatStore()
+        XCTAssertNil(reopened.fatalError)
+        XCTAssertEqual(reopened.state.server, AppConfig.productionRelay)
+        XCTAssertEqual(reopened.api?.base.absoluteString, AppConfig.productionRelay)
+        XCTAssertEqual(reopened.identity?.signing, identity.signing)
+        XCTAssertEqual(reopened.identity?.agreement, identity.agreement)
+        XCTAssertEqual(reopened.identity?.storage, identity.storage)
+        XCTAssertEqual(reopened.state.messages.first { $0.id == message.id }, message)
+        XCTAssertEqual(reopened.extended.signal?.identity, local.signal?.identity)
+        XCTAssertTrue(reopened.preferences.embeddedTor)
+        XCTAssertTrue(reopened.preferences.requirePrivateDelivery)
+        XCTAssertFalse(reopened.preferences.discoverable)
+        XCTAssertEqual(reopened.preferences.streamIsolation, "keep-this-isolation")
+        XCTAssertEqual(try vault.read(key: identity.storage).server, AppConfig.productionRelay)
+    }
+
+    @MainActor func testSwitchingToAnExistingProfileAlsoPersistsNewRelay() async throws {
+        let store = ChatStore(), originalRegistry = store.profileRegistry
+        let id = UUID().uuidString, identity = try Keychain.load(profileID: id), vault = try Vault(profileID: id)
+        defer {
+            try? originalRegistry.save()
+            try? vault.delete(); try? Keychain.delete(profileID: id)
+        }
+        var legacy = VaultState()
+        legacy.onboarded = true; legacy.appLock = true
+        legacy.nickname = "Independent identity"
+        legacy.server = "https://f-production-bdfe.up.railway.app/"
+        try vault.write(legacy, key: identity.storage)
+        store.profileRegistry.profiles.append(LocalProfile(id: id, label: "Existing profile"))
+
+        try await store.switchProfile(id)
+        XCTAssertEqual(store.state.server, AppConfig.productionRelay)
+        XCTAssertEqual(store.state.nickname, legacy.nickname)
+        XCTAssertEqual(store.myID, try identity.card.id)
+        XCTAssertTrue(store.locked)
+        XCTAssertFalse(store.sessionUnlocked)
+        XCTAssertEqual(try vault.read(key: identity.storage).server, AppConfig.productionRelay)
+    }
+
     @MainActor func testInvalidSavedRelayDoesNotBlockTheLocalVault() throws {
         let store = ChatStore()
         let vault = try XCTUnwrap(store.vault)

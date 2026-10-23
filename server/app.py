@@ -15,15 +15,19 @@ import mailboxes
 import call_authority
 import network_privacy
 import private_blobs
+import moderation
+import bots
+import commerce
 from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
 ID = re.compile(r'^[a-f0-9]{64}$')
 CODE = re.compile(r'^[2-9A-HJ-NP-Z]{4}$')
 CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 USERNAME = re.compile(r'^[a-z0-9_]{4,20}$')
-RESERVED_USERNAMES = {'vo1d','xrosb','admin','administrator','support','system','security','moderator','official'}
+RESERVED_USERNAMES = {'xrosb','vo1d_bot_father','admin','administrator','support','system','security','moderator','official'}
 UUID = re.compile(r'^[A-Za-z0-9-]{16,64}$')
 MAX_BODY = 9 * 1024 * 1024
 MAX_ENVELOPE = 7 * 1024 * 1024
@@ -50,11 +54,20 @@ def card_bytes(card):
     return f"VO1D-CARD-1\n{card['id']}\n{card['signingKey']}\n{card['agreementKey']}".encode()
 
 
+def agreement_key(value):
+    raw = b64(value, 32)
+    try:
+        X25519PrivateKey.generate().exchange(X25519PublicKey.from_public_bytes(raw))
+    except ValueError:
+        raise APIError(400, 'Invalid X25519 agreement key')
+    return raw
+
+
 def verify_card(card):
     if not isinstance(card, dict) or not all(isinstance(card.get(k), str) for k in ('id', 'signingKey', 'agreementKey', 'binding')):
         raise APIError(400, 'Invalid identity')
     signing = b64(card['signingKey'], 32)
-    b64(card['agreementKey'], 32)
+    agreement_key(card['agreementKey'])
     if hashlib.sha256(signing).hexdigest() != card['id']:
         raise APIError(400, 'Identity fingerprint mismatch')
     try:
@@ -77,6 +90,7 @@ class Relay:
             db.executescript('''
                 PRAGMA journal_mode=WAL;
                 PRAGMA secure_delete=ON;
+                CREATE TABLE IF NOT EXISTS relay_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS identities (id TEXT PRIMARY KEY, card TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS challenges (nonce TEXT PRIMARY KEY, identity TEXT, expires INTEGER);
                 CREATE TABLE IF NOT EXISTS sessions (digest TEXT PRIMARY KEY, identity TEXT, expires INTEGER);
@@ -106,11 +120,18 @@ class Relay:
             mailboxes.install(db)
             call_authority.install(db)
             private_blobs.install(db)
+            moderation.install(db)
+            bots.install(db)
+            commerce.install(db)
+            if os.environ.get('VO1D_FIRST_ACCOUNT_ADMIN') == '1' and moderation.owner(db) is None and not db.execute('SELECT 1 FROM identities LIMIT 1').fetchone():
+                db.execute("INSERT OR IGNORE INTO relay_meta VALUES ('bootstrap_admin_policy','first_verified_registration')")
 
     @contextmanager
     def db(self):
         conn = sqlite3.connect(self.path, timeout=20)
         conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA secure_delete=ON')
+        conn.execute('PRAGMA synchronous=FULL')
         try:
             with conn:
                 yield conn
@@ -132,18 +153,27 @@ class Relay:
         privacy.clean(db, now)
         prekeys.clean(db, now)
         mailboxes.clean(db, now)
+        moderation.clean(db, now)
         db.execute('DELETE FROM call_authorities WHERE expires<=?',(now,))
         for table in ('challenges', 'sessions', 'envelopes', 'seen'):
             db.execute(f'DELETE FROM {table} WHERE expires <= ?', (now,))
 
     def user(self, env, db):
         auth = env.get('HTTP_AUTHORIZATION', '')
+        if auth.startswith('BotCapability '):
+            return bots.authorize(db, env, APIError)
         if not auth.startswith('Bearer '):
             raise APIError(401, 'Authentication required')
         digest = hashlib.sha256(auth[7:].encode()).hexdigest()
         row = db.execute('SELECT identity FROM sessions WHERE digest=? AND expires>?', (digest, int(time.time()))).fetchone()
         if not row:
             raise APIError(401, 'Session expired')
+        # Sanctions affect account-authorized sending, never unlock chat content.
+        path = env.get('PATH_INFO', '')
+        if (env.get('REQUEST_METHOD') in ('POST','PUT') and path in
+            ('/v1/envelopes','/v1/blob','/v2/prekeys','/v2/call-authority','/v2/bots')) or path == '/v1/call/socket':
+            moderation.enforce(db, row[0], APIError)
+            bots.enforce(db, row[0], APIError)
         db.execute('UPDATE privacy SET last_active=? WHERE identity=?',(int(time.time()),row[0]))
         return row[0]
 
@@ -154,13 +184,23 @@ class Relay:
         import hmac
         ip_hash = hmac.new(self.rate_secret,network_privacy.client_address(env).encode(),hashlib.sha256).hexdigest()
         if method == 'GET' and path == '/v2/capabilities':
-            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True}
+            with self.db() as db:
+                epoch = db.execute("SELECT value FROM relay_meta WHERE key='account_epoch'").fetchone()
+            return {'protocol': 2, 'workBits': private_blobs.work_bits(), 'privateBlobs': True, 'reports': True, 'bots': True, 'socialEvents': 1, 'economy': 1, 'accountEpoch': epoch[0] if epoch else None}
         if method == 'POST' and path == '/v2/blobs/ticket':
             return private_blobs.ticket(self,body,ip_hash,APIError)
+        if method == 'POST' and path == '/v3/storekit/notifications':
+            self.rate('appstore-notification:' + ip_hash, 120)
+            return commerce.notification(self, body, APIError)
         if path.startswith(('/v2/mailboxes','/v2/private-invites/')):
             return mailboxes.handle(self,env,body,ip_hash,APIError,b64)
         if method == 'GET' and path == '/health':
-            return {'status': 'ok', 'protocol': 2}
+            revision = os.environ.get('RAILWAY_GIT_COMMIT_SHA', '')
+            with self.db() as db:
+                reset = db.execute("SELECT value FROM relay_meta WHERE key='completed_reset_rollout'").fetchone()
+                pending = moderation.owner(db) is None
+            return {'status': 'ok', 'protocol': 2, 'revision': revision[:40] if re.fullmatch('[a-f0-9]{40}', revision) else None,
+                    'accountReset': reset[0] if reset else None, 'adminBootstrapPending': bool(pending)}
         if path in ('/v1/register', '/v1/challenge', '/v1/session'):
             self.rate('auth:' + ip_hash, 90)
         if path == '/v1/register':
@@ -172,9 +212,31 @@ class Relay:
             if path.startswith(('/v1/code/','/v1/username/','/v1/invites/redeem')) and '/check/' not in path:
                 self.rate('lookup:' + user, 30)
             self.rate('user:' + user, 240)
+            if path.startswith('/v2/moderation/mfa/'):
+                self.rate('moderator-mfa:' + user, 8, 300)
+            if method == 'POST' and path in ('/v2/reports','/v2/appeals'):
+                self.rate('reports:' + user, 30, 3600)
+            if method == 'POST' and path in ('/v3/economy/payment', '/v3/economy/transcription-authorize', '/v3/economy/premium-authorize'):
+                if env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
+                    raise APIError(403, 'Account session required')
+                self.rate('appstore:' + user, 30)
+                commerce.prepare_payment(self, user, env, body, APIError)
         with self.db() as db:
             self.clean(db)
             if not public:
+                # Recheck fenced worker credentials inside the transaction:
+                # owner epoch/lease changes may have happened after auth.
+                if env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
+                    user = self.user(env, db)
+                result = commerce.handle(self, db, user, env, body, APIError)
+                if result is not None:
+                    return result
+                result = bots.handle(db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
+                result = moderation.handle(self,db,user,env,body,APIError,b64)
+                if result is not None:
+                    return result
                 result = call_authority.handle(db,user,env,body,APIError,b64)
                 if result is not None:
                     return result
@@ -186,10 +248,24 @@ class Relay:
                     return result
             if method == 'POST' and path == '/v1/register':
                 card = verify_card(body)
+                epoch = db.execute("SELECT value FROM relay_meta WHERE key='account_epoch'").fetchone()
+                known = db.execute('SELECT 1 FROM identities WHERE id=?', (card['id'],)).fetchone()
+                if epoch and not known and (body.get('accountEpoch') != epoch[0] or body.get('enroll') is not True):
+                    raise APIError(410, 'Server accounts were reset. Explicit registration in the updated app is required.')
+                minimum = db.execute("SELECT value FROM relay_meta WHERE key='minimum_enrollment_version'").fetchone()
+                if not known and minimum and body.get('enrollmentVersion') != int(minimum[0]):
+                    raise APIError(410, 'Update VO1D and explicitly register again after the account reset.')
+                admin = moderation.owner(db)
+                if admin and admin['owner'] == card['id']:
+                    pinned = json.loads(admin['card'])
+                    if b64(pinned['agreementKey'],32) != b64(card['agreementKey'],32):
+                        raise APIError(409, 'Permanent administrator encryption key is pinned; migration required')
                 old = db.execute('SELECT card FROM identities WHERE id=?', (card['id'],)).fetchone()
                 encoded_card = json.dumps(card)
                 if old:
                     previous = json.loads(old[0])
+                    if db.execute('SELECT 1 FROM bots WHERE identity=?', (card['id'],)).fetchone() and b64(previous['agreementKey'],32) != b64(card['agreementKey'],32):
+                        raise APIError(409, 'Bot encryption key is pinned; migration required')
                     # The identity ID is derived from the signing key. A valid new card
                     # with the same signing key proves continuity, so an agreement-key
                     # rotation from old prerelease clients can be recovered safely.
@@ -228,6 +304,16 @@ class Relay:
                 # DELETE condition makes concurrent replay lose, even under multiple workers.
                 if db.execute('DELETE FROM challenges WHERE nonce=?', (nonce,)).rowcount != 1:
                     raise APIError(401, 'Challenge already consumed')
+                # A reset can explicitly opt in to first verified registration.
+                # Public card upload alone cannot consume permanent ownership:
+                # the single-use challenge above proves possession of its key.
+                policy = db.execute("SELECT value FROM relay_meta WHERE key='bootstrap_admin_policy'").fetchone()
+                if policy and policy[0] == 'first_verified_registration':
+                    if moderation.owner(db) is None:
+                        moderation.claim(db, identity, 'vo1d', now, APIError)
+                        db.execute('INSERT INTO usernames VALUES (?,?,?)', ('vo1d', identity, now))
+                    db.execute("DELETE FROM relay_meta WHERE key='bootstrap_admin_policy'")
+                commerce.grant_founder(db, identity, now)
                 token = secrets.token_urlsafe(32)
                 db.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), identity, now + 86400))
                 return {'token': token}
@@ -243,6 +329,10 @@ class Relay:
                     except sqlite3.IntegrityError:
                         continue
                 raise APIError(500, 'Unable to allocate compact ID')
+            if method == 'GET' and path == '/v1/discovery':
+                code = db.execute('SELECT code FROM codes WHERE identity=?', (user,)).fetchone()
+                username = db.execute('SELECT username FROM usernames WHERE identity=?', (user,)).fetchone()
+                return {'code': code[0] if code else None, 'username': username[0] if username else None}
             if method == 'GET' and path.startswith('/v1/code/'):
                 code = path.rsplit('/', 1)[1].upper()
                 if not CODE.fullmatch(code):
@@ -256,8 +346,14 @@ class Relay:
                 if not USERNAME.fullmatch(username) or username in RESERVED_USERNAMES:
                     return {'username': username, 'available': False, 'valid': False}
                 row = db.execute('SELECT identity FROM usernames WHERE username=?', (username,)).fetchone()
+                if username == 'vo1d':
+                    admin = moderation.owner(db)
+                    if admin:
+                        return {'username': username, 'available': admin['owner'] == user, 'valid': True}
                 return {'username': username, 'available': row is None or row[0] == user, 'valid': True}
             if method == 'POST' and path == '/v1/username':
+                if db.execute('SELECT 1 FROM bots WHERE identity=?', (user,)).fetchone():
+                    raise APIError(409, 'Bot usernames are managed by their owner')
                 username = body.get('username', '')
                 if not isinstance(username, str):
                     raise APIError(400, 'Invalid username')
@@ -266,6 +362,7 @@ class Relay:
                     raise APIError(400, 'Username must be 4-20 characters: a-z, 0-9, underscore')
                 if username in RESERVED_USERNAMES:
                     raise APIError(409, 'Username is reserved')
+                moderation.claim(db, user, username, now, APIError)
                 owner = db.execute('SELECT identity FROM usernames WHERE username=?', (username,)).fetchone()
                 if owner and owner[0] != user:
                     raise APIError(409, 'Username is already taken')
@@ -301,7 +398,7 @@ class Relay:
                     raise APIError(400, 'Invalid envelope identity')
                 if not now < e['expiresAt'] <= now + RETENTION + 60:
                     raise APIError(400, 'Invalid expiry')
-                b64(e['ephemeralKey'], 32)
+                agreement_key(e['ephemeralKey'])
                 b64(e['salt'], 32)
                 cipher = b64(e['ciphertext'])
                 if not 28 <= len(cipher) <= MAX_ENVELOPE:
@@ -377,13 +474,13 @@ class Relay:
             status = 200
         except APIError as e:
             result, status = {'error': e.message}, e.status
-        except (ValueError, TypeError, KeyError, UnicodeError):
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
             result, status = {'error': 'Invalid request'}, 400
         except Exception:
             # No raw requests, tokens, identifiers or traceback are logged.
             result, status = {'error': 'Relay unavailable'}, 500
         payload = json.dumps(result, separators=(',', ':')).encode()
-        reason = {200:'OK',400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',409:'Conflict',413:'Payload Too Large',415:'Unsupported Media Type',429:'Too Many Requests',500:'Internal Server Error'}[status]
+        reason = {200:'OK',400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',409:'Conflict',410:'Gone',413:'Payload Too Large',415:'Unsupported Media Type',429:'Too Many Requests',500:'Internal Server Error',503:'Service Unavailable'}[status]
         start_response(f'{status} {reason}', [('Content-Type','application/json'),('Content-Length',str(len(payload))),('Cache-Control','no-store'),('X-Content-Type-Options','nosniff')])
         return [payload]
 

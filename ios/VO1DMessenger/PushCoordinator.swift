@@ -10,6 +10,8 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
     private var voipToken: String?
     private weak var api: APIClient?
     private var enabled = false
+    private var registeredMailboxes = Set<String>()
+    var mailboxes: (() -> [LocalMailbox])?
     var wake: (() async -> Void)?
     var openRoom: ((String?) -> Void)?
 
@@ -27,6 +29,8 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
     }
 
     func register(api: APIClient, enabled: Bool) async throws {
+        let mailboxes = self.mailboxes?() ?? []
+        if self.api !== api { registeredMailboxes = [] }
         let enabled = enabled && AppConfig.pushEnabled
         self.api = api
         self.enabled = enabled
@@ -44,6 +48,28 @@ final class PushCoordinator: NSObject, @preconcurrency PKPushRegistryDelegate {
                     body:Wire.encoder.encode(Body(token:token,kind:kind,environment:environment,enabled:enabled && (kind != "voip" || api.privacy.backgroundCalls))))
             }
         }
+        guard self.api === api else { return }
+        for mailbox in mailboxes where mailbox.registered {
+            try await registerMailbox(mailbox, api: api)
+        }
+    }
+
+    func registerMailbox(_ mailbox: LocalMailbox, api: APIClient) async throws {
+        guard self.api === api, let token = alertToken else { return }
+        // APNs deliberately links this random mailbox to an Apple device token,
+        // without adding an account ID. Maximum privacy mode never opts in.
+        let allowed = enabled && api.privacy.allowDiscoveryRequests
+        let key = mailbox.id + token + String(allowed)
+        guard !registeredMailboxes.contains(key) else { return }
+        #if DEBUG
+        let environment = "sandbox"
+        #else
+        let environment = "production"
+        #endif
+        try await api.registerMailboxPush(mailbox, token: token, environment: environment, enabled: allowed)
+        guard self.api === api else { return }
+        registeredMailboxes = registeredMailboxes.filter { !$0.hasPrefix(mailbox.id) }
+        registeredMailboxes.insert(key)
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {

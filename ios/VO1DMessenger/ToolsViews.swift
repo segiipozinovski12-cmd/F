@@ -107,6 +107,7 @@ struct FolderCenterView: View {
                     }
                     Button("Удалить папку",role:.destructive) { store.changeExtended { $0.folders.removeAll { $0.id==folder.id } } }
                 } header: { Text(folder.name) }
+                NavigationLink { SmartFolderEditorView(folderID: folder.id) } label: { Label("Умные правила · " + folder.name, systemImage: "sparkles") }
             }
         }.navigationTitle("Папки")
     }
@@ -144,7 +145,7 @@ struct MessageLibraryView: View {
                     NavigationLink { ChatView(roomID:message.roomID,initialMessageID:message.id) } label: {
                         VStack(alignment:.leading) {
                             Text(store.state.rooms.first { $0.id==message.roomID }?.title ?? "Чат").font(.headline)
-                            Text(message.text.isEmpty ? message.attachment?.name ?? "Сообщение" : message.text).lineLimit(3)
+                            Text(message.previewText.isEmpty ? message.attachment?.name ?? "Сообщение" : message.previewText).lineLimit(3)
                         }
                     }
                     if mode != "bookmarks" {
@@ -195,6 +196,7 @@ struct SnippetsView: View {
     @State private var text = ""
     var body: some View {
         List {
+            Section { NavigationLink { ReplyTemplatesView() } label: { Label("Ответы с подстановками · Premium", systemImage: "sparkles") } }
             Section("Новый шаблон") {
                 TextField("Текст",text:$text,axis:.vertical)
                 Button("Сохранить") {
@@ -337,10 +339,15 @@ struct ChatLinksView: View {
     @EnvironmentObject var store: ChatStore
     var body: some View {
         List {
-            ForEach(store.messages(roomID).filter { !SafeContent.links(in:$0.text).isEmpty }) { message in
+            ForEach(store.messages(roomID).filter { $0.viewOnceSeconds == nil && !SafeContent.links(in:$0.text).isEmpty }) { message in
                 Section {
                     ForEach(SafeContent.links(in:message.text),id:\.absoluteString) { url in
-                        Link(destination:store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url) { Text(url.host ?? "Ссылка") }
+                        VStack(alignment: .leading, spacing: 5) {
+                            Link(destination:store.preferences.cleanLinks ? SafeContent.cleanURL(url) : url) { Text(url.host ?? "Ссылка") }
+                            ForEach(SafeContent.linkWarnings(url), id: \.self) { warning in
+                                Label(warning, systemImage: "exclamationmark.shield").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     NavigationLink("Перейти к сообщению") { ChatView(roomID:roomID,initialMessageID:message.id) }
                 }

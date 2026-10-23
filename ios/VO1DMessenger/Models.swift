@@ -22,6 +22,7 @@ struct Contact: Codable, Identifiable, Hashable {
     var name: String
     var verified = false
     var blocked = false
+    var isBot: Bool? = nil
     var id: String { card.id }
 }
 
@@ -117,10 +118,17 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     var poll: PollData? = nil
     var topic: String? = nil
     var call: CallMessageData? = nil
+    var viewOnceSeconds: Int? = nil
+    var previewText: String { viewOnceSeconds == nil ? text : "Одноразовый текст" }
 }
 
 /// All event content, including group membership and attachments, lives inside AEAD.
 struct ChatEvent: Codable {
+    var sharedProfile: SharedProfile? = nil
+    var story: PrivateStory? = nil
+    var deviceCommand: DeviceCommand? = nil
+    var deviceCommandResult: DeviceCommandResult? = nil
+    var deviceRevision: Int? = nil
     var deviceCertificate: DeviceCertificate? = nil
     var historyArchive: HistoryArchive? = nil
     var groupInvitation: GroupInvitation? = nil
@@ -137,6 +145,7 @@ struct ChatEvent: Codable {
 }
 
 struct Envelope: Codable, Identifiable {
+    var nearbyOnly: Bool? = nil
     var id: String
     var sender: String
     var recipient: String
@@ -154,6 +163,7 @@ struct Envelope: Codable, Identifiable {
 }
 
 struct PendingDelivery: Codable, Identifiable {
+    var storyID: String? = nil
     var authorizationID: String? = nil
     var notBefore: Date? = nil
     var envelope: Envelope
@@ -162,6 +172,16 @@ struct PendingDelivery: Codable, Identifiable {
 }
 
 struct VaultState: Codable {
+    var premiumTools: PremiumToolsState? = nil
+    var appearance: AppearancePreferences? = nil
+    var social: SocialState? = nil
+    var rejectedBotPackets: Int? = nil
+    var managedBots: [ManagedBot]? = nil
+    var secureNotes: [SecureNote]? = nil
+    var pendingReports: [PendingReport]? = nil
+    var submittedReports: [ReportReceipt]? = nil
+    var moderationPins: [String: ContactCard]? = nil
+    var deliveryRetryState: [String: DeliveryIssue]? = nil
     var extended: ExtendedState? = nil
     var nickname = "Ghost"
     var server = ""

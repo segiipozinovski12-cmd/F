@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import io
+import os
 import zipfile
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -23,6 +24,21 @@ tor = load('prepare_tor')
 signal = load('prepare_signal')
 bundle = load('validate_ios_bundle')
 isolate = load('isolate_signal')
+cache = load('configure_xcode_cache')
+
+
+def require_symlinks(case):
+    if os.name == 'nt':
+        case.skipTest('POSIX framework links and executable modes are exercised on macOS/Linux CI')
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory) / 'target'
+        target.touch()
+        try:
+            (Path(directory) / 'probe').symlink_to(target)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                case.skipTest('Windows account lacks symlink privileges; exercised on macOS/Linux CI')
+            raise
 
 
 def archive_member(name, data, long_name=False):
@@ -34,6 +50,73 @@ def archive_member(name, data, long_name=False):
 
 
 class NativeSetupTests(unittest.TestCase):
+    def test_project_cache_overrides_broken_global_path_and_preserves_other_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / 'Project With Spaces.xcodeproj'
+            settings = project / 'project.xcworkspace/xcuserdata/tester.xcuserdatad/WorkspaceSettings.xcsettings'
+            settings.parent.mkdir(parents=True)
+            settings.write_bytes(plistlib.dumps({
+                'DerivedDataLocationStyle': 'AbsolutePath',
+                'DerivedDataCustomLocation': '/unwritable/global/DerivedData',
+                'LiveSourceIssuesEnabled': False,
+            }))
+            destination = root / 'build/cache with spaces'
+            self.assertEqual(cache.configure(project, destination, 'tester'), settings)
+            values = plistlib.loads(settings.read_bytes())
+            self.assertEqual(values['DerivedDataCustomLocation'], str(destination))
+            self.assertEqual(values['DerivedDataLocationStyle'], 'AbsolutePath')
+            self.assertFalse(values['LiveSourceIssuesEnabled'])
+            self.assertEqual(list(destination.iterdir()), [])
+            original = settings.read_bytes()
+            cache.configure(project, destination, 'tester')
+            self.assertEqual(settings.read_bytes(), original)
+
+    def test_unwritable_cache_fails_before_modifying_workspace_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / 'Project.xcodeproj'; project.mkdir()
+            destination = root / 'not-a-directory'; destination.write_text('keep')
+            with self.assertRaises(OSError):
+                cache.configure(project, destination, 'tester')
+            self.assertFalse((project / 'project.xcworkspace').exists())
+            self.assertEqual(destination.read_text(), 'keep')
+
+    def test_invalid_existing_workspace_settings_are_not_silently_replaced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / 'Project.xcodeproj'
+            settings = project / 'project.xcworkspace/xcuserdata/tester.xcuserdatad/WorkspaceSettings.xcsettings'
+            settings.parent.mkdir(parents=True)
+            settings.write_bytes(b'broken existing settings')
+            with self.assertRaises(plistlib.InvalidFileException):
+                cache.configure(project, root / 'build', 'tester')
+            self.assertEqual(settings.read_bytes(), b'broken existing settings')
+
+    def test_callkit_modes_are_present_in_debug_and_release_metadata(self):
+        app = SCRIPTS.parent / 'ios' / 'VO1DMessenger'
+        for name in ('Info.Debug.plist', 'Info.plist'):
+            with self.subTest(configuration=name):
+                info = plistlib.loads((app / name).read_bytes())
+                bundle.validate_call_configuration(info)
+
+    def test_bundle_validation_rejects_audio_only_debug_before_native_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleExecutable': 'VO1DMessenger', 'UIBackgroundModes': ['audio'],
+            }))
+            with self.assertRaisesRegex(RuntimeError, "CallKit requires.*voip"):
+                bundle.validate(app)
+
+    def test_callkit_modes_do_not_require_an_apns_entitlement(self):
+        app = SCRIPTS.parent / 'ios' / 'VO1DMessenger'
+        debug = plistlib.loads((app / 'Info.Debug.plist').read_bytes())
+        entitlements = plistlib.loads((app / 'VO1DMessenger.Debug.entitlements').read_bytes())
+        self.assertFalse(debug['VO1DPushEnabled'])
+        self.assertNotIn('aps-environment', entitlements)
+        bundle.validate_call_configuration(debug)
+
     def test_signal_archive_preserves_bsd_names_and_removes_stale_symbol_index(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / 'signal.a'
@@ -94,6 +177,7 @@ class NativeSetupTests(unittest.TestCase):
                     signal.read_archive_member(tar, 'target/libsignal_ffi.a')
 
     def test_flattens_current_version_and_preserves_executable_and_headers(self):
+        require_symlinks(self)
         with tempfile.TemporaryDirectory() as directory:
             framework = Path(directory) / 'tor.framework'
             for version in ('A', 'B'):
@@ -152,6 +236,7 @@ class NativeSetupTests(unittest.TestCase):
                 tor.safe_extract_with_symlinks(archive, root / 'extract')
 
     def test_keeps_internal_framework_symlinks(self):
+        require_symlinks(self)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / 'safe.zip'

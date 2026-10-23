@@ -50,7 +50,8 @@ class PrivateBlobTests(unittest.IsolatedAsyncioTestCase):
         response=await self.client.get(path,headers={'Authorization':'BlobCapability '+body['readToken']}); self.assertEqual(response.status,403)
         response=await self.client.post('/v2/blobs/ticket',json=body); self.assertEqual(response.status,409)
         import sqlite3
-        with sqlite3.connect(os.environ['VO1D_DB']) as db:
+        from contextlib import closing
+        with closing(sqlite3.connect(os.environ['VO1D_DB'])) as db:
             columns={r[1] for r in db.execute('PRAGMA table_info(private_blobs)')}
             self.assertTrue(columns.isdisjoint({'owner','sender','identity','readToken','deleteToken','uploadToken'}))
 

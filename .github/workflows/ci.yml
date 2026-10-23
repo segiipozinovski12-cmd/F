@@ -9,6 +9,28 @@ concurrency:
   group: vo1d-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
+  bot-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: npm install --global --ignore-scripts pnpm@11.25.0
+      - run: pnpm --dir bot-worker install --frozen-lockfile --ignore-scripts
+      - run: pnpm --dir bot-worker test
+      - run: pnpm --dir bot-worker audit --prod
+      - run: pip install --require-hashes -r server/requirements.lock
+      - name: Real relay / external libsignal worker integration
+        run: python -m unittest discover -s server/tests -p test_external_worker.py -v
+      - name: Build isolated bot image
+        run: |
+          docker build -t vo1d-bot:ci bot-worker
+          docker run --rm --entrypoint node vo1d-bot:ci -e "const s=require('@signalapp/libsignal-client'); if(s.IdentityKeyPair.generate().serialize().length!==69) process.exit(1)"
   relay:
     runs-on: ubuntu-latest
     steps:
@@ -19,6 +41,24 @@ jobs:
       - run: pip install --require-hashes -r server/requirements.lock
       - run: python -m unittest discover -s scripts/tests -v
       - run: python -m unittest discover -s server/tests -v
+      - name: Coverage-guided relay parser fuzzing
+        run: |
+          set -o pipefail
+          pip install --require-hashes --only-binary=:all: -r tools/fuzz-requirements.lock
+          mkdir -p build-evidence/fuzz build-evidence/fuzz-corpus
+          python scripts/fuzz_relay.py build-evidence/fuzz-corpus -runs=5000 -max_len=65536 -timeout=5 -rss_limit_mb=512 -artifact_prefix=build-evidence/fuzz/ 2>&1 | tee build-evidence/fuzz.log
+      - name: Upload fuzz evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relay-fuzz-evidence
+          path: |
+            build-evidence/fuzz.log
+            build-evidence/fuzz/
+      - name: Bounded encrypted-report concurrency probe
+        run: python scripts/benchmark_next.py --samples 100 --workers 8
+      - name: Loopback HTTP report concurrency probe
+        run: python scripts/benchmark_next.py --transport http --samples 100 --workers 8
       - name: Audit pinned Python dependencies
         run: |
           pip install --require-hashes -r tools/audit-requirements.lock
@@ -56,10 +96,31 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: recursive
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare official libsignal interoperability fixture
+        run: |
+          npm install --global --ignore-scripts pnpm@11.25.0
+          pnpm --dir bot-worker install --frozen-lockfile --ignore-scripts
+          node bot-worker/test/interop.mjs
       - name: Verify generated project
         run: |
           python3 scripts/generate_project.py
           git diff --exit-code ios/VO1DMessenger.xcodeproj
+      - name: Verify project-local Xcode cache without a command-line override
+        run: |
+          python3 scripts/configure_xcode_cache.py ios/VO1DMessenger.xcodeproj "$PWD/build/iphone-validation"
+          xcodebuild -showBuildSettings -json -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger > workspace-build-settings.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          settings = json.loads(Path('workspace-build-settings.json').read_text())
+          app = next(item['buildSettings'] for item in settings if item['target'] == 'VO1DMessenger')
+          Path(app['BUILD_DIR']).resolve().relative_to((Path.cwd() / 'build/iphone-validation').resolve())
+          print('Xcode uses the project-local build cache.')
+          PY
       - name: Build Debug for iPhone Simulator
         run: |
           set -o pipefail
@@ -71,7 +132,10 @@ jobs:
       - name: Run cryptography and privacy tests
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(d["udid"] for devices in data["devices"].values() for d in devices if d.get("isAvailable") and "iPhone" in d["name"]))')
-          xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug"
+          xcodebuild test -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -destination "platform=iOS Simulator,id=$simulator_id" -parallel-testing-enabled NO -derivedDataPath build -resultBundlePath privacy-tests.xcresult CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$PWD/scripts/Simulator.entitlements" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES LIBRARY_SEARCH_PATHS="$(pwd)/Vendor/libsignal/artifacts/iphonesimulator/Debug"
+          xcrun simctl bootstatus "$simulator_id" -b
+          app_data=$(xcrun simctl get_app_container "$simulator_id" io.vo1d.messenger data)
+          node bot-worker/test/interop.mjs verify "$app_data/Documents/signal-interop-response.json"
       - name: Build release for device
         run: |
           xcodebuild build -project ios/VO1DMessenger.xcodeproj -scheme VO1DMessenger -configuration Release -destination 'generic/platform=iOS' -derivedDataPath release CODE_SIGNING_ALLOWED=NO
@@ -86,11 +150,13 @@ jobs:
           sleep 3
           mkdir -p build-evidence
           xcrun simctl io "$simulator_id" screenshot build-evidence/first-run.png
+          app_data=$(xcrun simctl get_app_container "$simulator_id" io.vo1d.messenger data)
+          find "$app_data/Documents" -name 'collection-preview-*.png' -exec cp {} build-evidence/ \;
       - name: Upload interface preview
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: VO1D-first-run-interface-${{ matrix.os }}
-          path: build-evidence/first-run.png
+          path: build-evidence/*.png
       - name: Package unsigned device build and dependency evidence
         run: |
           python3 scripts/build_manifest.py

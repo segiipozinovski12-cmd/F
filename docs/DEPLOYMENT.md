@@ -1,6 +1,6 @@
-# Deploy relay 2 work branch
+# Deploy VO1D NEXT
 
-Use branch `codex/anonymous-v2` for both the client and server. The client checks `/v2/capabilities` before account connection; a 1.3 production relay is not sufficient. Changes in GitHub do not redeploy an existing service automatically unless the operator has configured that integration. Take a database backup before replacing an existing installation; new privacy/capability tables are created on startup. This repository does not establish that Railway production has been upgraded.
+Use branch `codex/vo1d-next` for both the client and server. The client checks `/v2/capabilities` before account connection; a 1.3 relay is not sufficient. The configured Railway origin is `https://f-production-448b.up.railway.app`; see [server settings](../server/RAILWAY.md). Take a database backup before an ordinary upgrade; new privacy/capability tables are created on startup. Full account resets require a separate explicit request.
 
 ## Docker and HTTPS
 

@@ -11,8 +11,12 @@ extension ChatStore {
                 if let i = local.ownMailboxes.firstIndex(where: { $0.id == mailbox.id }) { local.ownMailboxes[i].registered = true }
                 state.extended = local; try save()
             }
-            var ready = mailbox; ready.registered = true; return ready
+            var ready = mailbox; ready.registered = true
+            try? await PushCoordinator.shared.registerMailbox(ready, api: api)
+            guard expected == generation else { throw CancellationError() }
+            return ready
         }
+        guard extended.ownMailboxes.count < 512 else { throw MessengerError.invalid("Достигнут лимит приватных адресов; отзови неиспользуемые") }
         let bits = try await api.publicWorkBits()
         let mailbox = try await Task.detached(priority: .utility) { try LocalMailbox.create(peerID: peerID,roomID:roomID,bits:bits) }.value
         guard expected == generation else { throw CancellationError() }
@@ -23,10 +27,13 @@ extension ChatStore {
         local = extended
         if let i = local.ownMailboxes.firstIndex(where: { $0.id == mailbox.id }) { local.ownMailboxes[i].registered = true }
         state.extended = local; try save()
-        var ready = mailbox; ready.registered = true; return ready
+        var ready = mailbox; ready.registered = true
+        try? await PushCoordinator.shared.registerMailbox(ready, api: api)
+        guard expected == generation else { throw CancellationError() }
+        return ready
     }
     func preparePrivateInvite() async throws {
-        guard let api, let identity, let card = ownCard else { throw MessengerError.invalid("Сначала подключись к relay") }
+        guard !locked, let api, let identity, let card = ownCard, extended.privateLinks.count < 32 else { throw MessengerError.invalid("Нужны подключение и свободное место для ссылки (до 32)") }
         let expected = generation
         try await maintainSignalPrekeys(api: api, identity: identity, generation: expected)
         let mailbox = try await ensurePrivateMailbox(peerID: nil, api: api, generation: expected, fresh: true)
@@ -34,15 +41,12 @@ extension ChatStore {
         guard expected == generation else { throw CancellationError() }
         _ = try bundle.validated(for: card)
         let invitation = Invite(version: 2, server: state.server, name: state.nickname, card: card, mailbox: mailbox.address, prekey: bundle)
-        let token = try Crypto.random(32).base64URL, key = try Crypto.random(32)
-        let box = try AES.GCM.seal(Wire.encoder.encode(invitation), using: SymmetricKey(data: key), authenticating: Data("VO1D-PRIVATE-INVITE-2\n\(token)".utf8))
-        guard let encrypted = box.combined else { throw MessengerError.invalid("Ошибка приглашения") }
-        try await api.publishPrivateInvite(token: token, ciphertext: encrypted, mailbox: mailbox)
-        guard expected == generation else { throw CancellationError() }
+        let record = try PrivateLinkRecord.create(invitation: invitation, mailbox: mailbox)
         var local = extended
         local.privateInvite = invitation
-        local.privateInviteLink = "vo1d://private/\(token)/\(key.base64URL)"
+        local.privateLinks.append(record)
         state.extended = local; try save()
+        try await flushPrivateLinks(api: api, generation: expected)
     }
     func acceptReplyMailbox(_ route: MailboxAddress?, sender: ContactCard, roomID: String) throws {
         guard let route else { return }
@@ -71,8 +75,25 @@ extension ChatStore {
     }
     func collectPrivateInbox(api: APIClient, identity: LocalIdentity, generation expected: Int) async throws {
         let active = extended.ownMailboxes.filter { $0.registered && $0.address.expiresAt > Int(Date().timeIntervalSince1970) }
-        for mailbox in active {
-            let envelopes = try await api.privateInbox(mailbox)
+        guard !active.isEmpty else { return }
+        let start = max(0, extended.privateInboxOffset ?? 0) % active.count
+        for offset in 0..<min(32, active.count) {
+            let position = (start + offset) % active.count, mailbox = active[position]
+            let envelopes: [OpaqueEnvelope]
+            do {
+                envelopes = try await api.privateInbox(mailbox)
+            } catch let failure as HTTPFailure where failure.status == 404 {
+                // A relay reset removes anonymous addresses too. Require a live
+                // enrolled account before restoring an empty address from this vault.
+                // Revoked addresses still fail the relay's permanent tombstone.
+                let _: [String: String?] = try await api.request("v1/discovery")
+                guard expected == generation else { throw CancellationError() }
+                try await api.registerMailbox(mailbox)
+                guard expected == generation else { throw CancellationError() }
+                try? await PushCoordinator.shared.registerMailbox(mailbox, api: api)
+                guard expected == generation else { throw CancellationError() }
+                envelopes = try await api.privateInbox(mailbox)
+            }
             guard expected == generation else { throw CancellationError() }
             var ack: [String] = []
             for envelope in envelopes {
@@ -98,13 +119,19 @@ extension ChatStore {
                 state.processed.append(envelope.id); ack.append(envelope.id)
             }
             // Commit ratchet advancement and content together, then delete relay copies.
+            var latest = extended; latest.privateInboxOffset = (position + 1) % active.count; state.extended = latest
             try save()
             if !ack.isEmpty { try await api.privateAck(ack, mailbox: mailbox) }
         }
     }
     func revokePrivateAddresses(_ peerID: String) async throws {
         guard let api else { return }
-        for mailbox in extended.ownMailboxes.filter({ $0.peerID == peerID }) { try await api.deleteMailbox(mailbox) }
+        let fence = sessionFence
+        for mailbox in extended.ownMailboxes.filter({ $0.peerID == peerID }) {
+            try await api.deleteMailbox(mailbox)
+            try requireCurrentSession(fence)
+        }
+        try requireCurrentSession(fence)
         var local = extended
         local.ownMailboxes.removeAll { $0.peerID == peerID }
         local.peerMailboxes = local.peerMailboxes.filter { $0.key != peerID && !$0.key.hasPrefix(peerID+"|") }; local.invitationBundles[peerID] = nil

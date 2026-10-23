@@ -82,3 +82,33 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
             service = PushService(self.relay)
         self.assertFalse(await service.send(self.alice_card['id']))
         self.assertIsNone(service._client)
+
+    async def test_railway_pem_variable_and_authenticated_readiness(self):
+        service = self.service()
+        pem = self.key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+        with patch.dict(os.environ, {'VO1D_APNS_KEY_ID':'KEYID', 'VO1D_APNS_TEAM_ID':'TEAMID', 'VO1D_APNS_PRIVATE_KEY':pem, 'VO1D_APNS_KEY_PATH':''}):
+            configured = PushService(self.relay)
+            self.assertTrue(configured.configured)
+            self.assertEqual(len(configured.jwt().split('.')), 3)
+            status, body = self.request('/v1/push/status', token=self.a)
+            self.assertEqual((status, body), (200, {'configured':True}))
+            self.assertNotIn(pem, json.dumps(body))
+            self.assertEqual(self.request('/v1/push/status')[0], 401)
+
+    async def test_private_queue_push_is_neutral_and_profile_switch_revokes_old_mapping(self):
+        service = self.service()
+        token = 'd'*64
+        self.request('/v1/push','POST',{'token':token,'kind':'alert','environment':'sandbox'}, self.a)
+        with self.relay.db() as db:
+            db.execute('INSERT INTO private_mailbox_push VALUES (?,?,?)', ('random-mailbox',token,'sandbox'))
+        calls = []
+        async def post(url, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(status_code=200)
+        service._client = SimpleNamespace(post=post)
+        self.assertTrue(await service.send('random-mailbox', private_mailbox=True))
+        self.assertEqual(calls[0]['json']['aps']['alert'], {'title':'VO1D','body':'Новое сообщение'})
+        self.assertNotIn('random-mailbox', json.dumps(calls[0]['json']))
+        self.request('/v1/push','POST',{'token':token,'kind':'alert','environment':'sandbox'}, self.b)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM private_mailbox_push').fetchone()[0], 0)

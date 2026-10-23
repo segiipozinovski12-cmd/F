@@ -1,12 +1,24 @@
 # Сборка и запуск на iPhone
 
-В корне репозитория на Mac:
+Для свежей копии на Mac:
+
+```bash
+git clone --recurse-submodules --branch codex/vo1d-next https://github.com/segiipozinovski12-cmd/F.git VO1D-Messenger
+cd VO1D-Messenger
+bash scripts/open_iphone.sh
+```
+
+В уже обновлённой копии ветки `codex/vo1d-next`, из корня репозитория:
 
 ```bash
 bash scripts/open_iphone.sh
 ```
 
 Нужны Xcode с iOS SDK и Python 3.8+. Скрипт загружает закреплённые libsignal и Tor, генерирует проект, собирает unsigned Debug для физического iPhone и проверяет встроенные frameworks. Rust и Homebrew не требуются. Затем он открывает Xcode: выбери свой Team, подключённый iPhone и нажми `⌘R`. Проверочная unsigned сборка сама по себе не устанавливается на устройство; подпись и установку выполняет Xcode.
+
+Запускай без `sudo`. До загрузки SDK скрипт проверяет запись в `build/iphone-validation` и задаёт эту папку в локальных настройках проекта Xcode. Подготовка зависимостей и проверочная сборка также получают явный `-derivedDataPath`: повреждённая или недоступная глобальная `~/Library/Developer/Xcode/DerivedData` больше не нужна этому проекту. Остальные настройки Xcode сохраняются. Если проект открыт, закрой его перед запуском скрипта и открой заново после завершения. Полный вывод `xcodebuild` сохраняется в `build/iphone-validation.log`.
+
+Это устраняет зависимость проекта от глобальной папки кэша. Если недоступна и локальная папка или на диске нет места, скрипт завершится с причиной до сборки. Другие ошибки компиляции или подписи нужно определять по первой ошибке в логе.
 
 Debug использует пустые push entitlements и не регистрируется в APNs/PushKit. Personal Team подходит для проверки интерфейса, переписки и звонков при открытом приложении. Release сохраняет push и VoIP capabilities: для них нужны подходящие Apple provisioning и серверная конфигурация. Генератор сохраняет Team и Bundle Identifier из существующего проекта; при необходимости их можно задать переменными `VO1D_DEVELOPMENT_TEAM` и `VO1D_BUNDLE_ID`.
 

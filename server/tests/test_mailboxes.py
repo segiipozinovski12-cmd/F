@@ -22,6 +22,21 @@ class MailboxTests(unittest.TestCase):
         self.assertEqual(self.request('/v2/mailboxes','POST',result)[0],200)
         return result
 
+    def test_push_registration_requires_read_capability_and_is_revoked_on_delete(self):
+        box = self.mailbox()
+        body = {'token':'a'*64, 'environment':'sandbox', 'enabled':True}
+        self.assertEqual(self.call(box,'push','POST',body,'write')[0], 403)
+        self.assertEqual(self.call(box,'push','POST',body)[0], 200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM private_mailbox_push').fetchone()[0], 1)
+        self.assertEqual(self.call(box,'push','POST',dict(body,enabled=False))[0], 200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM private_mailbox_push').fetchone()[0], 0)
+        self.assertEqual(self.call(box,'push','POST',body)[0], 200)
+        self.assertEqual(self.call(box,'','DELETE')[0], 200)
+        with self.relay.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM private_mailbox_push').fetchone()[0], 0)
+
     def call(self, box, action, method='GET', body=None, scope='read'):
         # The fixture prefixes Bearer; substitute a capability in the WSGI environment.
         original=self.relay.user
@@ -38,7 +53,7 @@ class MailboxTests(unittest.TestCase):
     def envelope(self,box):
         import uuid
         b64=lambda b:base64.b64encode(b).decode()
-        return dict(id=str(uuid.uuid4()),mailbox=box['id'],ephemeralKey=b64(bytes(32)),salt=b64(bytes(32)),
+        return dict(id=str(uuid.uuid4()),mailbox=box['id'],ephemeralKey=b64(bytes([9]) + bytes(31)),salt=b64(bytes(32)),
                     expiresAt=int(time.time())+3600,ciphertext=b64(bytes(2076)))
 
     def test_deleted_address_cannot_be_recreated_by_late_retry(self):
@@ -108,3 +123,32 @@ class MailboxTests(unittest.TestCase):
         self.call(box,'invites','POST',body)
         self.call(box,'',method='DELETE')
         self.assertEqual(self.request('/v2/private-invites/'+other)[0],404)
+
+    def test_publish_retry_cannot_resurrect_consumed_invitation(self):
+        box = self.mailbox(); token = secrets.token_urlsafe(32)
+        body = dict(token=token, ciphertext=base64.b64encode(b'x'*256).decode(), expiresAt=int(time.time())+3600)
+        self.assertEqual(self.call(box, 'invites', 'POST', body)[0], 200)
+        self.assertEqual(self.request('/v2/private-invites/'+token)[0], 200)
+        self.assertEqual(self.call(box, 'invites', 'POST', body)[0], 200)
+        self.assertEqual(self.request('/v2/private-invites/'+token)[0], 404)
+        changed = dict(body, expiresAt=body['expiresAt'] + 1)
+        self.assertEqual(self.call(box, 'invites', 'POST', changed)[0], 409)
+
+    def test_selective_revoke_retries_owner_scope_and_other_links(self):
+        box = self.mailbox(); other = self.mailbox(); tokens = [secrets.token_urlsafe(32) for _ in range(2)]
+        bodies = [dict(token=t, ciphertext=base64.b64encode(b'x'*256).decode(), expiresAt=int(time.time())+3600) for t in tokens]
+        for body in bodies:
+            self.assertEqual(self.call(box, 'invites', 'POST', body)[0], 200)
+        self.assertEqual(self.call(other, 'invites/'+tokens[0], 'DELETE')[0], 403)
+        self.assertEqual(self.call(box, 'invites/'+tokens[0], 'DELETE', scope='write')[0], 403)
+        for _ in range(2):
+            self.assertEqual(self.call(box, 'invites/'+tokens[0], 'DELETE')[0], 200)
+        self.assertEqual(self.call(box, 'invites', 'POST', bodies[0])[0], 200)
+        self.assertEqual(self.request('/v2/private-invites/'+tokens[0])[0], 404)
+        self.assertEqual(self.request('/v2/private-invites/'+tokens[1])[0], 200)
+
+    def test_non_contributory_opaque_key_rejected_without_insertion(self):
+        box = self.mailbox(); envelope = self.envelope(box)
+        envelope['ephemeralKey'] = base64.b64encode(bytes(32)).decode()
+        self.assertEqual(self.call(box, 'envelopes', 'POST', envelope, 'write')[0], 400)
+        self.assertEqual(self.call(box, 'inbox')[1]['envelopes'], [])

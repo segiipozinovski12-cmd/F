@@ -1,0 +1,9 @@
+# One-view text
+
+VO1D NEXT can send plain text for one viewing, from the chat menu. The user confirms a compatibility/copy warning before sending. It uses the ordinary vetted libsignal delivery path; `viewOnceSeconds` is an additive optional message field. New clients restrict its value to 1–120 seconds, reject attachments/polls in this mode and cap unopened expiry at seven days or the room's earlier timer. The UI currently offers 30 seconds.
+
+Opening first removes the saved text/edit history and records an identity/room/message-bound consumed tombstone in the encrypted vault. Only after that save succeeds is the text handed to the temporary view. A failed save rolls back and does not expose the content. The view clears on close, timeout, background, app lock, profile change or disappearance. A restart cannot reopen it, and a new envelope reusing a consumed message ID is ignored until its original expiry. The tombstone journal is bounded; overflow refuses opening rather than dropping replay protection.
+
+One-view text is hidden from conversation previews, search, links, copy/forward/edit controls and notification previews. It is excluded from backups, device archives, bot command processing and report selection; a complaint may still describe the incident with explicit consent. The sender's queued transport copy persists until delivery/cancellation, as required for reliable encrypted sending. Old backup files, storage snapshots and modified recipients are outside logical deletion guarantees.
+
+**This is a cooperative client policy.** A recipient can photograph or capture the text, modify their client, or keep plaintext independently. Older clients ignore the optional field and can display/store it as ordinary text; the confirmation states this. It is not DRM, hardware-enforced erasure, a new cryptographic protocol, or a promise that nobody can save a copy.

@@ -1,5 +1,7 @@
 # VO1D 2: implementation record
 
+Historical ledger for the base branch. VO1D NEXT additions and unfinished P0–P4 work are recorded separately in [VO1D-NEXT.md](VO1D-NEXT.md); the original counts below do not claim that the new programme is complete.
+
 Work branch: `codex/anonymous-v2`, based on verified 1.3. No release or deployment is implied by this branch.
 
 ## Selected protocol dependency

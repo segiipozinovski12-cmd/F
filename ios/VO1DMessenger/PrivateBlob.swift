@@ -99,14 +99,21 @@ extension APIClient {
 extension ChatStore {
     func revokePrivateFiles() async throws {
         guard let api else { throw MessengerError.invalid("Нет соединения для удаления файлов") }
+        let fence = sessionFence
         for (id,record) in extended.privateBlobDeletes {
             if record.expiresAt > Int(Date().timeIntervalSince1970) { try await api.deletePrivateBlob(id,token:record.deleteToken) }
+            try requireCurrentSession(fence)
             var local = extended; local.privateBlobDeletes[id] = nil; state.extended = local; try save()
         }
     }
     func erasePrivateRelayStorage() async throws {
         guard let api else { return }
-        for mailbox in extended.ownMailboxes where mailbox.address.expiresAt > Int(Date().timeIntervalSince1970) { try await api.deleteMailbox(mailbox) }
+        let fence = sessionFence
+        for mailbox in extended.ownMailboxes where mailbox.address.expiresAt > Int(Date().timeIntervalSince1970) {
+            try await api.deleteMailbox(mailbox)
+            try requireCurrentSession(fence)
+        }
+        try requireCurrentSession(fence)
         try await revokePrivateFiles()
     }
 }

@@ -3,6 +3,10 @@ import CryptoKit
 
 @MainActor
 final class APIClient {
+    #if DEBUG
+    // XCTest substitutes a local protocol; Release always uses the validated route.
+    static var testingProtocolClasses: [AnyClass]?
+    #endif
     private struct Failure: Decodable { var error: String }
     struct OK: Decodable { var ok: Bool }
     private struct CodeResponse: Decodable { var code: String }
@@ -27,14 +31,26 @@ final class APIClient {
     private var capabilitySessions: [String:URLSession] = [:]
     private let capabilityNamespace = UUID().uuidString
     private let callToken: String?
+    private let botToken: String?
+    private let botExecutor: String?
+    private let botInstance: String?
+    private var authenticationTask: Task<Void, Error>?
+    private var authenticatedAt: Date?
+    private var allowEnrollment: Bool
 
-    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil) throws {
+    init(server: String, identity: LocalIdentity, privacy: PrivacyPreferences = PrivacyPreferences(),authenticationCard: ContactCard? = nil, callToken: String? = nil, botToken: String? = nil, botExecutor: String? = nil, botInstance: String? = nil, allowEnrollment: Bool = false) throws {
         base = try Self.validateURL(server,privacy:privacy)
         self.privacy = privacy
         self.identity = identity
         self.authenticationCard = authenticationCard
         self.callToken = callToken
+        self.botToken = botToken
+        self.allowEnrollment = allowEnrollment
+        self.botExecutor = botExecutor; self.botInstance = botInstance
         let config = try TransportConfiguration.make(privacy)
+        #if DEBUG
+        if let protocols = Self.testingProtocolClasses { config.protocolClasses = protocols }
+        #endif
         session = URLSession(configuration: config,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
     }
 
@@ -45,6 +61,9 @@ final class APIClient {
             isolated.streamIsolation = Crypto.hex(SHA256.hash(data:Data("VO1D-STREAM-2\n\(privacy.streamIsolation)\n\(capabilityNamespace)\n\(scope)".utf8)))
         }
         let configuration = try TransportConfiguration.make(isolated)
+        #if DEBUG
+        if let protocols = Self.testingProtocolClasses { configuration.protocolClasses = protocols }
+        #endif
         let session = URLSession(configuration:configuration,delegate:NoRedirectSessionDelegate(),delegateQueue:nil)
         if capabilitySessions.count >= 64, let key = capabilitySessions.keys.first {
             capabilitySessions.removeValue(forKey:key)?.finishTasksAndInvalidate()
@@ -53,6 +72,7 @@ final class APIClient {
         return session
     }
     func invalidate() {
+        authenticationTask?.cancel()
         session.invalidateAndCancel()
         for client in capabilitySessions.values { client.invalidateAndCancel() }
         capabilitySessions = [:]
@@ -76,23 +96,31 @@ final class APIClient {
         throw MessengerError.invalid("Для подключения нужен HTTPS. HTTP доступен только для localhost в Debug.")
     }
 
-    private func raw(_ path: String, method: String, body: Data?) async throws -> (Data, Int) {
-        var request = URLRequest(url: base.appendingPathComponent(path))
+    private func raw(_ path: String, method: String, body: Data?, moderationToken: String? = nil, query: [URLQueryItem] = []) async throws -> (Data, Int) {
+        guard var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false) else { throw MessengerError.invalid("Неверный адрес запроса") }
+        if !query.isEmpty { components.queryItems = query }
+        guard let url = components.url else { throw MessengerError.invalid("Неверные параметры запроса") }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let botToken { request.setValue("BotCapability \(botToken)", forHTTPHeaderField: "Authorization") }
+        if let botExecutor { request.setValue(botExecutor, forHTTPHeaderField: "X-Bot-Executor") }
+        if let botInstance { request.setValue(botInstance, forHTTPHeaderField: "X-Bot-Instance") }
+        if let moderationToken { request.setValue(moderationToken, forHTTPHeaderField: "X-Moderation-Token") }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MessengerError.invalid("Нет ответа сервера") }
         return (data, http.statusCode)
     }
 
-    func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true) async throws -> T {
+    func request<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, retry: Bool = true, moderationToken: String? = nil, query: [URLQueryItem] = []) async throws -> T {
         guard callToken == nil else { throw MessengerError.invalid("Фоновое разрешение доступно только для звонков") }
-        let (data, status) = try await raw(path, method: method, body: body)
-        if status == 401 && retry {
-            try await authenticate()
-            return try await request(path, method: method, body: body, retry: false)
+        let attemptedToken = token
+        let (data, status) = try await raw(path, method: method, body: body, moderationToken: moderationToken, query: query)
+        if status == 401 && retry && botToken == nil {
+            if token == attemptedToken || token == nil { try await authenticate() }
+            return try await request(path, method: method, body: body, retry: false, moderationToken: moderationToken, query: query)
         }
         guard (200..<300).contains(status) else {
             let detail = (try? Wire.decoder.decode(Failure.self, from: data).error) ?? "Ошибка сервера \(status)"
@@ -102,12 +130,33 @@ final class APIClient {
     }
 
     func authenticate() async throws {
+        if let authenticationTask { return try await authenticationTask.value }
+        let task = Task { try await self.performAuthentication() }
+        authenticationTask = task
+        defer { authenticationTask = nil }
+        try await task.value
+    }
+
+    private func performAuthentication() async throws {
+        guard botToken == nil else { throw MessengerError.invalid("Токен бота не авторизует аккаунт владельца") }
         guard callToken == nil else { throw MessengerError.invalid("Разрешение звонков не авторизует аккаунт") }
         token = nil
         let card: ContactCard
         if let authenticationCard { card = authenticationCard }
         else { card = try identity.card }
-        let _: OK = try await request("v1/register", method: "POST", body: Wire.encoder.encode(card), retry: false)
+        struct Capabilities: Decodable { var accountEpoch: String? }
+        let capabilities: Capabilities = try await request("v2/capabilities", retry: false)
+        struct Registration: Encodable {
+            var id: String; var signingKey: String; var agreementKey: String; var binding: String
+            var accountEpoch: String?; var enroll: Bool
+            var enrollmentVersion = 2
+        }
+        let registration = Registration(id: card.id, signingKey: card.signingKey, agreementKey: card.agreementKey, binding: card.binding,
+                                        accountEpoch: capabilities.accountEpoch, enroll: allowEnrollment)
+        let _: OK = try await request("v1/register", method: "POST", body: Wire.encoder.encode(registration), retry: false)
+        // Enrollment is a one-shot user action, never a permission retained by
+        // background reconnects after an operator resets the account epoch.
+        allowEnrollment = false
         struct Challenge: Decodable { var nonce: String }
         let challenge: Challenge = try await request("v1/challenge", method: "POST", body: Wire.encoder.encode(["id": card.id]), retry: false)
         let bytes = Data("VO1D-AUTH-1\n\(card.id)\n\(challenge.nonce)".utf8)
@@ -115,6 +164,7 @@ final class APIClient {
         struct Session: Decodable { var token: String }
         let result: Session = try await request("v1/session", method: "POST", body: Wire.encoder.encode(["id": card.id, "nonce": challenge.nonce, "signature": signature]), retry: false)
         token = result.token
+        authenticatedAt = Date()
     }
 
     func ensurePublicCode() async throws -> String {
@@ -163,6 +213,7 @@ final class APIClient {
         if token == nil {
             try await authenticate()
         }
+        let attemptedToken = token
 
         var request = URLRequest(url: base.appendingPathComponent("v1/blob"))
         request.httpMethod = "PUT"
@@ -179,7 +230,7 @@ final class APIClient {
         }
 
         if http.statusCode == 401 && retry {
-            try await authenticate()
+            if token == attemptedToken || token == nil { try await authenticate() }
             return try await uploadBlob(ciphertext, retry: false)
         }
 
@@ -196,11 +247,15 @@ final class APIClient {
             throw MessengerError.invalid("Некорректный blob ID")
         }
         if token==nil { try await authenticate() }
+        let attemptedToken = token
         var request=URLRequest(url:base.appendingPathComponent("v1/blob/"+id))
         if let token { request.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization") }
         do { return try await ResumableDownload().download(request,id:id,configuration:session.configuration) }
         catch let error as HTTPFailure {
-            if error.status==401 && retry { try await authenticate(); return try await downloadBlob(id,retry:false) }
+            if error.status==401 && retry {
+                if token == attemptedToken || token == nil { try await authenticate() }
+                return try await downloadBlob(id,retry:false)
+            }
             throw error
         }
     }
@@ -209,6 +264,7 @@ final class APIClient {
         if token == nil {
             try await authenticate()
         }
+        let attemptedToken = token
 
         var request = URLRequest(url: base.appendingPathComponent("v1/blob/\(id)"))
         request.httpMethod = "DELETE"
@@ -223,7 +279,7 @@ final class APIClient {
         }
 
         if http.statusCode == 401 && retry {
-            try await authenticate()
+            if token == attemptedToken || token == nil { try await authenticate() }
             return try await deleteBlob(id, retry: false)
         }
 
@@ -256,6 +312,7 @@ final class APIClient {
     }
 
     func send(_ envelope: Envelope) async throws {
+        guard envelope.nearbyOnly != true else { throw MessengerError.invalid("Этот конверт предназначен только для устройства рядом") }
         guard envelope.deferredEvent == nil else { throw MessengerError.invalid("Локальное сообщение ещё не зашифровано протоколом v2") }
         if let opaque = envelope.opaque { try await sendOpaque(opaque); return }
         guard !envelope.ciphertext.isEmpty else { throw MessengerError.invalid("Пустой шифротекст") }
@@ -302,6 +359,10 @@ final class APIClient {
         request.setValue(authorization, forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 20
         return request
+    }
+
+    func refreshCallAuthorization(force: Bool = false) async throws {
+        if callToken == nil && (force || token == nil || Date().timeIntervalSince(authenticatedAt ?? .distantPast) > 23 * 3600) { try await authenticate() }
     }
 
     func deleteAccount() async throws {

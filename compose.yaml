@@ -6,6 +6,8 @@ services:
       VO1D_DB: /data/relay.sqlite3
       VO1D_BLOB_DIR: /data/blobs
       VO1D_TRUSTED_PROXIES: ${VO1D_TRUSTED_PROXIES:-}
+      VO1D_MODERATION_KEY: ${VO1D_MODERATION_KEY:-}
+      VO1D_FIRST_ACCOUNT_ADMIN: ${VO1D_FIRST_ACCOUNT_ADMIN:-0}
     volumes:
       - relay-data:/data
     expose:

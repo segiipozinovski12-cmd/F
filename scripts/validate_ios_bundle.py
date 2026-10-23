@@ -6,6 +6,15 @@ import subprocess
 import sys
 
 
+def validate_call_configuration(info: dict) -> None:
+    # CallKit rejects even foreground CXStartCallAction transactions with
+    # requesttransaction.error 1 when the installed bundle omits `voip`.
+    # This Info.plist mode is required independently of APNs entitlements.
+    modes = info.get('UIBackgroundModes', [])
+    if not isinstance(modes, list) or not all(mode in modes for mode in ('audio', 'voip')):
+        raise RuntimeError("CallKit requires 'audio' and 'voip' in the app's UIBackgroundModes")
+
+
 def framework_binary(framework: Path) -> Path:
     if (framework / 'Versions').exists():
         raise RuntimeError(f'iOS requires a shallow framework: {framework}')
@@ -22,6 +31,7 @@ def framework_binary(framework: Path) -> Path:
 def validate(app: Path) -> None:
     with (app / 'Info.plist').open('rb') as handle:
         info = plistlib.load(handle)
+    validate_call_configuration(info)
     binary = app / info['CFBundleExecutable']
     if not binary.is_file():
         raise RuntimeError('App executable is missing')
@@ -46,4 +56,7 @@ def validate(app: Path) -> None:
 
 
 if __name__ == '__main__':
-    validate(Path(sys.argv[1]))
+    from validate_artifact_assets import validate as validate_artifacts
+    app = Path(sys.argv[1])
+    validate_artifacts(app / 'ArtifactModels')
+    validate(app)
