@@ -122,7 +122,7 @@ def wallet(db, owner):
     lifetime = db.execute('SELECT 1 FROM economy_founder WHERE owner=?', (owner,)).fetchone() is not None
     until = LIFETIME_PREMIUM_UNTIL if lifetime else row['premium_until'] if row else 0
     return {'balance': row['balance'] if row else 0, 'refundDebt': row['debt'] if row else 0, 'premiumUntil': until,
-            'premium': until > int(time.time()), 'premiumLifetime': lifetime, 'appAccountToken': account_token(owner)}
+            'premium': lifetime or until > int(time.time()), 'premiumLifetime': lifetime, 'appAccountToken': account_token(owner)}
 
 
 def change_balance(db, owner, delta, kind, reference, now, error):

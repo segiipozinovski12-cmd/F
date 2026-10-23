@@ -84,6 +84,10 @@ struct ChatView: View {
                 )
             }
             .quickLookPreview($preview)
+            .onChange(of: store.premiumTools.tags) { _, tags in
+                if let selectedSavedTag, !tags.contains(where: { $0.id == selectedSavedTag }) { self.selectedSavedTag = nil }
+            }
+            .onChange(of: store.hasPremium) { _, value in if !value { selectedSavedTag = nil } }
             .onChange(of: preview) { _, value in if value == nil { MediaFiles.clear() } }
             .onAppear {
                 viewProfileID = store.profileID

@@ -73,6 +73,8 @@ final class PremiumToolsTests: XCTestCase {
         XCTAssertNil(try Wire.decoder.decode(SharedProfile.self, from: Wire.encoder.encode(profile)).featuredGiftID)
         let wallet = try JSONDecoder().decode(CoinWallet.self, from: Data("{\"balance\":0,\"refundDebt\":0,\"premiumUntil\":1,\"premium\":false,\"appAccountToken\":\"test\"}".utf8))
         XCTAssertNil(wallet.premiumLifetime)
+        let founder = CoinWallet(balance: 0, refundDebt: 0, premiumUntil: 0, premium: true, premiumLifetime: true, appAccountToken: "founder")
+        XCTAssertTrue(founder.isPremium)
         let gift = CollectibleArtifact(id: "founder", collection: "nova", serial: 0, pricePaid: 0, acquired: 1, visible: true)
         XCTAssertEqual(gift.number, "#0")
     }

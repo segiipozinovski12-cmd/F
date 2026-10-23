@@ -67,7 +67,8 @@ extension ChatStore {
               Set(value.replyTemplates.map(\.shortcut)).count == value.replyTemplates.count else {
             throw MessengerError.invalid("Проверь названия, команды и лимиты: 50 тегов, 100 быстрых ответов")
         }
-        value.messageTags = value.messageTags.filter { key, _ in state.messages.contains { $0.id == key && isSavedRoom($0.roomID) } }
+        let savedIDs = Set(state.messages.filter { isSavedRoom($0.roomID) }.map(\.id))
+        value.messageTags = value.messageTags.filter { savedIDs.contains($0.key) }
         let ids = Set(value.tags.map(\.id))
         for key in Array(value.messageTags.keys) {
             let tags = Array(Set(value.messageTags[key, default: []]).intersection(ids)).sorted()
@@ -91,7 +92,7 @@ extension ChatStore {
         guard !extended.hiddenRooms.contains(room.id) else { return false }
         guard hasPremium, let rule = premiumTools.folderRules[folder.id] else { return folder.roomIDs.contains(room.id) }
         if rule.excludedRoomIDs.contains(room.id) { return false }
-        return folder.roomIDs.contains(room.id) || rule.matches(room, messages: messages(room.id))
+        return folder.roomIDs.contains(room.id) || rule.matches(room, messages: rule.withAttachments ? messages(room.id) : [])
     }
 
     func toggleSavedTag(_ tagID: String, message: ChatMessage) throws {

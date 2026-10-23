@@ -8,7 +8,7 @@ struct CoinWallet: Decodable {
     var premium: Bool
     var premiumLifetime: Bool? = nil
     var appAccountToken: String
-    var isPremium: Bool { premium && Date().timeIntervalSince1970 < Double(premiumUntil) }
+    var isPremium: Bool { premium && (premiumLifetime == true || Date().timeIntervalSince1970 < Double(premiumUntil)) }
 }
 struct ArtifactCollection: Decodable, Identifiable {
     var id: String
