@@ -3,13 +3,17 @@ import XCTest
 
 final class ProfileTests: XCTestCase {
     func testProductionRelayUpgradeKeepsCustomRoutesAndRejectsLookalikes() {
-        for saved in ["", "https://f-production-bdfe.up.railway.app", "https://F-PRODUCTION-BDFE.UP.RAILWAY.APP:443/"] {
+        for saved in ["", "https://f-production-bdfe.up.railway.app", "https://F-PRODUCTION-BDFE.UP.RAILWAY.APP:443/",
+                      "https://f-production-5715.up.railway.app", "https://F-PRODUCTION-5715.UP.RAILWAY.APP:443/"] {
             XCTAssertEqual(AppConfig.relayAfterUpgrade(saved), AppConfig.productionRelay)
         }
         for saved in [AppConfig.productionRelay, "https://my-relay.example", "http://" + String(repeating: "a", count: 56) + ".onion",
                       "https://f-production-bdfe.up.railway.app.example", "https://f-production-bdfe.up.railway.app:8443",
                       "https://f-production-bdfe.up.railway.app/custom", "https://f-production-bdfe.up.railway.app?route=private",
-                      "https://user@f-production-bdfe.up.railway.app", "https://f-production-bdfe.up.railway.app#custom", "not a relay URL"] {
+                      "https://user@f-production-bdfe.up.railway.app", "https://f-production-bdfe.up.railway.app#custom",
+                      "https://f-production-5715.up.railway.app.example", "https://f-production-5715.up.railway.app:8443",
+                      "https://f-production-5715.up.railway.app/custom", "https://f-production-5715.up.railway.app?route=private",
+                      "https://user@f-production-5715.up.railway.app", "https://f-production-5715.up.railway.app#custom", "not a relay URL"] {
             XCTAssertEqual(AppConfig.relayAfterUpgrade(saved), saved)
         }
     }
@@ -22,7 +26,7 @@ final class ProfileTests: XCTestCase {
         var legacy = VaultState()
         legacy.onboarded = true; legacy.appLock = true
         legacy.nickname = "Existing identity"
-        legacy.server = "https://f-production-bdfe.up.railway.app"
+        legacy.server = "https://f-production-5715.up.railway.app"
         let message = ChatMessage(id: UUID().uuidString, roomID: ChatStore.savedRoomID, sender: store.myID,
                                   text: "Keep encrypted history", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970)), expiresAt: nil, replyTo: nil, attachment: nil)
         legacy.messages = [message]
