@@ -11,7 +11,7 @@ from contextlib import closing
 from maintenance import reset
 from app import Relay
 
-ROLLOUT = 'vo1d-user-request-20261023-448bc731'
+ROLLOUT = 'vo1d-user-request-20261023-b27c32aa'
 TARGET = {
     'RAILWAY_PROJECT_ID': '54242876-8b26-4607-9996-40a18b8e595e',
     'RAILWAY_SERVICE_ID': '65efd4f2-d9e6-460c-b89c-31f0dd6be75b',
