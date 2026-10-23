@@ -12,7 +12,7 @@ struct InboxView: View {
     private var rooms: [Room] {
         store.state.rooms.filter { room in
             guard !store.extended.hiddenRooms.contains(room.id) else { return false }
-            if let folder=store.extended.folders.first(where: { $0.id==filter }), !folder.roomIDs.contains(room.id) { return false }
+            if let folder=store.extended.folders.first(where: { $0.id==filter }), !store.folderContains(folder, room: room) { return false }
             let archiveMatch = filter == "Архив" ? room.archived : !room.archived
             let typeMatch: Bool
 

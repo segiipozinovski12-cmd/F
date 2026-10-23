@@ -6,6 +6,7 @@ struct CoinWallet: Decodable {
     var refundDebt: Int
     var premiumUntil: Int
     var premium: Bool
+    var premiumLifetime: Bool? = nil
     var appAccountToken: String
     var isPremium: Bool { premium && Date().timeIntervalSince1970 < Double(premiumUntil) }
 }

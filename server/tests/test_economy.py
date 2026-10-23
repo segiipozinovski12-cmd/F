@@ -64,7 +64,14 @@ class EconomyTests(unittest.TestCase):
         self.relay = Relay(self.relay.path)
         self.relay = Relay(self.relay.path)  # Repeated startup must also be harmless.
         with self.relay.db() as db:
-            self.assertEqual(snapshot, {table: [tuple(r) for r in db.execute('SELECT * FROM ' + table)] for table in tables})
+            # The owner now receives five additive founder editions; every prior
+            # paid artifact, balance, listing and idempotent receipt stays exact.
+            current = {table: [tuple(r) for r in db.execute('SELECT * FROM ' + table)] for table in tables}
+            for table in tables:
+                self.assertTrue(all(row in current[table] for row in snapshot[table]), table)
+                additions = 5 if table == 'artifacts' else 6 if table == 'economy_ledger' else 0
+                self.assertEqual(len(current[table]), len(snapshot[table]) + additions, table)
+            self.assertEqual(db.execute('SELECT count(*) FROM artifacts WHERE serial=0 AND owner=?', (self.alice_card['id'],)).fetchone()[0], 5)
             nova = db.execute("SELECT * FROM artifact_collections WHERE id='nova'").fetchone()
             self.assertEqual((nova['title'], nova['minted'], nova['published'], nova['upgrades']), ('Cute Ghost', 1, 1, 1))
             self.assertEqual(db.execute("SELECT supply FROM artifact_collections WHERE id='orbit'").fetchone()[0], 16000)

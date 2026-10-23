@@ -186,8 +186,8 @@ struct Panel: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(18)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .background(palette.panel, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+            .background(palette.panel, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
             .shadow(color: .black.opacity(0.26), radius: 18, y: 10)
     }
 }
@@ -209,7 +209,7 @@ extension View {
     func panel() -> some View { modifier(Panel()) }
     func voidField() -> some View {
         padding(16)
-            .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 23, style: .continuous))
             .autocorrectionDisabled()
     }
 }

@@ -10,10 +10,11 @@ struct SharedProfile: Codable, Hashable {
     var updatedAt: Date
     var status: String
     var decoration: ProfileDecoration? = nil
+    var featuredGiftID: String? = nil
     func validate(now: Date = Date()) throws {
         try decoration?.validate()
         guard !name.isEmpty, name.count <= 40, bio.count <= 160, status.count <= 32,
-              (avatar?.count ?? 0) <= 160_000, updatedAt <= now.addingTimeInterval(60) else {
+              (avatar?.count ?? 0) <= 160_000, (featuredGiftID?.count ?? 0) <= 80, updatedAt <= now.addingTimeInterval(60) else {
             throw MessengerError.invalid("Некорректный профиль")
         }
     }
@@ -53,7 +54,7 @@ extension ChatEvent {
 extension ChatStore {
     var social: SocialState { state.social ?? SocialState() }
     var ownSharedProfile: SharedProfile {
-        SharedProfile(name: state.nickname, bio: state.bio ?? "", avatar: state.profileAvatar.flatMap { $0.count <= 160_000 ? $0 : SocialImage.jpeg($0, maxSide: 384, limit: 160_000) }, updatedAt: Date(), status: social.status, decoration: social.decoration?.allowed(premium: hasPremium))
+        SharedProfile(name: state.nickname, bio: state.bio ?? "", avatar: state.profileAvatar.flatMap { $0.count <= 160_000 ? $0 : SocialImage.jpeg($0, maxSide: 384, limit: 160_000) }, updatedAt: Date(), status: social.status, decoration: social.decoration?.allowed(premium: hasPremium), featuredGiftID: social.featuredGiftID)
     }
     func socialRoom(_ contact: Contact) throws -> Room {
         guard let ownCard else { throw MessengerError.invalid("Нет личности") }

@@ -123,6 +123,8 @@ class Relay:
             moderation.install(db)
             bots.install(db)
             commerce.install(db)
+            if os.environ.get('VO1D_FIRST_ACCOUNT_ADMIN') == '1' and moderation.owner(db) is None and not db.execute('SELECT 1 FROM identities LIMIT 1').fetchone():
+                db.execute("INSERT OR IGNORE INTO relay_meta VALUES ('bootstrap_admin_policy','first_verified_registration')")
 
     @contextmanager
     def db(self):
@@ -214,7 +216,7 @@ class Relay:
                 self.rate('moderator-mfa:' + user, 8, 300)
             if method == 'POST' and path in ('/v2/reports','/v2/appeals'):
                 self.rate('reports:' + user, 30, 3600)
-            if method == 'POST' and path in ('/v3/economy/payment', '/v3/economy/transcription-authorize'):
+            if method == 'POST' and path in ('/v3/economy/payment', '/v3/economy/transcription-authorize', '/v3/economy/premium-authorize'):
                 if env.get('HTTP_AUTHORIZATION', '').startswith('BotCapability '):
                     raise APIError(403, 'Account session required')
                 self.rate('appstore:' + user, 30)
@@ -311,6 +313,7 @@ class Relay:
                         moderation.claim(db, identity, 'vo1d', now, APIError)
                         db.execute('INSERT INTO usernames VALUES (?,?,?)', ('vo1d', identity, now))
                     db.execute("DELETE FROM relay_meta WHERE key='bootstrap_admin_policy'")
+                commerce.grant_founder(db, identity, now)
                 token = secrets.token_urlsafe(32)
                 db.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), identity, now + 86400))
                 return {'token': token}

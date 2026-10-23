@@ -82,6 +82,13 @@ final class CollectionRenderingTests: XCTestCase {
         try await capture(NavigationStack { ProfileEditorView() }.environmentObject(store), name: "profile-editor")
         try await capture(NavigationStack { PremiumPlanView() }.environmentObject(store), name: "premium")
         try await capture(NavigationStack { AppearanceSettingsView() }.environmentObject(store), name: "appearance")
+        try await capture(NavigationStack { ProfileEditorView(initialSection: 1) }.environmentObject(store), name: "profile-editor-style")
+        try await capture(NavigationStack { ProfileEditorView(initialSection: 2) }.environmentObject(store), name: "profile-editor-audience")
+        store.state.premiumTools = PremiumToolsState(tags: [SavedTag(name: "Идеи", color: "violet"), SavedTag(name: "Работа", color: "blue"), SavedTag(name: "Важное", color: "gold")], replyTemplates: [ReplyTemplate(title: "Договориться о встрече", shortcut: "meet", body: "Привет, {name}! Давай обсудим детали сегодня, {date}. — {me}")])
+        try await capture(NavigationStack { PremiumWorkspaceView() }.environmentObject(store), name: "premium-workspace")
+        try await capture(NavigationStack { SavedTagsView() }.environmentObject(store), name: "premium-tags")
+        try await capture(NavigationStack { ReplyTemplatesView() }.environmentObject(store), name: "premium-replies")
+        try await capture(NavigationStack { ReplyTemplateEditor(reply: store.premiumTools.replyTemplates[0]) }.environmentObject(store), name: "premium-reply-editor")
         let artwork = VStack(spacing: 14) {
             Text("THE VO1D COLLECTION").font(.caption.monospaced()).tracking(3).padding(.top, 18)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {

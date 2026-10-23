@@ -27,6 +27,8 @@ struct ChatView: View {
     @State private var revealedMedia = Set<String>()
     @State private var ocrStatus = ""
     @State private var search = ""
+    @State private var selectedSavedTag: String?
+    @State private var translationMessage: ChatMessage?
     @State private var reply: ChatMessage?
     @State private var editing: ChatMessage?
     @State private var photo: PhotosPickerItem?
@@ -51,7 +53,8 @@ struct ChatView: View {
         let all = store.messages(roomID,search:search).filter {
             (authorFilter.isEmpty || $0.sender==authorFilter) &&
             (!dateFilter || ($0.createdAt>=fromDate && $0.createdAt<=toDate.addingTimeInterval(86400))) &&
-            (selectedTopic==nil || $0.topic==selectedTopic)
+            (selectedTopic==nil || $0.topic==selectedTopic) &&
+            (!store.hasPremium || selectedSavedTag == nil || !store.isSavedRoom(roomID) || store.premiumTools.messageTags[$0.id, default: []].contains(selectedSavedTag!))
         }
         return search.isEmpty && initialMessageID==nil ? Array(all.suffix(messageLimit)) : all
     }
@@ -120,6 +123,7 @@ struct ChatView: View {
                         pinnedHeader(proxy: proxy)
 
                         topicHeader(room: room)
+                        savedTagBar
 
                         messageList(room: room, proxy: proxy)
                     }
@@ -154,6 +158,7 @@ struct ChatView: View {
                         Rectangle().fill(.white.opacity(0.06)).frame(height: 0.5)
                     }
                 } else {
+                    replySuggestions
                     composer
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -202,7 +207,12 @@ struct ChatView: View {
                         }
                         Menu("Вставить шаблон") {
                             ForEach(store.extended.snippets,id:\.self) { snippet in Button(String(snippet.prefix(40))) { text += (text.isEmpty ? "" : "\n")+snippet } }
+                            if store.hasPremium, let room {
+                                ForEach(store.premiumTools.replyTemplates) { reply in Button(reply.title) { if store.hasPremium { text += (text.isEmpty ? "" : "\n") + store.renderedReply(reply, room: room) } } }
+                            }
+                            NavigationLink("Управлять быстрыми ответами") { ReplyTemplatesView() }
                         }
+                        if store.isSavedRoom(roomID) { NavigationLink("Управлять тегами") { SavedTagsView() } }
                     } label: { Image(systemName:"ellipsis.circle") }
 
                     if room?.isGroup == false && !selectionMode && !store.isLocalUtilityRoom(roomID) {
@@ -250,6 +260,7 @@ struct ChatView: View {
                 }
             }
             .sheet(isPresented: $info) { RoomInfoView(roomID: roomID) }
+            .sheet(item: $translationMessage) { message in NavigationStack { PremiumTranslationSheet(messageID: message.id) } }
             .sheet(item: $reactionTarget) { message in
                 ReactionPickerView(selected: message.reactions[store.myID]) { emoji in
                     perform { try store.action("reaction", message: message, value: emoji) }
@@ -338,6 +349,33 @@ struct ChatView: View {
         }.buttonStyle(MotionButtonStyle())
     }
 
+    @ViewBuilder private var savedTagBar: some View {
+        if store.isSavedRoom(roomID), store.hasPremium, !store.premiumTools.tags.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 9) {
+                    Button("Все") { selectedSavedTag = nil }.font(.caption.bold()).padding(.horizontal, 14).padding(.vertical, 9).background(.white.opacity(selectedSavedTag == nil ? 0.17 : 0.04), in: Capsule())
+                    ForEach(store.premiumTools.tags) { tag in
+                        Button { selectedSavedTag = selectedSavedTag == tag.id ? nil : tag.id } label: { Label(tag.name, systemImage: "tag.fill").font(.caption.weight(.medium)).padding(.horizontal, 13).padding(.vertical, 9).foregroundStyle(tag.tint).background(tag.tint.opacity(selectedSavedTag == tag.id ? 0.23 : 0.07), in: Capsule()) }
+                    }
+                }.padding(.horizontal, 16).padding(.vertical, 9)
+            }
+        }
+    }
+    @ViewBuilder private var replySuggestions: some View {
+        if store.hasPremium, let room, text.hasPrefix("/"), !text.contains(" "), text.count <= 25 {
+            let prefix = String(text.dropFirst()).lowercased()
+            let replies = store.premiumTools.replyTemplates.filter { $0.shortcut.hasPrefix(prefix) }
+            if !replies.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 9) {
+                        ForEach(replies.prefix(10)) { reply in
+                            Button { if store.hasPremium { text = store.renderedReply(reply, room: room) } } label: { VStack(alignment: .leading, spacing: 3) { Text("/" + reply.shortcut).font(.caption.bold()); Text(reply.title).font(.caption2).foregroundStyle(.secondary) }.padding(.horizontal, 15).padding(.vertical, 10).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 20)) }
+                        }
+                    }.padding(.horizontal, 14).padding(.vertical, 6)
+                }
+            }
+        }
+    }
     private func messageList(room: Room, proxy: ScrollViewProxy) -> some View {
         ScrollView {
             LazyVStack(spacing: 14) {
@@ -597,6 +635,17 @@ struct ChatView: View {
                             Button("Удалить у всех", systemImage: "trash", role: .destructive) { perform { try store.action("delete", message: message) } }
                         }
                     } else {
+                    if !message.text.isEmpty { Button("Перевести · Premium", systemImage: "globe") { translationMessage = message } }
+                    if store.isSavedRoom(roomID), store.hasPremium {
+                        Menu("Теги Избранного", systemImage: "tag") {
+                            ForEach(store.premiumTools.tags) { tag in
+                                Button { perform { try store.toggleSavedTag(tag.id, message: message) } } label: {
+                                    Label(tag.name, systemImage: store.premiumTools.messageTags[message.id, default: []].contains(tag.id) ? "checkmark" : "tag")
+                                }
+                            }
+                            NavigationLink("Создать или изменить теги") { SavedTagsView() }
+                        }
+                    }
                     Button(store.extended.bookmarks.contains(message.id) ? "Убрать закладку" : "В закладки",systemImage:"bookmark") { store.toggleBookmark(message.id) }
                     Button("Статусы участников",systemImage:"checkmark.circle") { detailsMessage=message }
                     Menu("Напомнить") {

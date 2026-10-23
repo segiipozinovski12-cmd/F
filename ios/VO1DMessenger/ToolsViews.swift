@@ -107,6 +107,7 @@ struct FolderCenterView: View {
                     }
                     Button("Удалить папку",role:.destructive) { store.changeExtended { $0.folders.removeAll { $0.id==folder.id } } }
                 } header: { Text(folder.name) }
+                NavigationLink { SmartFolderEditorView(folderID: folder.id) } label: { Label("Умные правила · " + folder.name, systemImage: "sparkles") }
             }
         }.navigationTitle("Папки")
     }
@@ -195,6 +196,7 @@ struct SnippetsView: View {
     @State private var text = ""
     var body: some View {
         List {
+            Section { NavigationLink { ReplyTemplatesView() } label: { Label("Ответы с подстановками · Premium", systemImage: "sparkles") } }
             Section("Новый шаблон") {
                 TextField("Текст",text:$text,axis:.vertical)
                 Button("Сохранить") {

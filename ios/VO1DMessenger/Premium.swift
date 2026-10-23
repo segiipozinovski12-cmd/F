@@ -19,22 +19,31 @@ struct PremiumPlanView: View {
                     Text(store.hasPremium ? "Твоё пространство. Без границ." : "Больше выразительности.\nМеньше лишних действий.").font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
                 if let notice { EconomyNotice(message: notice) }
+                if store.hasPremium { NavigationLink { PremiumWorkspaceView() } label: { Label("Открыть возможности Premium", systemImage: "sparkles") }.buttonStyle(PrimaryButton()) }
                 VStack(spacing: 24) {
                     feature("waveform", title: "Голос в текст", detail: "Расшифровка голосовых прямо в чате без отдельной оплаты. Аудио обрабатывается на устройстве и не загружается на сервер.")
+                    feature("globe", title: "Перевод сообщений", detail: "Переводи текст из меню сообщения. Локальные языковые модели Apple, выбор языка и копирование результата. Требуется iOS 18 или новее.")
+                    feature("folder.badge.gearshape", title: "Умные папки", detail: "Автоматически собирай личные чаты, группы и каналы. Добавляй условия по непрочитанным, уведомлениям и вложениям; исключай отдельные беседы.")
+                    feature("tag", title: "Теги Избранного", detail: "Свои цветные теги, несколько тегов на сообщение и быстрый фильтр в Избранном. Всё хранится в твоём зашифрованном хранилище.")
+                    feature("text.bubble", title: "Ответы с подстановками", detail: "До 100 готовых ответов. Команды /shortcut, имя собеседника, твоя подпись, текущая дата и время — сразу в поле ввода.")
                     feature("paintpalette", title: "Особенные темы", detail: "Шесть палитр: Aurora, Ember, Frost, Rose, Cobalt и Gold.")
                     feature("person.crop.rectangle", title: "Обложки профиля", detail: "Шесть дополнительных обложек с мягкими градиентами и орбитами.")
                     feature("moon.stars", title: "Статус с характером", detail: "Восемь значков настроения. Оставь навсегда или выбери, когда он исчезнет.")
                     feature("square.grid.3x3", title: "Обои для каждой беседы", detail: "Сетка, орбиты и кристаллы. Общий фон или отдельный рисунок для каждого чата.")
                     feature("seal", title: "Знак Premium", detail: "Аккуратный значок подписчика в твоём профиле.")
-                }.panel()
+                }
                 if store.hasPremium {
                     HStack(spacing: 12) {
                         NavigationLink { ProfileEditorView() } label: { Label("Мой стиль", systemImage: "person.crop.circle") }.buttonStyle(GhostButton())
                         NavigationLink { AppearanceSettingsView() } label: { Label("Темы", systemImage: "paintpalette") }.buttonStyle(GhostButton())
                     }
-                    Label("Подписка активна", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    if let until = store.coinWallet?.premiumUntil { Text("Оплачено до \(Date(timeIntervalSince1970: Double(until)).formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary) }
-                    Link("Управлять подпиской", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                    if store.coinWallet?.premiumLifetime == true {
+                        Label("Premium навсегда · Основатель", systemImage: "crown.fill").foregroundStyle(Color.artifactHex(0xDDBB7D))
+                    } else {
+                        Label("Подписка активна", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        if let until = store.coinWallet?.premiumUntil { Text("Оплачено до \(Date(timeIntervalSince1970: Double(until)).formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary) }
+                        Link("Управлять подпиской", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                    }
                 } else if let product, store.canStartApplePayment {
                     Button("Подключить · \(product.displayPrice) / месяц") {
                         busy = true; notice = nil
@@ -56,7 +65,7 @@ struct PremiumPlanView: View {
                         catch { notice = error.localizedDescription }
                     }
                 }.disabled(busy)
-                Text("Ежемесячная подписка продлевается автоматически, пока ты её не отменишь в App Store. Итоговая цена указана в валюте твоего региона. Для локальной расшифровки требуется языковая модель iOS.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text(store.coinWallet?.premiumLifetime == true ? "Бессрочный доступ выдан основателю VO1D. Он не зависит от подписки App Store." : "Ежемесячная подписка продлевается автоматически, пока ты её не отменишь в App Store. Итоговая цена указана в валюте твоего региона. Для локальной расшифровки требуется языковая модель iOS.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 HStack {
                     NavigationLink("Условия") { TermsView() }
                     Text("·").foregroundStyle(.secondary)
@@ -82,7 +91,7 @@ struct PremiumPlanView: View {
     }
     private func feature(_ icon: String, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 16) {
-            Image(systemName: icon).font(.title3).foregroundStyle(Color.artifactHex(0xC9B6EF)).frame(width: 28)
+            Image(systemName: icon).font(.title3).foregroundStyle(Color.artifactHex(0xC9B6EF)).frame(width: 48, height: 48).background(.white.opacity(0.045), in: Circle())
             VStack(alignment: .leading, spacing: 7) { Text(title).font(.headline); Text(detail).font(.callout).foregroundStyle(.secondary).lineSpacing(3) }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }

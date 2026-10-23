@@ -5,6 +5,15 @@ in project `pleasant-beauty`, branch `codex/vo1d-next`.
 The iPhone app migrates saved first-party `bdfe` and `5715` origins to this
 address; custom relays keep their saved addresses.
 
+Set `VO1D_FIRST_ACCOUNT_ADMIN=1` to bootstrap the first verified login on an
+empty database. Public-card upload cannot claim ownership. The verified owner
+receives five founder editions with serial `0` and lifetime Premium in the same
+transaction. A durable grant receipt prevents reissuing gifts after transfer,
+deletion or restart. Existing permanent owners receive this grant additively on
+upgrade. The special zero editions do not consume the ordinary `1..supply` runs.
+StoreKit renewals/refunds do not overwrite the independent founder entitlement.
+Deploying this feature does not reset accounts or change permanent ownership.
+
 1. Select repository `segiipozinovski12-cmd/F`, branch `codex/vo1d-next`. Take a database/volume backup before upgrading.
 2. Set Root Directory to `/server`; use its Dockerfile.
 3. Mount a persistent volume at `/data`, set healthcheck `/health`, generate an HTTPS domain.

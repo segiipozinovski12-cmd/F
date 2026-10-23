@@ -5,6 +5,7 @@ import UIKit
 struct ProfileScreenView: View {
     var owner: String
     @EnvironmentObject private var store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab = 0
     @State private var gifts: [CollectibleArtifact] = []
     @State private var cursor: String?
@@ -23,7 +24,9 @@ struct ProfileScreenView: View {
     private var ownGifts: [CollectibleArtifact] { mine ? (store.economy.owner == owner ? store.economy.artifacts : []) : gifts }
     private var visibleGifts: [CollectibleArtifact] { ownGifts.filter { $0.visible || (mine && showHidden) } }
     private var featured: CollectibleArtifact? {
-        ownGifts.first { $0.visible && mine && $0.id == store.social.featuredGiftID } ?? ownGifts.first { $0.visible }
+        let selected = mine ? store.social.featuredGiftID : profile?.featuredGiftID
+        if selected == "" { return nil }
+        return ownGifts.first { $0.visible && $0.id == selected } ?? ownGifts.first { $0.visible }
     }
     private var decoration: ProfileDecoration { (profile?.decoration ?? ProfileDecoration()).allowed(premium: mine ? store.hasPremium : premium) }
     private var sharedRoomID: String? {
@@ -43,7 +46,7 @@ struct ProfileScreenView: View {
                         NavigationLink { ContactDetailView(contactID: owner) } label: { Image(systemName: "ellipsis").font(.title3).padding(15) }.buttonStyle(RoundedActionStyle())
                     }
                 }
-                Picker("Профиль", selection: $tab) { Text("Подарки").tag(0); Text("Истории").tag(1); Text("О себе").tag(2); if mine { Text("Ещё").tag(3) } else if sharedRoomID != nil { Text("Медиа").tag(3) } }.pickerStyle(.segmented)
+                profileTabs
                 if tab == 0 { giftGrid }
                 else if tab == 1 { storyGrid }
                 else if tab == 3, mine { personalHub }
@@ -78,7 +81,7 @@ struct ProfileScreenView: View {
                     .overlay(alignment: .topTrailing) {
                         if let featured { ArtifactArtwork(collection: featured.collection, traits: featured.traits).frame(width: 132).rotationEffect(.degrees(12)).opacity(0.85).padding(10).accessibilityHidden(true) }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 30))
+                    .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
                 Group {
                     if !stories.isEmpty {
                         NavigationLink { StoryViewerView(author: owner) } label: { avatar }.buttonStyle(MotionButtonStyle())
@@ -91,6 +94,7 @@ struct ProfileScreenView: View {
                     if mine ? store.hasPremium : premium { Image(systemName: "seal.fill").font(.title3).foregroundStyle(Color.artifactHex(0xC7ACF0)).accessibilityLabel("VO1D_PREMIUM") }
                 }.multilineTextAlignment(.center)
                 if mine, let username = store.state.username { Text("@" + username).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled) }
+                if mine, store.coinWallet?.premiumLifetime == true { Label("Основатель VO1D", systemImage: "crown.fill").font(.caption.weight(.semibold)).foregroundStyle(Color.artifactHex(0xDDBB7D)).padding(.horizontal, 13).padding(.vertical, 7).background(Color.artifactHex(0xDDBB7D).opacity(0.08), in: Capsule()) }
                 TimelineView(.periodic(from: .now, by: 30)) { timeline in
                     if decoration.symbol(at: timeline.date) != nil || profile?.status.isEmpty == false {
                     HStack(spacing: 6) {
@@ -124,6 +128,7 @@ struct ProfileScreenView: View {
             NavigationLink { MessageLibraryView(mode: "scheduled") } label: { hubLabel("Отложенные сообщения", subtitle: "Отправить в нужный момент", icon: "clock.fill") }.buttonStyle(MotionButtonStyle())
             NavigationLink { SnippetsView() } label: { hubLabel("Быстрые ответы", subtitle: "Твои готовые фразы", icon: "text.bubble.fill") }.buttonStyle(MotionButtonStyle())
             NavigationLink { DeviceLinksView() } label: { hubLabel("Мои устройства", subtitle: "Подключения и контроль", icon: "laptopcomputer.and.iphone") }.buttonStyle(MotionButtonStyle())
+            NavigationLink { PremiumWorkspaceView() } label: { hubLabel("Возможности Premium", subtitle: "Умные папки, теги и быстрые ответы", icon: "sparkles") }.buttonStyle(MotionButtonStyle())
         }.panel()
     }
     private func hubLabel(_ title: String, subtitle: String, icon: String) -> some View {
@@ -144,8 +149,19 @@ struct ProfileScreenView: View {
         Button(action: action) { shortcutLabel(title, icon: icon) }.buttonStyle(MotionButtonStyle())
     }
     private func shortcutLabel(_ title: String, icon: String) -> some View {
-        VStack(spacing: 8) { Image(systemName: icon).font(.system(size: 20, weight: .medium)); Text(title).font(.caption.weight(.medium)) }
-            .frame(maxWidth: .infinity).padding(.vertical, 17).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 21))
+        HStack(spacing: 7) { Image(systemName: icon).font(.system(size: 15, weight: .medium)); Text(title).font(.caption.weight(.medium)) }
+            .frame(maxWidth: .infinity).padding(.vertical, 15).background(.white.opacity(0.045), in: Capsule())
+    }
+    private var profileTabs: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<(mine || sharedRoomID != nil ? 4 : 3), id: \.self) { index in
+                Button { withAnimation(reduceMotion ? nil : Motion.layout) { tab = index } } label: {
+                    Text(["Подарки", "Истории", "О себе", mine ? "Ещё" : "Медиа"][index]).font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 11)
+                        .foregroundStyle(tab == index ? Color.black : .white.opacity(0.65)).background(tab == index ? Color.white : .clear, in: Capsule())
+                }.buttonStyle(MotionButtonStyle()).accessibilityAddTraits(tab == index ? .isSelected : [])
+            }
+        }.padding(5).background(.white.opacity(0.04), in: Capsule())
     }
     private var giftGrid: some View {
         VStack(spacing: 18) {
@@ -212,125 +228,5 @@ struct ProfileScreenView: View {
             gifts = more ? gifts + page.artifacts : page.artifacts; cursor = page.nextCursor; premium = page.premium == true; total = page.total ?? gifts.count
         } catch is CancellationError { return }
         catch { notice = error.localizedDescription }
-    }
-}
-
-struct ProfileEditorView: View {
-    @EnvironmentObject private var store: ChatStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var username = ""
-    @State private var bio = ""
-    @State private var status = ""
-    @State private var avatar: Data?
-    @State private var photo: PhotosPickerItem?
-    @State private var busy = false
-    @State private var notice: String?
-    @State private var audience = Set<String>()
-    @State private var decoration = ProfileDecoration()
-    @State private var duration = 0
-    @State private var premiumPlan = false
-    var body: some View {
-        Form {
-            Section {
-                HStack { Spacer(); PhotosPicker(selection: $photo, matching: .images) { Avatar(name: name, size: 100, imageData: avatar).overlay(alignment: .bottomTrailing) { Image(systemName: "camera.fill").font(.subheadline).padding(9).background(.regularMaterial, in: Circle()) } }; Spacer() }.listRowBackground(Color.clear)
-                if avatar != nil { Button("Убрать фото", role: .destructive) { avatar = nil } }
-                TextField("Имя", text: $name).onChange(of: name) { _, value in name = String(value.prefix(40)) }
-                TextField("@username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled().disabled(store.state.username == "vo1d")
-                TextField("Статус", text: $status).onChange(of: status) { _, value in status = String(value.prefix(32)) }
-            }
-            Section("О себе · \(bio.count)/160") {
-                TextField("Пара слов о тебе", text: $bio, axis: .vertical).lineLimit(3...6).onChange(of: bio) { _, value in bio = String(value.prefix(160)) }
-            }
-            Section("Обложка профиля") {
-                ProfileCover(decoration: decoration).frame(height: 110).clipShape(RoundedRectangle(cornerRadius: 20)).listRowBackground(Color.clear)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(ProfileDecoration.covers, id: \.self) { cover in
-                            let option = ProfileDecoration(cover: cover)
-                            Button {
-                                if option.premium && !store.hasPremium { premiumPlan = true }
-                                else { decoration.cover = cover; Haptics.light() }
-                            } label: {
-                                VStack(spacing: 6) {
-                                    ProfileCover(decoration: option).frame(width: 74, height: 48).clipShape(RoundedRectangle(cornerRadius: 12)).overlay { if decoration.cover == cover { Image(systemName: "checkmark.circle.fill").foregroundStyle(.white) } }
-                                    HStack(spacing: 3) { Text(option.title); if option.premium { Image(systemName: "sparkles") } }.font(.caption2)
-                                }
-                            }.buttonStyle(MotionButtonStyle()).accessibilityLabel(option.title).accessibilityAddTraits(decoration.cover == cover ? .isSelected : [])
-                        }
-                    }.padding(.vertical, 5)
-                }
-            }
-            Section("Статус Premium") {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        Button { decoration.symbol = nil } label: { Image(systemName: "xmark").frame(width: 36, height: 36) }.accessibilityLabel("Без значка")
-                        ForEach(ProfileDecoration.symbols, id: \.self) { symbol in
-                            Button {
-                                if store.hasPremium { decoration.symbol = symbol; decoration.statusUntil = nil; if duration == 0 { duration = -1 } }
-                                else { premiumPlan = true }
-                            } label: { Image(systemName: symbol).frame(width: 36, height: 36).background(.white.opacity(decoration.symbol == symbol ? 0.18 : 0.04), in: Circle()) }.accessibilityLabel(ProfileDecoration.symbolTitle(symbol)).accessibilityAddTraits(decoration.symbol == symbol ? .isSelected : [])
-                        }
-                    }
-                }
-                Picker("Убрать значок", selection: $duration) { Text("Не менять срок").tag(0); Text("Через час").tag(3600); Text("Через 8 часов").tag(28800); Text("Через сутки").tag(86400); Text("Никогда").tag(-1) }
-                Text("Значок виден рядом со статусом. Обложка и статус передаются выбранным контактам вместе с профилем.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Поделиться профилем") {
-                ForEach(store.state.contacts.filter { !$0.blocked && $0.isBot != true && !store.isBuiltinBot($0.id) && store.extended.trustedIDs.contains($0.id) }) { contact in
-                    Toggle(contact.name, isOn: Binding(get: { audience.contains(contact.id) }, set: { if $0 { audience.insert(contact.id) } else { audience.remove(contact.id) } }))
-                }
-                Text("Имя, фото, описание и статус отправятся только выбранным доверенным контактам в зашифрованном виде.").font(.caption).foregroundStyle(.secondary)
-            }
-            if let notice { Section { EconomyNotice(message: notice) } }
-        }.navigationTitle("Изменить профиль").navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() }.disabled(busy) }
-            ToolbarItem(placement: .confirmationAction) { Button("Готово") { save() }.bold().disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-        }.interactiveDismissDisabled(busy)
-        .onAppear { name = store.state.nickname; username = store.state.username ?? ""; bio = store.state.bio ?? ""; status = store.social.status; avatar = store.state.profileAvatar; decoration = (store.social.decoration ?? ProfileDecoration()).allowed(premium: store.hasPremium) }
-        .sheet(isPresented: $premiumPlan) { NavigationStack { PremiumPlanView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { premiumPlan = false } } } } }
-        .onChange(of: photo) { _, item in
-            guard let item else { return }
-            let fence = store.sessionFence; busy = true
-            Task {
-                defer { busy = false }
-                do {
-                    guard let data = try await item.loadTransferable(type: Data.self), let jpeg = SocialImage.jpeg(data, maxSide: 384, limit: 160_000) else { throw MessengerError.invalid("Не удалось подготовить фото") }
-                    try store.requireCurrentSession(fence); avatar = jpeg
-                } catch is CancellationError { return }
-                catch { notice = error.localizedDescription }
-            }
-        }
-    }
-    private func save() {
-        busy = true; notice = nil
-        let fence = store.sessionFence
-        Task {
-            defer { busy = false }
-            do {
-                let clean = username.trimmingCharacters(in: CharacterSet(charactersIn: "@ ")).lowercased()
-                if !clean.isEmpty && clean != store.state.username {
-                    guard let api = store.api else { throw MessengerError.invalid("Нет соединения") }
-                    _ = try await api.claimUsername(clean)
-                    try store.requireCurrentSession(fence); store.state.username = clean
-                } else if clean.isEmpty && store.state.username != nil { throw MessengerError.invalid("Чтобы сменить username, укажи новый.") }
-                try store.requireCurrentSession(fence)
-                let previous = store.state
-                do {
-                    store.state.nickname = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    store.state.bio = bio; store.state.profileAvatar = avatar
-                    var social = store.social; social.status = status
-                    var style = decoration.allowed(premium: store.hasPremium)
-                    if duration > 0 { style.statusUntil = Date().addingTimeInterval(Double(duration)) }
-                    else if duration == -1 { style.statusUntil = nil }
-                    try style.validate(); social.decoration = style; store.state.social = social
-                    try store.shareProfile(with: audience)
-                    try store.save()
-                } catch { store.state = previous; throw error }
-                Task { await store.sync() }; Haptics.success(); dismiss()
-            } catch is CancellationError { return }
-            catch { notice = error.localizedDescription }
-        }
     }
 }

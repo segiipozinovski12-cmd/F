@@ -172,6 +172,7 @@ struct PendingDelivery: Codable, Identifiable {
 }
 
 struct VaultState: Codable {
+    var premiumTools: PremiumToolsState? = nil
     var appearance: AppearancePreferences? = nil
     var social: SocialState? = nil
     var rejectedBotPackets: Int? = nil

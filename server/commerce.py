@@ -36,6 +36,7 @@ TRAITS = {
 PRODUCTS = {'io.vo1d.coins.500': 500, 'io.vo1d.coins.2750': 2750,
             'io.vo1d.coins.6000': 6000, 'io.vo1d.coins.16000': 16000}
 PREMIUM_PRODUCT = 'io.vo1d.premium.monthly'
+LIFETIME_PREMIUM_UNTIL = 253402300799
 
 
 def install(db):
@@ -43,6 +44,9 @@ def install(db):
       CREATE TABLE IF NOT EXISTS economy_wallets (
         owner TEXT PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0 CHECK(balance>=0),
         premium_until INTEGER NOT NULL DEFAULT 0, debt INTEGER NOT NULL DEFAULT 0 CHECK(debt>=0));
+      CREATE TABLE IF NOT EXISTS economy_founder (
+        singleton INTEGER PRIMARY KEY CHECK(singleton=1), owner TEXT UNIQUE NOT NULL,
+        granted INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS artifact_collections (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
         supply INTEGER NOT NULL CHECK(supply>0), minted INTEGER NOT NULL DEFAULT 0 CHECK(minted>=0 AND minted<=supply),
@@ -79,6 +83,34 @@ def install(db):
       (id,title,description,supply,price,upgrade_price) VALUES (?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description,
         supply=max(excluded.supply,artifact_collections.minted)''', COLLECTIONS)
+    # Upgrade an already verified permanent owner without resetting the database.
+    current = moderation.owner(db)
+    if current:
+        grant_founder(db, current['owner'], int(time.time()))
+
+
+def grant_founder(db, user, now):
+    """Grant once, in the same transaction as the verified administrator claim.
+
+    Serial zero is a founder edition outside the ordinary paid supply (1..N).
+    The durable receipt prevents reissuing gifts after transfer or deletion.
+    """
+    current = moderation.owner(db)
+    if not current or current['owner'] != user or not db.execute('SELECT 1 FROM identities WHERE id=?', (user,)).fetchone():
+        return False
+    if db.execute('INSERT OR IGNORE INTO economy_founder VALUES (1,?,?)', (user, now)).rowcount != 1:
+        return False
+    db.execute('INSERT OR IGNORE INTO economy_wallets(owner) VALUES (?)', (user,))
+    for collection_id, *_ in COLLECTIONS:
+        identifier = str(uuid.uuid5(uuid.NAMESPACE_URL, 'https://vo1d.app/founder/' + collection_id))
+        db.execute('''INSERT INTO artifacts
+          (id,collection,serial,owner,price_paid,acquired,visible,last_price)
+          VALUES (?,?,0,?,0,?,1,0)''', (identifier, collection_id, user, now))
+        db.execute('INSERT INTO economy_ledger(owner,delta,kind,reference,created) VALUES (?,0,?,?,?)',
+                   (user, 'founder_gift', identifier, now))
+    db.execute('INSERT INTO economy_ledger(owner,delta,kind,reference,created) VALUES (?,0,?,?,?)',
+               (user, 'founder_premium', 'lifetime', now))
+    return True
 
 
 def account_token(owner):
@@ -87,9 +119,10 @@ def account_token(owner):
 
 def wallet(db, owner):
     row = db.execute('SELECT * FROM economy_wallets WHERE owner=?', (owner,)).fetchone()
-    until = row['premium_until'] if row else 0
+    lifetime = db.execute('SELECT 1 FROM economy_founder WHERE owner=?', (owner,)).fetchone() is not None
+    until = LIFETIME_PREMIUM_UNTIL if lifetime else row['premium_until'] if row else 0
     return {'balance': row['balance'] if row else 0, 'refundDebt': row['debt'] if row else 0, 'premiumUntil': until,
-            'premium': until > int(time.time()), 'appAccountToken': account_token(owner)}
+            'premium': until > int(time.time()), 'premiumLifetime': lifetime, 'appAccountToken': account_token(owner)}
 
 
 def change_balance(db, owner, delta, kind, reference, now, error):
@@ -211,9 +244,9 @@ def handle(relay, db, user, env, body, error):
         return {'artifact': artifact(db, row), 'estimatedValue': estimate(db, row)}
     if method != 'POST':
         raise error(404, 'Не найдено')
-    if route == '/transcription-authorize':
+    if route in ('/transcription-authorize', '/premium-authorize'):
         if not wallet(db, user)['premium']:
-            raise error(403, 'Расшифровка доступна в VO1D_PREMIUM')
+            raise error(403, 'Эта возможность доступна в VO1D_PREMIUM')
         return {'ok': True}
     if route == '/payment':
         # Verification uses Apple's current server record, not client price/coins.
@@ -364,8 +397,10 @@ def prepare_payment(relay, user, env, body, error):
     import storekit
     if env['PATH_INFO'] == PREFIX + '/payment':
         env['vo1d.verified_payment'] = storekit.verify_transaction(body.get('transactionID'), account_token(user), error)
-    elif env['PATH_INFO'] == PREFIX + '/transcription-authorize':
+    elif env['PATH_INFO'] in (PREFIX + '/transcription-authorize', PREFIX + '/premium-authorize'):
         with relay.db() as db:
+            if db.execute('SELECT 1 FROM economy_founder WHERE owner=?', (user,)).fetchone():
+                return
             row = db.execute('SELECT id FROM economy_payments WHERE owner=? AND product=? AND revoked=0 ORDER BY expires DESC LIMIT 1', (user, PREMIUM_PRODUCT)).fetchone()
         if row:
             payment = storekit.verify_transaction(row['id'], account_token(user), error)
